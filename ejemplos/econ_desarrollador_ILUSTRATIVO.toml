@@ -1,0 +1,33 @@
+# ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato del modelo rNPV.
+
+[proyecto]
+nombre = "ILUSTRATIVO - desarrollo de aditivo zootécnico"
+tasa_descuento = 0.10
+
+[[fase]]
+nombre = "Fase computacional y validación in vitro"
+coste_eur = { dist = "pert", min = 80000, moda = 150000, max = 300000 }
+duracion_anios = 1.0
+prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7 }
+
+[[fase]]
+nombre = "Ensayos in vivo de tolerancia y eficacia"
+coste_eur = { dist = "pert", min = 500000, moda = 1000000, max = 2000000 }
+duracion_anios = 2.0
+prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7 }
+
+[[fase]]
+nombre = "Dossier, evaluación y autorización"
+coste_eur = { dist = "pert", min = 300000, moda = 600000, max = 1200000 }
+duracion_anios = { dist = "pert", min = 1.5, moda = 2.5, max = 4.0 }
+prob_exito = { dist = "pert", min = 0.5, moda = 0.7, max = 0.9 }
+
+[mercado]
+ventas_pico_eur_anio = { dist = "pert", min = 1000000, moda = 4000000, max = 10000000 }
+anios_hasta_pico = 4
+anios_comercializacion = 10
+margen_bruto = { dist = "pert", min = 0.35, moda = 0.45, max = 0.55 }
+costes_comerciales_pct = 0.15
+
+[supuestos]
+lista = ["ILUSTRATIVO: ningún valor de este fichero procede de una fuente."]

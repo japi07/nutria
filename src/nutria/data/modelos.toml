@@ -1,0 +1,75 @@
+# Registro de modelos para segunda opinión entre familias (crítica independiente, verificación).
+# Dentro de Claude Code, los agentes ya se ejecutan con Claude; este registro sirve para consultar
+# a OTRAS familias de modelos y reducir errores correlacionados.
+#
+# Reglas:
+# - Verifica en la consola del proveedor el identificador exacto, la versión y la política de datos,
+#   y anota la fecha en `verificado`. Los nombres de modelo cambian con frecuencia.
+# - politica_datos: "local" (no sale del equipo), "zero_retention" (acuerdo contractual de no retención)
+#   o "standard". Los datos confidenciales solo pueden ir a "local" o "zero_retention".
+# - Elige qué modelo cubre cada rol con `nutria llm evaluar` sobre tu banco de preguntas, no por reputación.
+# - Copia este fichero a config/modelos.toml para personalizarlo.
+
+[[modelo]]
+id = "claude-opus"
+proveedor = "anthropic"
+modelo = "claude-opus-5-5"
+api_key_env = "ANTHROPIC_API_KEY"
+roles = ["critico", "sintesis", "regulacion"]
+politica_datos = "standard"
+verificado = "2026-11-04"
+activo = false
+
+[[modelo]]
+id = "claude-sonnet"
+proveedor = "anthropic"
+modelo = "claude-sonnet-5-5"
+api_key_env = "ANTHROPIC_API_KEY"
+roles = ["extraccion", "verificacion"]
+politica_datos = "standard"
+verificado = "2026-11-04"
+activo = false
+
+[[modelo]]
+id = "openai"
+proveedor = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+modelo = "RELLENAR_ID_EXACTO"
+api_key_env = "OPENAI_API_KEY"
+roles = ["critico"]
+politica_datos = "standard"
+verificado = ""
+activo = false
+
+[[modelo]]
+id = "gemini"
+proveedor = "gemini"
+modelo = "RELLENAR_ID_EXACTO"
+api_key_env = "GEMINI_API_KEY"
+roles = ["critico", "multimodal"]
+politica_datos = "standard"
+verificado = ""
+activo = false
+
+[[modelo]]
+id = "deepseek"
+proveedor = "openai_compatible"
+base_url = "https://api.deepseek.com"
+modelo = "RELLENAR_ID_EXACTO"
+api_key_env = "DEEPSEEK_API_KEY"
+roles = ["critico", "estadistica"]
+politica_datos = "standard"
+verificado = ""
+activo = false
+
+[[modelo]]
+id = "local"
+proveedor = "openai_compatible"
+# vLLM: http://localhost:8000/v1 | Ollama: http://localhost:11434/v1 | LM Studio: http://localhost:1234/v1
+base_url = "http://localhost:8000/v1"
+modelo = "RELLENAR (p. ej. un Qwen o DeepSeek servido localmente)"
+api_key_env = ""
+roles = ["critico", "confidencial"]
+politica_datos = "local"
+verificado = ""
+activo = false

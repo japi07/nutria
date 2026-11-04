@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nutria"
+version = "0.1.0"
+description = "Sistema de I+D computacional para nutrición y producción animal: evidencia trazable, metaanálisis, priorización con compuertas y evaluación económica."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "requests>=2.28",
+  "jsonschema>=4.17",
+]
+
+[project.optional-dependencies]
+mixto = ["statsmodels>=0.14", "pandas>=2.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+nutria = "nutria.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+nutria = ["data/*.toml", "data/schemas/*.json", "reports/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

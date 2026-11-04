@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nutria *)",
+      "Bash(python -m nutria *)",
+      "Bash(python3 -m nutria *)",
+      "Bash(python -m pytest *)",
+      "WebSearch",
+      "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:eutils.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:europepmc.org)",
+      "WebFetch(domain:www.ebi.ac.uk)",
+      "WebFetch(domain:api.openalex.org)",
+      "WebFetch(domain:api.crossref.org)",
+      "WebFetch(domain:doi.org)",
+      "WebFetch(domain:eur-lex.europa.eu)",
+      "WebFetch(domain:efsa.onlinelibrary.wiley.com)",
+      "WebFetch(domain:www.efsa.europa.eu)",
+      "WebFetch(domain:food.ec.europa.eu)",
+      "WebFetch(domain:www.feedipedia.org)",
+      "WebFetch(domain:www.fao.org)",
+      "WebFetch(domain:agris.fao.org)",
+      "WebFetch(domain:www.uniprot.org)",
+      "WebFetch(domain:string-db.org)",
+      "WebFetch(domain:reactome.org)",
+      "WebFetch(domain:pubchem.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:worldwide.espacenet.com)",
+      "WebFetch(domain:patents.google.com)",
+      "WebFetch(domain:www.lens.org)",
+      "WebFetch(domain:nap.nationalacademies.org)"
+    ],
+    "ask": [
+      "Bash(git push *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scripts/hooks/check_research_file.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

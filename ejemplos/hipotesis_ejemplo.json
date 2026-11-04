@@ -1,0 +1,19 @@
+{
+  "oportunidad": "O-0001",
+  "titulo": "EJEMPLO DE FORMATO - X mejora la oxidación hepática de ácidos grasos en el posparto",
+  "fenomeno": "Acumulación de lípidos hepáticos en el posparto temprano (ejemplo de formato).",
+  "mecanismo": "Ejemplo: X aumenta la capacidad de exportación/oxidación hepática por la vía ...",
+  "compuestos": ["Compuesto X"],
+  "diana": "Ejemplo: enzima o transportador concreto (identificador UniProt bovino)",
+  "efecto_esperado": "Ejemplo: menor concentración de triglicéridos hepáticos y BHB plasmático.",
+  "efecto_minimo_relevante": "Definir con datos antes de analizar (ejemplo de formato).",
+  "variables": ["TG hepáticos (biopsia)", "BHB plasmático", "producción de leche corregida por energía"],
+  "evidencia_a_favor": [{"afirmacion": "Ejemplo de afirmación con fuente", "etiqueta": "HIP"}],
+  "evidencia_en_contra": [{"afirmacion": "Ejemplo: degradación ruminal probable", "etiqueta": "HIP"}],
+  "incertidumbres": ["Biodisponibilidad posruminal [DESC]"],
+  "experimentos": ["Estabilidad ruminal in vitro", "Ensayo dosis-respuesta en hepatocitos bovinos"],
+  "criterio_falsacion": "Se descarta si la fracción que escapa a la degradación ruminal es despreciable a dosis económicamente viables.",
+  "probabilidad_previa": 0.2,
+  "origen": "ia",
+  "tecnica_generacion": "descubrimiento basado en literatura (ABC)"
+}

@@ -1,0 +1,32 @@
+# ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato.
+# Sustituye cada valor por uno con fuente registrada ([PUB]/[DER]) o márcalo como [SUP] en supuestos.
+
+[escenario]
+nombre = "ILUSTRATIVO - producto X en vacas en transición"
+especie = "vacuno lechero"
+unidad = "vaca"
+dias = 42
+
+[coste]
+dosis_g_dia = 50
+precio_eur_kg = { dist = "pert", min = 4.0, moda = 5.0, max = 7.0 }
+otros_eur_dia = 0.0
+fijo_eur_ciclo = 0.0
+
+[[beneficio]]
+nombre = "leche corregida por energía (kg/vaca/día)"
+respuesta = { dist = "pert", min = -0.5, moda = 0.5, max = 1.5 }
+valor_unitario = { dist = "pert", min = 0.35, moda = 0.42, max = 0.50 }
+por_dia = true
+
+[[beneficio]]
+nombre = "casos de cetosis clínica evitados por vaca"
+respuesta = { dist = "pert", min = 0.0, moda = 0.01, max = 0.03 }
+valor_unitario = { dist = "pert", min = 150, moda = 250, max = 400 }
+por_dia = false
+
+[supuestos]
+lista = [
+  "ILUSTRATIVO: ningún valor de este fichero procede de una fuente.",
+  "Respuestas independientes del precio de la leche (sin correlación).",
+]

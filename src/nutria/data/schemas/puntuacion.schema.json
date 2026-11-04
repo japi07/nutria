@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Puntuación de una oportunidad por un evaluador",
+  "type": "object",
+  "required": ["oportunidad", "evaluador", "puntuaciones"],
+  "properties": {
+    "oportunidad": {"type": "string", "pattern": "^O-\\d{4}$"},
+    "evaluador": {"type": "string", "minLength": 2},
+    "puntuaciones": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["criterio", "valor", "min", "max", "justificacion"],
+        "properties": {
+          "criterio": {"type": "string"},
+          "valor": {"type": "number", "minimum": 0, "maximum": 1},
+          "min": {"type": "number", "minimum": 0, "maximum": 1},
+          "max": {"type": "number", "minimum": 0, "maximum": 1},
+          "justificacion": {"type": "string", "minLength": 10},
+          "evidencia": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

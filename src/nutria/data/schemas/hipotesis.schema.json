@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hipótesis científica",
+  "type": "object",
+  "required": ["titulo", "fenomeno", "mecanismo", "compuestos", "efecto_esperado", "efecto_minimo_relevante",
+               "variables", "evidencia_a_favor", "evidencia_en_contra", "incertidumbres", "experimentos",
+               "criterio_falsacion", "origen"],
+  "properties": {
+    "oportunidad": {"type": "string", "pattern": "^O-\\d{4}$"},
+    "titulo": {"type": "string", "minLength": 8},
+    "fenomeno": {"type": "string"},
+    "mecanismo": {"type": "string"},
+    "compuestos": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "diana": {"type": "string"},
+    "efecto_esperado": {"type": "string"},
+    "efecto_minimo_relevante": {"type": "string", "description": "Diferencia mínima con relevancia biológica o económica, fijada antes de analizar."},
+    "variables": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "evidencia_a_favor": {"type": "array", "items": {"$ref": "#/$defs/evidencia"}},
+    "evidencia_en_contra": {"type": "array", "items": {"$ref": "#/$defs/evidencia"}},
+    "incertidumbres": {"type": "array", "items": {"type": "string"}},
+    "experimentos": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "criterio_falsacion": {"type": "string", "minLength": 10},
+    "probabilidad_previa": {"type": "number", "minimum": 0, "maximum": 1},
+    "origen": {"enum": ["ia", "equipo_humano", "literatura", "mixto"]},
+    "tecnica_generacion": {"type": "string", "description": "p. ej. descubrimiento basado en literatura (ABC), contradicción entre estudios, reposicionamiento."}
+  },
+  "$defs": {
+    "evidencia": {
+      "type": "object",
+      "required": ["afirmacion", "etiqueta"],
+      "properties": {
+        "afirmacion": {"type": "string"},
+        "etiqueta": {"enum": ["PUB", "DER", "HIP", "SUP", "DESC"]},
+        "fuentes": {"type": "array", "items": {"type": "string"}},
+        "nivel": {"enum": ["alta", "moderada", "baja", "muy_baja"]},
+        "transferibilidad": {"enum": ["especie_diana", "otra_especie", "in_vitro", "in_silico", "humano"]}
+      }
+    }
+  }
+}

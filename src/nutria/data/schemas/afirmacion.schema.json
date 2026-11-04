@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Afirmación con etiqueta de evidencia",
+  "type": "object",
+  "required": ["texto", "etiqueta"],
+  "properties": {
+    "texto": {"type": "string", "minLength": 5},
+    "etiqueta": {"enum": ["PUB", "DER", "HIP", "SUP", "DESC"]},
+    "nivel": {"enum": ["alta", "moderada", "baja", "muy_baja"]},
+    "transferibilidad": {"enum": ["especie_diana", "otra_especie", "in_vitro", "in_silico", "humano"]},
+    "fuentes": {"type": "array", "items": {"type": "string", "pattern": "^(doi|pmid|openalex):.+"}},
+    "cita_textual": {"type": "string"},
+    "ubicacion": {"type": "string"},
+    "entidad": {"type": "string", "pattern": "^[OH]-\\d{4}$"}
+  }
+}

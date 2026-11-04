@@ -1,0 +1,14 @@
+{
+  "oportunidad": "O-0001",
+  "evaluador": "evaluador-cientifico",
+  "puntuaciones": [
+    {"criterio": "evidencia", "valor": 0.25, "min": 0.0, "max": 0.5, "justificacion": "Ejemplo: solo estudios in vitro y en otra especie."},
+    {"criterio": "plausibilidad", "valor": 0.5, "min": 0.25, "max": 0.75, "justificacion": "Ejemplo: mecanismo plausible; destino ruminal incierto."},
+    {"criterio": "mejora_productiva", "valor": 0.5, "min": 0.25, "max": 0.75, "justificacion": "Ejemplo: efecto esperado cercano al mínimo relevante."},
+    {"criterio": "originalidad", "valor": 0.75, "min": 0.5, "max": 1.0, "justificacion": "Ejemplo: combinación no descrita en literatura ni patentes consultadas."},
+    {"criterio": "seguridad", "valor": 0.5, "min": 0.25, "max": 0.75, "justificacion": "Ejemplo: datos toxicológicos parciales."},
+    {"criterio": "viabilidad_tecnologica", "valor": 0.5, "min": 0.25, "max": 0.75, "justificacion": "Ejemplo: necesita protección ruminal y marcador analítico."},
+    {"criterio": "viabilidad_regulatoria", "valor": 0.25, "min": 0.0, "max": 0.5, "justificacion": "Ejemplo: requeriría autorización como aditivo zootécnico."},
+    {"criterio": "potencial_economico", "valor": 0.5, "min": 0.25, "max": 0.75, "justificacion": "Ejemplo: ROI positivo solo en escenario intermedio."}
+  ]
+}
