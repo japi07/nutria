@@ -1,0 +1,1059 @@
+[
+ {
+  "id": "D1-1",
+  "dimension": "D1",
+  "gravedad": "alta",
+  "texto": "Criterio 2. La salvaguarda contra referencias inventadas se degrada en silencio y emite una certificación falsa:\n- Sin red, cada referencia no verificable pasa a ser un 'aviso'.\n- El sello se escribe con en_linea=true, porque registra lo que se pidió y no lo que se logró, y es 'válido' si errores=0.\n- La salida dice 'referencias verificadas en línea'.\n- Contradice la garantía declarada de que el hook 'bloquea informes con referencias no verificables'.",
+  "evidencia": "Código:\n- src/nutria/reports/check.py:133-135, :147-155, :158-169.\n- src/nutria/cli.py:634-650: write_stamp(path, issues, online, ...).\n\nReproducido en la copia temporal con el DOI 10.9999/doi.inventado.2021.001 en un informe con 'estado: revisado':\n- `nutria --offline informe comprobar ... --online --sellar` devuelve '0 error(es), 1 aviso(s) | referencias verificadas en línea', exit 0.\n- `nutria informe sello` responde 'Sello válido'.\n- El hook no bloquea.\n\nGarantía contradicha: README.md:10; docs/REVISION_PROMPT_ORIGINAL.md:25, :58-60."
+ },
+ {
+  "id": "D1-2",
+  "dimension": "D1",
+  "gravedad": "alta",
+  "texto": "Criterio 3 (y 8). La frontera y las compuertas no se hacen cumplir:\n- La ruta 'fuera_de_alcance_medicamento' se guarda pero no se usa en ningún sitio.\n- Sin compuertas registradas, todas valen 'no_resuelta'. La oportunidad CONDICIONAL se ordena igual que una APTA y puede encabezar el ranking.\n- `puntuar compuerta` no admite --firma-humana, aunque CLAUDE.md lo exige para las decisiones de compuerta.\n- Cualquier agente puede marcar cualquier compuerta.\n- El estado 'bloqueada' de la oportunidad no la saca del ranking.\n- Una candidata con las 5 compuertas sin resolver puede pasar a 'en_validacion' sin firma.\n- Es un retroceso frente al original, que exigía bloquear las barreras regulatorias no resueltas.",
+  "evidencia": "Código:\n- src/nutria/db.py:293-301: la ruta se guarda; grep no encuentra otro uso.\n- src/nutria/scoring/engine.py:172, :177-180, :230-233.\n- src/nutria/cli.py:444: solo excluye 'descartada'.\n- src/nutria/cli.py:854-859: compuerta sin firma.\n- src/nutria/db.py:318-330 y :417-436.\n- Reglas: CLAUDE.md:27-28, :38-39. Original: docs/PROMPT_ORIGINAL.md:105.\n\nReproducido:\n- 'producto para tratar la mastitis clínica' con ruta fuera_de_alcance_medicamento queda 2.º como CONDICIONAL y pasa a APTA cuando `--agente economia-mercado-pi` marca 'regulatoria superada'.\n- `--firma-humana` en la orden de compuerta da 'unrecognized arguments'.\n- O-0002 con estado 'bloqueada' sigue saliendo como APTA.\n- O-0001, sin ninguna compuerta resuelta, pasa a en_validacion."
+ },
+ {
+  "id": "D1-3",
+  "dimension": "D1",
+  "gravedad": "alta",
+  "texto": "Criterio 1. La independencia es nominal:\n- Los 'tres evaluadores ciegos' son el mismo agentType director-cientifico (opus, mismo prompt), cambiando solo una cadena de 'enfoque'. No corrige los errores correlacionados que el propio diagnóstico identifica.\n- En la evaluación profunda, el director redacta el informe y la decisión. Después los evaluadores leen ese informe, cuyo resumen ejecutivo incluye la puntuación con intervalo, las compuertas y la decisión propuesta. Contradice la regla 9 (no ver la conclusión esperada).\n- En la misión 1, el director también redacta el efecto mínimo relevante y el criterio de falsación de cada hipótesis, que los generadores no producen, y luego es él quien evalúa.\n- La segunda opinión de otra familia de modelos está desactivada.\n- La ceguera depende de un flag opcional y de no leer los *_puntuacion_*.json que están en disco.",
+  "evidencia": "Mismo agente como evaluador:\n- .claude/workflows/mision-1-auto.js:142-146, :166-172.\n- .claude/workflows/evaluar-oportunidad-auto.js:71-76.\n- .claude/skills/mision-1/SKILL.md:65-66.\n\nLos evaluadores leen informe y decisión: evaluar-oportunidad-auto.js:62-68, :73; src/nutria/reports/plantilla_informe.md:21.\n\nEl director redacta las hipótesis: mision-1-auto.js:34-38 frente a :151-153.\n\nReglas y diagnóstico: CLAUDE.md:31-32; docs/REVISION_PROMPT_ORIGINAL.md:42-43.\n\nSegunda opinión desactivada: src/nutria/data/modelos.toml:21, :31, :42, :52, :63, :75 (activo=false).\n\nCeguera opcional: src/nutria/cli.py:397-399."
+ },
+ {
+  "id": "D1-4",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 6. La conversión explícita del SEM combinado, que la revisión presenta como lo más habitual en nutrición animal, se anula con un valor por defecto silencioso:\n- Si el CSV no trae `tipo_disp`, la dispersión se trata como DE sin avisar.\n- `extraccion exportar` escribe `dispersion_type` y `mean_trt`, pero `meta analizar` lee `tipo_disp` y `media_trt`.\n- Al renombrar solo las medias para que la orden funcione, el tipo de dispersión se ignora.",
+  "evidencia": "Código:\n- src/nutria/cli.py:505: `r.get(\"tipo_disp\") or \"SD\"`.\n- src/nutria/db.py:229 y src/nutria/cli.py:343-349 frente a src/nutria/cli.py:492-510.\n\nReproducido con 3 estudios con SEM combinado (REML):\n- Sin tipo_disp: EE 0,1497, p = 2,6e-9, I² 19,5 %.\n- Con tipo_disp=SEM_combinado: EE 0,4762, p = 0,056, I² 0 %.\n\nCorrección que se anula: docs/REVISION_PROMPT_ORIGINAL.md:118."
+ },
+ {
+  "id": "D1-5",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 2. El hook y el sello no cubren lo que prometen:\n- El hook es PostToolUse: el fichero ya está escrito.\n- Solo actúa con Write|Edit|MultiEdit.\n- Solo mira research/informes/*.md y los JSON de oportunidades e hipótesis.\n- Si falla una importación, deja pasar todo.\n- No comprueba 'revisado_por_humano'.\n- Las líneas que empiezan por '>' no se comprueban.\n- El sello es un JSON sin autenticar.\n\nLos entregables de la misión 1 (mapa, ranking y planes en research/revisiones/ y research/planes/) no pasan por ninguna verificación automática. Ni /mision-1 ni mision-1-auto invocan verificador-citas ni `nutria verificar`.",
+  "evidencia": "Hook:\n- .claude/settings.json:38-40.\n- scripts/hooks/check_research_file.py:30-34, :76-80, :81-82.\n\nComprobación y sello: src/nutria/reports/check.py:91, :158-169. Reproducido: un '[PUB]' sin [Rn] dentro de una cita da 0 errores.\n\nMisión 1: grep de 'verificador-citas' y 'nutria verificar' en .claude/workflows/mision-1-auto.js y .claude/skills/mision-1/SKILL.md sin resultados.\n\nRegla: .claude/skills/informe/SKILL.md:18-19."
+ },
+ {
+  "id": "D1-6",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterios 3 y 5. La regla de frontera se reduce a la alegación terapéutica ('¿prevenir, tratar o curar?'):\n- Omite el criterio funcional del medicamento veterinario: restaurar, corregir o modificar funciones fisiológicas mediante acción farmacológica, inmunológica o metabólica (art. 4.1.b del Reglamento (UE) 2019/6).\n- Ese es justo el riesgo de un sistema que busca 'compuestos bioactivos con efecto fisiológico' y que presenta la inflamación como diana natural de los estabilizadores fisiológicos.\n- El árbol de REGULACION_UE.md clasifica como materia prima todo lo que 'cubre necesidades nutricionales'. Eso enviaría vitaminas, oligoelementos y aminoácidos, que son aditivos nutricionales (art. 5.3.d del Reglamento (CE) 1831/2003), a la rama equivocada. La skill lo matiza solo a medias.\n- No verificado en línea: EUR-Lex inaccesible.",
+  "evidencia": "Regla de frontera:\n- docs/REGULACION_UE.md:12-13.\n- .claude/skills/triage-regulatorio/SKILL.md:12-14.\n- CLAUDE.md:29-30.\n- .claude/agents/regulacion-seguridad.md:15-17.\n\nReformulación y diana: docs/PROMPT_MAESTRO_v2.md:16-17; docs/REVISION_PROMPT_ORIGINAL.md:81-82.\n\nÁrbol de clasificación: docs/REGULACION_UE.md:16-18 frente a .claude/skills/triage-regulatorio/SKILL.md:16-18."
+ },
+ {
+  "id": "D1-7",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 3 (descartar pronto y barato). En evaluar-oportunidad-auto, el plan genera la lista 'descarte_rapido' pero nunca se usa:\n- Todos los especialistas, regulación incluida, se lanzan a la vez sin ninguna puerta previa.\n- No se comprueba si la oportunidad ya tiene una compuerta bloqueada antes de gastar en 8 especialistas.",
+  "evidencia": "Workflow:\n- .claude/workflows/evaluar-oportunidad-auto.js:27, :41: se pide la lista.\n- evaluar-oportunidad-auto.js:47-59: no se usa.\n\nReglas incumplidas:\n- .claude/skills/oportunidad/SKILL.md:12-13.\n- docs/PROMPT_MAESTRO_v2.md:78-79.\n- .claude/agents/director-cientifico.md:26-27."
+ },
+ {
+  "id": "D1-8",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 6. La dependencia (varios tratamientos frente a un control común) no se modela ni se avisa en Python:\n- Las filas del mismo estudio se tratan como estudios independientes.\n- rma.mv solo existe en un script de R generado, sin prueba; R no está instalado.\n- Egger se calcula e informa desde k=3, aunque la skill pide declararlo no evaluable con k<10.\n- La validación agrupada por estudio, la certeza de la evidencia y la multiplicidad solo están en texto.",
+  "evidencia": "Código:\n- src/nutria/cli.py:492-510: sin control de 'estudio' repetido.\n- src/nutria/cli.py:571-594: script R.\n- src/nutria/cli.py:536-543 y src/nutria/stats/meta.py:251-271: Egger.\n- Reglas en texto: .claude/skills/metaanalisis/SKILL.md:16-18, :23; .claude/agents/estadistico.md:27-31.\n\nReproducido: tres dosis del estudio A frente a un control común, más B y C, dan 'k = 5' con Egger y uno-fuera calculados como independientes."
+ },
+ {
+  "id": "D1-9",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 10. En el flujo automático, el mapa de lo que ya existe se recoge pero se descarta antes de generar:\n- 'soluciones_actuales' no es obligatorio y la consolidación lo elimina.\n- Los generadores solo reciben título, especie, etapa y mecanismos.\n- La novedad se comprueba después de generar, y `nutria patentes` sin token de Lens solo construye URLs.\n- No hay un entregable 'mapa de productos o aditivos autorizados'.\n- mision-1-auto quita el punto de control humano tras M1a y redacta los planes antes de la selección humana.\n- La misión nunca se ha ejecutado.",
+  "evidencia": "mision-1-auto:\n- .claude/workflows/mision-1-auto.js:24-26, :28-32, :91-97, :98-102: se descarta lo existente.\n- mision-1-auto.js:79-89 y :176-200: sin control humano y planes antes de la selección.\n\nPatentes: src/nutria/sources/patents.py:14-21; src/nutria/cli.py:320-327.\n\nMétodo de referencia:\n- docs/PROMPT_MAESTRO_v2.md:416-420, :432-433.\n- .claude/skills/mision-1/SKILL.md:41, :75-77.\n\nresearch/ solo contiene .gitkeep."
+ },
+ {
+  "id": "D1-10",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 9. La rúbrica vuelve a mezclar las dos perspectivas económicas:\n- 'potencial_economico (ganadero y empresa)' es una sola puntuación cuyas anclas usan 'o': 'ROI positivo en el escenario conservador o mercado grande con margen atractivo'. Contradice la regla de no mezclar.\n- No hay vínculo de coherencia entre el precio del producto en el modelo del ganadero y las ventas del modelo de la empresa.\n- P(rNPV>0) mide la incertidumbre de parámetros sobre un valor ya ponderado por riesgo, no la probabilidad de éxito comercial. Es fácil malinterpretarlo.",
+  "evidencia": "Rúbrica:\n- src/nutria/data/rubrica.toml:93-102.\n- docs/RUBRICA.md:90-98.\n- docs/PROMPT_MAESTRO_v2.md:366.\n\nRegla de no mezclar:\n- .claude/skills/evaluacion-economica/SKILL.md:27.\n- docs/PROMPT_MAESTRO_v2.md:339-344.\n\nModelos separados y P(rNPV>0): src/nutria/econ/farm.py:45-59; src/nutria/econ/rnpv.py:58-72, :92-96."
+ },
+ {
+  "id": "D1-11",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 11. La confidencialidad solo se aplica en el router multimodelo, que está inactivo y cuya sensibilidad por defecto es 'normal':\n- El propio registro clasifica Claude como 'standard'. Según su regla, no debería recibir datos confidenciales, pero toda la orquestación y los subagentes corren en Claude Code.\n- WebSearch está preaprobado para todos. Las consultas de novedad y ABC revelan la combinación inventiva a servicios externos.\n- --firma-humana es texto libre y cualquier agente la rellena.\n- No hay un campo para la contribución inventiva humana, solo el enum 'origen'.\n- Las consultas de patentes quedan en procedencia.jsonl, que se versiona con git.\n- No menciona el Reglamento (UE) 2019/1381 de transparencia: publicación de las solicitudes y peticiones de confidencialidad.",
+  "evidencia": "Router y registro de modelos:\n- src/nutria/llm/router.py:124-126.\n- src/nutria/cli.py:961.\n- src/nutria/data/modelos.toml:8-9, :14-21, :24-31.\n\nWebSearch: .claude/settings.json:8.\n\nFirma humana: src/nutria/cli.py:847, :876. Reproducido: director-cientifico registra 'firma: Dra. Inventada'.\n\nOrigen de las hipótesis: src/nutria/data/schemas/hipotesis.schema.json:24.\n\nPatentes en la procedencia: src/nutria/cli.py:325; CLAUDE.md:99.\n\nRegla de PI: CLAUDE.md:35-37.\n\nTransparencia: grep de '1381' y 'transparen' sin resultados."
+ },
+ {
+  "id": "D1-12",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 12. Los requisitos de validación son correctos en el método, pero no llegan a quien escribe los planes:\n- Donantes o matadero, Directiva 2010/63/UE, in situ como in vivo, FEEDAP y BPL no aparecen en el prompt del director, ni en la orden de redactar el plan, ni en la lista del crítico que revisa el plan.\n- La compuerta 'etica' se decide en M1c, antes de que exista ningún plan, y no se revisa después.\n- PROMPT_MAESTRO trata el registro previo del protocolo como opcional por confidencialidad. Omite la notificación obligatoria a EFSA de los estudios que respaldan una solicitud: art. 32 ter del Reglamento (CE) 178/2002, introducido por el 2019/1381. No verificado en línea.",
+  "evidencia": "Método: docs/PROMPT_MAESTRO_v2.md:318-335, :334-335.\n\nRuta que escribe y revisa los planes:\n- .claude/agents/director-cientifico.md:13-19.\n- .claude/workflows/mision-1-auto.js:187-189.\n- .claude/skills/mision-1/SKILL.md:77-80.\n- .claude/agents/critico-red-team.md:13-28.\n\nCompuerta ética antes del plan: mision-1-auto.js:140 frente a :184-200.\n\nÚnico agente con 2010/63: .claude/agents/sostenibilidad-bienestar.md:21-22."
+ },
+ {
+  "id": "D1-13",
+  "dimension": "D1",
+  "gravedad": "media",
+  "texto": "Criterio 7. 'Destino digestivo primero' es solo una instrucción:\n- El código implementa clientes de dianas moleculares (ChEMBL, PubChem, UniProt, STRING, Reactome).\n- No hay nada para degradación ruminal, biohidrogenación, tasa de paso ni modelos NASEM o INRAE, que el propio método sitúa como prioridades 1 y 2.\n- En mision-1-auto, la 'plausibilidad', cuyas anclas exigen el destino digestivo, se puntúa sin ningún paso de fisiología o destino digestivo. Solo depende de un punto de la lista del crítico.",
+  "evidencia": "Código: src/nutria/sources/ (chembl.py, pubchem.py, uniprot.py, stringdb.py, reactome.py); no hay ningún módulo de destino digestivo.\n\nMétodo: docs/PROMPT_MAESTRO_v2.md:204-213.\n\nTriage sin fisiología: .claude/workflows/mision-1-auto.js:136-141.\n\nAnclas y crítico:\n- src/nutria/data/rubrica.toml:24-30.\n- .claude/agents/critico-red-team.md:19."
+ },
+ {
+  "id": "D1-14",
+  "dimension": "D1",
+  "gravedad": "baja",
+  "texto": "Criterio 8. No se exigen 3 evaluadores:\n- El motor solo avisa si hay menos de 2. Con 2 evaluadores no hay aviso y la oportunidad puede encabezar el ranking.\n- La puntuación compuesta se sigue mostrando con un decimal.\n- Con α=200, los pesos se perturban poco, unos ±2-3 puntos. La robustez frente a los pesos se apoya sobre todo en comparar con el perfil original.",
+  "evidencia": "Código:\n- src/nutria/scoring/engine.py:199-200, :208-210, :249.\n- src/nutria/cli.py:864.\n\nRegla incumplida: docs/PROMPT_MAESTRO_v2.md:372.\n\nReproducido: O-0001 con 2 evaluadores, puesto 1 y sin aviso."
+ },
+ {
+  "id": "D1-15",
+  "dimension": "D1",
+  "gravedad": "baja",
+  "texto": "Criterios 1 y 2. red-team-auto cuenta lo no comprobable como refutado:\n- Sin red, todas las afirmaciones salen refutadas: el resultado no discrimina.\n- Contradice el veredicto 'no verificable' del propio crítico.\n- El respaldo de cada afirmación por su fuente solo lo comprueba un LLM.",
+  "evidencia": "- .claude/workflows/red-team-auto.js:35.\n- .claude/agents/critico-red-team.md:32.\n- src/nutria/verify/citations.py:7-9."
+ },
+ {
+  "id": "D2-1",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "La ceguera de los evaluadores no existe en la práctica: la rompe el propio prompt del rol evaluador y el código no la impone.\n- Los evaluadores son director-cientifico, y su prompt de sistema manda ejecutar 'Antes de opinar' `oportunidad ver <ID> --json` (sin --sin-puntuaciones) y `nutria puntuar ranking`. Las dos órdenes muestran puntuaciones ajenas y contradicen la consigna del workflow ('NO leas puntuaciones').\n- El evaluador es texto libre del JSON y se hace upsert por nombre, así que cualquier agente puede registrar o sobrescribir las puntuaciones de otro.",
+  "evidencia": "Ficheros:\n- .claude/agents/director-cientifico.md:23-24\n- .claude/workflows/mision-1-auto.js:166-172\n- .claude/workflows/evaluar-oportunidad-auto.js:72-75\n- src/nutria/cli.py:398-399 (puntuaciones salvo flag opcional), :430 (rater = data['evaluador'])\n- src/nutria/db.py:397-401\n- src/nutria/scoring/engine.py:195-198, :253-254\n\nReproducido en /tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/audit_d2/repro:\n- Con 2 evaluadores registrados, `puntuar ranking` imprime 'Desacuerdo entre evaluadores en evidencia (0.25-1.00)' para cada criterio.\n- `oportunidad ver --json` devuelve 16 puntuaciones con nombres de evaluador.\n- `--agente critico-red-team puntuar registrar` sobrescribe las de 'evaluador-economico' sin error."
+ },
+ {
+  "id": "D2-2",
+  "dimension": "D2",
+  "gravedad": "alta",
+  "texto": "Quien genera evalúa, en contra del protocolo del propio sistema.\n- En evaluar-oportunidad-auto, director-cientifico redacta la síntesis y el informe con una 'decisión propuesta'. Después, tres director-cientifico puntúan leyendo ese informe: evalúan lo que su rol produjo y ven la conclusión esperada.\n- En red-team-auto, el director decide qué afirmaciones se someten a refutación, aunque el documento sea un informe o plan escrito por él.\n- En mision-1-auto, el director redacta el JSON registrado de cada oportunidad que luego puntúa.",
+  "evidencia": "Ficheros:\n- .claude/workflows/evaluar-oportunidad-auto.js:62-67 (decisión propuesta en :65), :71-75 (en :73 los evaluadores leen el informe)\n- .claude/workflows/red-team-auto.js:26-29\n- .claude/workflows/mision-1-auto.js:150-154, :166-171\n\nIncumple:\n- docs/PROMPT_MAESTRO_v2.md:254 ('no evalúa lo que él mismo genera') y :269-270\n- CLAUDE.md:31-32\n\nHarness: los 3 evaluadores son director-cientifico y sus prompts contienen research/informes/O-0003.md."
+ },
+ {
+  "id": "D2-3",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "Los 'tres evaluadores independientes' son el mismo agentType, con el mismo modelo (opus), el mismo CLAUDE.md y la misma crítica como entrada. Solo cambia una frase de 'enfoque'.\n- Sus errores quedan correlacionados, que es justo el problema que el propio sistema diagnosticó.\n- La procedencia los registra como tres agentes que no existen (evaluador-cientifico, evaluador-industrial-regulatorio, evaluador-economico).\n- El motor cuenta evaluadores por nombre, así que desaparece el aviso 'Un solo evaluador: puntuación no independiente'.",
+  "evidencia": ".claude/workflows/mision-1-auto.js:142-146, :166-171 (en :170 pasa la misma crítica a los tres); .claude/workflows/evaluar-oportunidad-auto.js:71-75; .claude/skills/mision-1/SKILL.md:65-66; .claude/agents/director-cientifico.md:5; src/nutria/scoring/engine.py:161-170, :199-200; docs/REVISION_PROMPT_ORIGINAL.md:42-43 frente a :47-48"
+ },
+ {
+  "id": "D2-4",
+  "dimension": "D2",
+  "gravedad": "alta",
+  "texto": "Las compuertas las deciden y registran agentes sin validación humana, y cuentan al instante.\n- CLAUDE.md exige validación humana para las decisiones de compuerta, pero la misma CLAUDE.md dice que regulacion-seguridad 'decide' las compuertas. Su prompt incluye 'Qué decides' y la orden de registrarlas, y mision-1-auto ordena a 4 agentes registrar cada compuerta.\n- `puntuar compuerta` no tiene opción de firma.\n- set_gate guarda la decisión sin human_signoff.\n- El ranking usa la compuerta de inmediato para bloquear o dejar como condicional.",
+  "evidencia": "Ficheros:\n- CLAUDE.md:38-39 frente a :55\n- .claude/agents/regulacion-seguridad.md:13, :36-37\n- .claude/workflows/mision-1-auto.js:136-141\n- src/nutria/cli.py:854-859, :436-437, :448\n- src/nutria/db.py:80-86, :417-435 (el registro en :435 no lleva human_signoff)\n\nReproducido: `--agente regulacion-seguridad puntuar compuerta O-0001 seguridad bloqueada` pasa O-0001 a BLOQUEADA en el ranking sin ninguna firma."
+ },
+ {
+  "id": "D2-5",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "La firma humana no autentica a nadie y ninguna transición la exige.\n- --firma-humana es texto libre que cualquier agente puede rellenar, y el actor (--agente) es autodeclarado.\n- El paso a 'en_validacion' (el paso hacia experimentos que CLAUDE.md reserva a validación humana) se acepta sin firma, incluso con la compuerta de seguridad bloqueada. Esto contradice el propio texto del ranking.",
+  "evidencia": "Ficheros:\n- src/nutria/cli.py:847, :876\n- src/nutria/db.py:95-96, :319-330, :447-453\n- src/nutria/provenance.py:51-52\n- CLAUDE.md:38-39\n- docs/PROMPT_MAESTRO_v2.md:278-279\n- src/nutria/scoring/engine.py:259-260\n\nReproducido:\n- Tras bloquear la compuerta de seguridad, `--agente director-cientifico oportunidad estado O-0001 en_validacion` responde 'O-0001 -> en_validacion'.\n- `decision registrar --firma-humana \"Dra. Inventada\"` queda registrada como 'firma: Dra. Inventada' con decided_by director-cientifico."
+ },
+ {
+  "id": "D2-6",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "mision-1-auto suprime los dos puntos de control humanos de /mision-1.\n- Pasa del mapa consolidado a la generación sin consultar a nadie.\n- Tras el ranking redacta, critica y revisa los planes de un top-3 que solo ha elegido un agente.\n- La API de Workflow no tiene ninguna primitiva para esperar al usuario, y el diseño no lo compensa encadenando workflows por fases con revisión entre ellos.\n- La selección queda como 'propuesta', pero las compuertas y los planes ya están registrados y escritos antes de cualquier firma.",
+  "evidencia": ".claude/skills/mision-1/SKILL.md:41, :75-76 frente a .claude/workflows/mision-1-auto.js:79-89, :176-200 (los planes en :184-200 siguen directamente al ranking en :177-182); :180, :214. En el harness, el ranking es la llamada 132 y el primer plan la 133."
+ },
+ {
+  "id": "D2-7",
+  "dimension": "D2",
+  "gravedad": "alta",
+  "texto": "La evaluación en profundidad automática no puede usar al investigador bibliográfico, al extractor ni al estadístico, porque el enum de especialistas los excluye. evaluar-oportunidad-auto puntúa así una oportunidad sin revisión de evidencia (F4), sin doble extracción y sin metaanálisis (F6). El README la presenta como 'Lo mismo' que /oportunidad, que sí incluye esos pasos.",
+  "evidencia": ".claude/workflows/evaluar-oportunidad-auto.js:3, :24-25, :27; .claude/skills/oportunidad/SKILL.md:14-15 (F4), :19-20 (F6); README.md:65-66; CLAUDE.md:91-94"
+ },
+ {
+  "id": "D2-8",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "El 'descarte barato primero' no está codificado.\n- El plan devuelve 'descarte_rapido', pero el script nunca lo usa.\n- Lanza a todos los especialistas y siempre llega a la síntesis y a los 3 evaluadores, aunque un especialista proponga una compuerta bloqueada o el crítico refute.\n- mision-1-auto también hace puntuar por 3 evaluadores las oportunidades con compuertas bloqueadas.",
+  "evidencia": ".claude/workflows/evaluar-oportunidad-auto.js:27 (descarte_rapido no se usa después), :47-59, :61-76; .claude/workflows/mision-1-auto.js:156-172 (sin condición sobre las compuertas); frente a .claude/skills/oportunidad/SKILL.md:12-13 y .claude/agents/director-cientifico.md:26-27. En el harness, con compuerta_propuesta 'bloqueada' y crítica 'refutada' se lanzan igualmente las 3 puntuaciones."
+ },
+ {
+  "id": "D2-9",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "red-team-auto falla en abierto: no exige quórum.\n- Si los tres refutadores de una afirmación devuelven null (el usuario omite el agente o este muere por un error de la API), la afirmación sale 'sostenida'.\n- Si solo responde uno y no refuta, también sale 'sostenida'.",
+  "evidencia": ".claude/workflows/red-team-auto.js:37-41 (cuenta solo los veredictos válidos; con 0 refutaciones da 'sostenida'). Reproducido con agent() simulado: A1 (3 null) da 'sostenida' y A2 (1 válido sin refutar, 2 null) da 'sostenida'. Harness: /tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/audit_d2/harness.mjs"
+ },
+ {
+  "id": "D2-10",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "red-team-auto equipara 'no comprobable' con 'refutada' y reduce el veredicto a un booleano. Así contradice los prompts de los agentes que invoca: el crítico tiene 4 estados y el verificador dice 'no verificable, nunca respalda'. Sin red, toda afirmación sale refutada, y la consolidación registra cambios de estado sin firma humana.",
+  "evidencia": ".claude/workflows/red-team-auto.js:18, :35, :49; .claude/agents/critico-red-team.md:32; .claude/agents/verificador-citas.md:18, :24"
+ },
+ {
+  "id": "D2-11",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "Conflicto de rol en todos los subagentes. Según la referencia de la API de Workflow, los subagentes reciben el mismo CLAUDE.md que la sesión principal. Ese fichero empieza con 'Eres el director científico y orquestador... Coordinas a los subagentes' y manda lanzar tareas en paralelo. El crítico, los especialistas y los evaluadores reciben así dos identidades. Los workflows lo refuerzan con 'Sigue CLAUDE.md' en cada prompt. No se ha comprobado en ejecución real.",
+  "evidencia": "CLAUDE.md:3-5, :60-61, :112-114; .claude/workflows/mision-1-auto.js:18; .claude/workflows/evaluar-oportunidad-auto.js:19; .claude/agents/critico-red-team.md:10"
+ },
+ {
+  "id": "D2-12",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "La doble extracción independiente no está orquestada ni se puede distinguir.\n- Ningún workflow la lanza.\n- Las dos extracciones se guardan en la misma ruta, así que la segunda ve o sobrescribe la primera.\n- El registro anota ambas como 'extractor-datos'.\n- El estado (doble_concordante/discrepancia) lo declara quien escribe el JSON.\n- No hay ninguna orden que compare o concilie.",
+  "evidencia": ".claude/agents/extractor-datos.md:3, :28, :34-35; .claude/skills/extraccion-datos/SKILL.md:28-30; src/nutria/db.py:43-44, :236-246; src/nutria/data/schemas/extraccion.schema.json:39; src/nutria/cli.py:810-820; .claude/workflows/evaluar-oportunidad-auto.js:24-25"
+ },
+ {
+  "id": "D2-13",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "'Determinista' y 'reproducible' exageran: solo el esqueleto de control es determinista.\n- El top-3 lo elige un agente que lee la salida de texto del ranking. No se analiza el --json disponible ni se comprueba contra el registro que no esté BLOQUEADA o INCOMPLETA.\n- Qué especialistas intervienen lo decide el agente del plan.\n- Qué afirmaciones se atacan lo decide el director.\n- La misma semilla de Monte Carlo no garantiza la misma selección.",
+  "evidencia": "README.md:10, :64, :125; CLAUDE.md:112; docs/ARQUITECTURA.md:11, :74; .claude/workflows/mision-1-auto.js:4, :177-183; .claude/workflows/evaluar-oportunidad-auto.js:39-43; .claude/workflows/red-team-auto.js:26-29; src/nutria/cli.py:453"
+ },
+ {
+  "id": "D2-14",
+  "dimension": "D2",
+  "gravedad": "media",
+  "texto": "No hay diversidad de familias de modelos en la crítica ni en la verificación orquestadas. Generadores, crítico, verificador y evaluadores son todos Claude (opus o sonnet). Ningún workflow llama a `nutria llm`, y los 6 modelos alternativos están inactivos, aunque el método exige una segunda familia precisamente para la crítica y la verificación.",
+  "evidencia": "docs/PROMPT_MAESTRO_v2.md:275; docs/REVISION_PROMPT_ORIGINAL.md:45; src/nutria/data/modelos.toml:21, :31, :42, :52, :63, :75 (activo = false); .claude/skills/red-team/SKILL.md:13-14; docs/PROMPT_ORIGINAL.md:84-85"
+ },
+ {
+  "id": "D2-15",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "mision-1-auto no es idempotente ni hace el paso 0 de la skill.\n- No ejecuta `nutria doctor` ni `nutria estado`.\n- Solo deduplica dentro de la ejecución, por título normalizado.\n- Usa nombres de fichero fijos (M1_01.json, …), así que al repetirse duplica oportunidades en el registro y sobrescribe los JSON.\n- No comprueba el mínimo de 6 oportunidades en rumiantes.",
+  "evidencia": ".claude/workflows/mision-1-auto.js:59-60, :109-119, :151; frente a .claude/skills/mision-1/SKILL.md:19-21, :49"
+ },
+ {
+  "id": "D2-16",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "Colisión de nombres en la salida de red-team: el fichero se nombra solo con el nombre base. Revisar research/planes/O-0001.md y research/informes/O-0001.md escribe en el mismo research/revisiones/O-0001_redteam.md, y la segunda revisión borra la primera.",
+  "evidencia": ".claude/workflows/red-team-auto.js:46-48, :57; .claude/skills/red-team/SKILL.md:15"
+ },
+ {
+  "id": "D2-17",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "Dependencia de versión no documentada. Los workflows (.claude/workflows, invocación /nombre) existen en el binario nativo instalado, pero no en el paquete npm @anthropic-ai/claude-code 2.1.42 que también está en el entorno. El README no indica la versión mínima de Claude Code.",
+  "evidencia": "README.md:56-71; /opt/node22/lib/node_modules/@anthropic-ai/claude-code/cli.js (versión 2.1.42: 0 apariciones de '.claude/workflows'); /opt/claude-code/bin/claude ('Name of a predefined workflow (built-in or from .claude/workflows/)')"
+ },
+ {
+  "id": "D2-18",
+  "dimension": "D2",
+  "gravedad": "baja",
+  "texto": "La cobertura de roles en el triage de M1 es incompleta.\n- La compuerta de seguridad la decide solo regulacion-seguridad, aunque la toxicología la hace compuestos-toxicologia y su descripción dice que alimenta esa compuerta.\n- La novedad la comprueba solo investigador-bibliografico, cuando la skill asigna productos y patentes a economia-mercado-pi.",
+  "evidencia": ".claude/workflows/mision-1-auto.js:98-102, :136-141; .claude/agents/compuestos-toxicologia.md:3, :32-33; .claude/skills/mision-1/SKILL.md:51-52"
+ },
+ {
+  "id": "D3-1",
+  "dimension": "D3",
+  "gravedad": "alta",
+  "texto": "Sin red, la verificación en línea falla en abierto. Cada referencia que no se puede comprobar pasa a ser un aviso, y el sello se escribe con en_linea=true y errores=0, así que se acepta como válido. La CLI anuncia además 'referencias verificadas en línea'. Ocurre con --offline, que Bash(nutria *) permite sin preguntar, y también sin ese flag cuando el proxy bloquea, como en este entorno y en el de construcción (README.md:112-114). La política es incoherente: el alta de fuentes sí falla en cerrado (cli.py:198-199).",
+  "evidencia": "src/nutria/reports/check.py:133-135, 149, 158-169; src/nutria/cli.py:644, 648-649; .claude/settings.json:4. Reproducido con el proxy real y sin --offline: T1.md ('estado: revisado') con el DOI 10.9999/doi.inventado.2021.001 da '0 error(es), 1 aviso(s) | referencias verificadas en línea' con exit 0. `nutria informe sello` responde 'Sello válido' y el hook termina con exit 0 sin bloquear. El propio .verificacion.json guarda status 'error_red' y ok=false para esa referencia. Con --offline sale lo mismo (T1off.md, 'estado: final')."
+ },
+ {
+  "id": "D3-2",
+  "dimension": "D3",
+  "gravedad": "alta",
+  "texto": "Las referencias que solo tienen URL nunca se verifican: generan un aviso y el informe se sella como válido aunque haya red. Es el camino previsto para toda la normativa UE (EUR-Lex) y la literatura gris, y una vía de escape para referencias científicas inventadas. El propio docs/REVISION_PROMPT_ORIGINAL.md:264 cita St-Pierre 2001 solo con la URL de la portada de la revista.",
+  "evidencia": "src/nutria/reports/check.py:111-116; src/nutria/verify/citations.py:172-177 (solo extrae y verifica DOI y PMID); docs/PROMPT_MAESTRO_v2.md:387-388. Reproducido con red simulada (T2): '[R1] Inventado A. 2022 ... https://www.ejemplo-inventado.org/articulo-123' no genera ninguna verificación y el sello es válido con 1 aviso. Por la CLI real (H6): `nutria verificar H6.md --sellar` termina con exit 0 y `nutria informe sello` responde 'Sello válido'."
+ },
+ {
+  "id": "D3-3",
+  "dimension": "D3",
+  "gravedad": "alta",
+  "texto": "Ningún control ejecutable comprueba que la fuente respalde la afirmación, aunque es uno de los 3 fallos típicos que el propio sistema declara (verificador-citas.md:9-10). La cita_textual y la ubicación de una [PUB] son opcionales y nunca se comparan con el resumen, aunque el código ya sabe obtenerlo (pubmed.abstracts, openalex.reconstruct_abstract). El veredicto de verificador-citas es texto libre que no queda ligado al sello. En evaluar-oportunidad-auto solo se revisan las [PUB] que cada especialista declara como clave. El director redacta y sella el informe final después de la fase de verificación, y nadie vuelve a revisar su respaldo. 'sello_valido' es un booleano que declara el propio LLM, y la puntuación sigue pase lo que pase. Esto contradice docs/PROMPT_MAESTRO_v2.md:389-391.",
+  "evidencia": "src/nutria/verify/citations.py:7-9; src/nutria/data/schemas/afirmacion.schema.json:5, 12-13; src/nutria/db.py:262-279 (guarda quote sin comprobarlo); src/nutria/reports/check.py:147-155 (el sello no lleva respaldo); .claude/workflows/evaluar-oportunidad-auto.js:35, 56, 61-68, 70-76; .claude/agents/verificador-citas.md:16-18, 25."
+ },
+ {
+  "id": "D3-4",
+  "dimension": "D3",
+  "gravedad": "alta",
+  "texto": "La regla de etiquetar toda afirmación relevante (CLAUDE.md:13) apenas se impone en el código. Solo es error una [PUB] sin [Rn] en la misma línea. Pasan sin ninguna incidencia:\n- afirmaciones sin etiqueta con citas autor-año ausentes de la bibliografía;\n- [PUB] dentro de una cita '>' o de un encabezado;\n- '[pub]' en minúsculas;\n- varias [PUB] con un único [Rn] en la línea;\n- cifras en % o en L/d.\nLa regex de unidades nunca casa con '%' por el \\b final. Las cifras con unidades sin etiqueta solo generan un aviso.",
+  "evidencia": "src/nutria/reports/check.py:32-33, 91, 97, 101-104. Reproducido con struct_checks.py:\n- S1 '...en vacas de transición (Smith et al., 2019; Jones, 2017).': sin incidencias.\n- S2 '> ...a la mitad [PUB].': sin incidencias.\n- S3 '[pub]': sin incidencias.\n- S4 '45 %' y '30%.': sin incidencias; UNIT_RE sobre 'un 45 % de' devuelve False.\n- S6, tres [PUB] con un solo [R1]: sin incidencias.\n- S7 '3,1 L/d': sin incidencias.\nControl S0: da error."
+ },
+ {
+  "id": "D3-5",
+  "dimension": "D3",
+  "gravedad": "alta",
+  "texto": "El 'bloqueo automático' es débil y falla en abierto:\n- Es PostToolUse: el fichero ya está escrito cuando actúa.\n- Solo salta con Write|Edit|MultiEdit. No ve lo que escribe la CLI nutria, ni el sello ni `informe nuevo`, ni lo escrito por Bash.\n- Solo revisa research/informes/*.md y research/{oportunidades,hipotesis}/*.json. Quedan fuera los planes, las revisiones y los .verificacion.json escritos con Write.\n- No verifica en línea ni comprueba revisado_por_humano.\n- La regex '^estado:' solo exige sello con 'estado: revisado|final' literal: en minúsculas y sin comillas.\n- Si el python3 del PATH no tiene 'requests' (venv sin activar), el ImportError hace que deje pasar todo en silencio.\n- Si el sello es un JSON corrupto, el hook se cae con exit 1, que no bloquea.\nREADME.md:10 dice que el hook 'bloquea informes con referencias no verificables'.",
+  "evidencia": ".claude/settings.json:38-47; scripts/hooks/check_research_file.py:9-10, 30-34, 63-82; README.md:10. Reproducido:\n- H1, sello '{corrupto': traceback JSONDecodeError, exit 1 y ningún 'block'. Control H1b, sin sello: sí devuelve 'block'.\n- H2 'Estado: revisado' y H2b 'estado: \"revisado\"', ambos sin sello: no bloquea.\n- H3, `python3 -S` (sin requests) sobre H1b, que debe bloquear: exit 0 sin salida.\n- H6b, plan en research/planes: no comprueba nada.\n- T1 con DOI inventado: no bloquea."
+ },
+ {
+  "id": "D3-6",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "El sello no está autenticado y apenas certifica nada:\n- Es un JSON sin firma ni HMAC, y stamp_status solo mira sha256, en_linea y errores.\n- No registra qué comprobaciones se hicieron: `nutria verificar <md> --sellar` e `informe comprobar --sin-secciones` sellan sin exigir las 20 secciones.\n- No exige referencias verificadas, ni revisión humana o del crítico, aunque informe/SKILL.md:18-19 sí las pide.\n- Un informe sin ninguna referencia y marcado 'final' se sella como válido.",
+  "evidencia": "src/nutria/reports/check.py:147-169; src/nutria/cli.py:249-250, 643-644, 766, 941-942. Reproducido:\n- H5: un sello escrito a mano ({sha256, en_linea:true, errores:0}) da 'Sello válido (None, 0 aviso(s))' y el hook lo acepta.\n- H6: una nota sin secciones y con una referencia de solo URL pasa `verificar --sellar` (exit 0) y obtiene 'Sello válido'.\n- E.md: 20 secciones, ninguna referencia y 'estado: final' dan 'Sello válido' y el hook no bloquea.\ntests/test_report_check.py:31-38 da por buena precisamente la vía falsificable."
+ },
+ {
+  "id": "D3-7",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "La correspondencia identificador-cita es débil:\n(a) Como año de la cita toma el número de 4 cifras de la entrada más cercano al año real. Un año dentro del DOI (jds.2019-..., j.xxx.2018...) o unas páginas entre 1600 y 2099 anulan el control.\n(b) Basta con que el 50 % de las palabras del título real aparezca en cualquier parte de la entrada; la medida es asimétrica.\n(c) No compara autores ni revista.\nEn la práctica, un DOI real atribuido a otro trabajo del mismo tema pasa.",
+  "evidencia": "src/nutria/verify/citations.py:25, 65-72, 99-105, 116-118. Reproducido con red simulada:\n- T4: cita de '2012' con el DOI 10.3168/jds.2019-17123 (real, 2020). Toma 2019 como año y el sello es válido.\n- T4d: con páginas '2007-2016' no detecta 2001 frente a 2008.\n- T5: la cita 'rumen-protected methionine ... dairy goats', de Smith y Brown, con el DOI de un trabajo sobre colina en vacas, da cobertura 0,75 y sello válido.\n- T7: con autores inventados, sello válido.\nControl T4c: sin otros números, sí lo detecta."
+ },
+ {
+  "id": "D3-8",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "Una retractación desconocida se trata como 'no retractado', sin aviso. Para un DOI, Crossref solo la detecta si el título empieza por 'RETRACTED'; el campo update-to solo marca el aviso de retractación, no el artículo retractado. Todo depende de que OpenAlex responda: si falla, retracted=None, ok=True y no hay ni aviso. Además, la respuesta se cachea 30 días.",
+  "evidencia": "src/nutria/sources/crossref.py:38-40, 49; src/nutria/verify/citations.py:96-97, 146-151; src/nutria/reports/check.py:136; src/nutria/http.py:88-92; src/nutria/config.py:28. Reproducido (T6): un DOI retractado según OpenAlex, con OpenAlex caído, da retracted=None, 0 errores, 0 avisos y 'Sello válido'. Control T6b, con OpenAlex disponible: 'está RETRACTADO'."
+ },
+ {
+  "id": "D3-9",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "La caché HTTP se puede envenenar sin dejar rastro. Son ficheros JSON sin integridad en .cache/nutria, que git ignora. Se sirven sin red mientras no caduquen (30 días) o en modo offline, y lo que sale de la caché no se registra en la procedencia. Basta escribir una entrada de Crossref para que un DOI inventado se 'verifique' y se registre como fuente verificada.",
+  "evidencia": "src/nutria/http.py:82-93, 130-132; src/nutria/config.py:25; .gitignore:4. Reproducido: con una entrada plantada para 10.9999/inventado.cache.2024, `nutria verificar --doi ... --cita ...` da 'verificada' (exit 0) sin --offline. `fuente agregar --doi` responde 'Registrada y verificada' y aparece con ✓ en `fuente listar`. La procedencia no tiene ningún evento 'http' ni de la verificación."
+ },
+ {
+  "id": "D3-10",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "El registro no exige lo que define [PUB]: 'fuente registrada y verificada' (CLAUDE.md:13). add_claim y add_extraction aceptan fuentes sin verificar o retractadas, y `buscar --registrar` registra sin verificar. La comprobación de informes tampoco consulta el registro, así que los [Rn] de un informe no tienen por qué ser fuentes registradas.",
+  "evidencia": "src/nutria/db.py:236-238, 262-269; src/nutria/cli.py:159-163, 740; src/nutria/reports/check.py:17-19 (no usa db). Reproducido: `afirmacion agregar` con una [PUB] sobre doi:10.5555/sin.verificar y otra sobre doi:10.5555/retractado responde 'Afirmaciones registradas: [A-0001, A-0002]' con exit 0."
+ },
+ {
+  "id": "D3-11",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "La procedencia y las decisiones no tienen integridad ni autenticación:\n- El JSONL se escribe en modo append sin cadena de hashes, y read_events ignora en silencio las líneas corruptas.\n- El actor (--agente o NUTRIA_AGENT) y --firma-humana son texto libre.\n- La tabla decisions no tiene triggers que impidan UPDATE o DELETE.\n- add_decision no comprueba que la entidad exista.\n- Ningún estado exige firma humana, tampoco 'priorizada' ni 'en_validacion'.",
+  "evidencia": "src/nutria/provenance.py:51-52, 100-111, 125-128; src/nutria/cli.py:714-722, 847, 876; src/nutria/db.py:88-92, 319-330, 447-461. Reproducido:\n- Un evento 'revision_humana' forjado, con actor 'humano' y fecha 2026-01-01, aparece en `nutria procedencia`, y una línea corrupta se ignora.\n- `nutria --agente humano decision registrar --entidad O-0001 ... --firma-humana \"Dra. Responsable\"` se aceptó antes de que O-0001 existiera, y después quedó asociado a la O-0001 que se creó (src/nutria/reports/render.py:30-35 lo llevaría al Anexo B)."
+ },
+ {
+  "id": "D3-12",
+  "dimension": "D3",
+  "gravedad": "media",
+  "texto": "Huecos de trazabilidad:\n- Las puntuaciones se sobrescriben sin historial; la procedencia solo guarda el evaluador y el número de criterios.\n- `verificar --pendientes` cambia fuentes a verificadas, y `verificar --doi` se ejecuta, sin dejar ningún evento.\n- El evento del sello no recoge avisos ni el estado real de la verificación.\n- Los eventos no registran el commit de git (solo se guarda en init) ni el modelo del subagente que generó cada afirmación, aunque docs/PROMPT_ORIGINAL.md:87 pide conservar las versiones de los modelos.",
+  "evidencia": "src/nutria/db.py:397-404; src/nutria/cli.py:80, 223-246, 431-432, 645-646; src/nutria/provenance.py:92-99. Reproducido: tras registrar dos veces las puntuaciones de evaluador-cientifico quedan 8 filas, todas con 1.0, sin rastro de los valores anteriores ni en decisions ni en la procedencia. `verificar --pendientes` marcó la fuente con ✓ y la procedencia siguió en 6 eventos antes y después."
+ },
+ {
+  "id": "D3-13",
+  "dimension": "D3",
+  "gravedad": "baja",
+  "texto": "La lectura de la bibliografía es frágil. Si un [Rn] está duplicado, solo se verifica la última entrada, así que una primera entrada inventada pasa sin comprobar. Solo cuenta el primer encabezado que contenga 'bibliograf' o 'referencias', y cada entrada debe ocupar una sola línea.",
+  "evidencia": "src/nutria/reports/check.py:30, 56-60, 69-73. Reproducido (T3): un [R1] inventado (DOI 10.9999/inventado.002) seguido de un [R1] real; solo se verificó el real, con 0 errores y 'Sello válido'."
+ },
+ {
+  "id": "D3-14",
+  "dimension": "D3",
+  "gravedad": "baja",
+  "texto": "Un DOI que solo está en OpenAlex se verifica pero no se puede registrar, porque `fuente agregar` vuelve a pedirlo a Crossref.",
+  "evidencia": "src/nutria/cli.py:196-202 frente a src/nutria/verify/citations.py:131-136. Reproducido con mocks: `verificar --doi 10.5281/zenodo.123456` termina con exit 0, pero `fuente agregar` da 'Error de red: 404 crossref' con exit 4."
+ },
+ {
+  "id": "D3-15",
+  "dimension": "D3",
+  "gravedad": "baja",
+  "texto": "La existencia de un DOI solo se consulta en Crossref y OpenAlex, no en el registro de DOI (doi.org). Por el código, un DOI válido de otra agencia (DataCite, mEDRA) que no esté en OpenAlex se marcaría 'no existe' y daría error. No lo he podido comprobar en vivo porque el proxy bloquea esos servicios.",
+  "evidencia": "src/nutria/verify/citations.py:127-136; src/nutria/reports/check.py:131-132."
+ },
+ {
+  "id": "D3-16",
+  "dimension": "D3",
+  "gravedad": "baja",
+  "texto": "Las pruebas no cubren ninguno de los modos de fallo anteriores: hook, sello sin red, referencias de solo URL, duplicados, año dentro del DOI, retractación desconocida, envenenamiento de la caché. Las 11 pruebas de D3 pasan aunque todas esas elusiones funcionan.",
+  "evidencia": "tests/test_citations.py:1-51; tests/test_report_check.py:1-38; tests/test_registry_cli.py:1-49 (ninguna prueba del hook). En la copia: '11 passed in 0.68s'."
+ },
+ {
+  "id": "D4-1",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "No se ha ejecutado ninguna investigación. No hay mapa de problemas, oportunidades, hipótesis, extracciones, metaanálisis ni informes con los que juzgar la exactitud fisiológica o nutricional aplicada. Todo el contenido de dominio es metodológico y el razonamiento científico queda delegado en los LLM.",
+  "evidencia": "research/datos, evals, hipotesis, informes, oportunidades, planes y revisiones solo contienen .gitkeep (ls -la). No existe research/nutria.sqlite. La misión 1 que exige docs/PROMPT_ORIGINAL.md:115-118 no se ha ejecutado. docs/ARQUITECTURA.md:29-30: 'el razonamiento lo hacen los agentes'."
+ },
+ {
+  "id": "D4-2",
+  "dimension": "D4",
+  "gravedad": "alta",
+  "texto": "Los sistemas de racionamiento (NASEM 2021, INRAE, FEDNA) solo se citan; no se implementan. Faltan:\n- predicción de la ingestión de MS;\n- aporte de energía (ENl/UFL) y de proteína metabolizable (PM/PDI);\n- evaluación de raciones y modelo de fermentación ruminal;\n- tablas de composición y optimizador de fórmulas.\nEl propio método los pone como prioridades 2 y 3 de modelización. Tampoco hay conversión de dosis entre g/animal/d, mg/kg MS y g/t.",
+  "evidencia": "Solo aparecen en texto: .claude/agents/nutricion-formulacion.md:13-14; docs/PROMPT_MAESTRO_v2.md:132 y :207-209; docs/FUENTES.md:59-64. El encargo los pedía en docs/PROMPT_ORIGINAL.md:74.\n\nNingún término de racionamiento (Mcal, ENl/NEL, UFL, PDI, proteína metabolizable, DMI, degradabilidad, tasa de paso) aparece en src/ (grep sin resultados pertinentes).\n\nEl modelo del ganadero solo admite dosis_g_dia (src/nutria/econ/farm.py:55), aunque CLAUDE.md:106 y .claude/agents/nutricion-formulacion.md:19-20 exigen expresar la dosis por animal y día, por kg de MS y por tonelada."
+ },
+ {
+  "id": "D4-3",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "La regla 'destino digestivo primero' no se impone:\n- no es una compuerta;\n- su criterio pesa 10/100 en el perfil recomendado (en el original pesaba 15);\n- un candidato cuyo compuesto no llega a la diana puede quedar el primero del ranking como APTA.\nLos workflows automáticos tampoco hacen el descarte por destino digestivo antes de puntuar.",
+  "evidencia": "Compuertas definidas: solo seguridad, regulatoria, analitica, propiedad_intelectual y etica (src/nutria/data/rubrica.toml:104-127). F5 no tiene salida de descarte en docs/ARQUITECTURA.md:39, a diferencia de F3, F7 y F8 (:38, :44-45). Peso de la plausibilidad: 10 frente a 15 (rubrica.toml:131 frente a :135).\n\nReproducido en la copia con /tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/audit_d4/t_scoring.py: plausibilidad=0 (ancla de rubrica.toml:26, 'el compuesto no llega a la diana'), el resto de criterios a 1 y las compuertas superadas da 90,0, APTA, rango 1 y cuadrante 'Prioridad', por delante de un candidato con todos los criterios a 0,75 (75,0).\n\nEn los workflows:\n- El triage M1c no incluye a fisiologia-bioquimica ni a nutricion-formulacion (.claude/workflows/mision-1-auto.js:136-141).\n- El destino digestivo solo es el punto 3 de la lista del crítico (.claude/agents/critico-red-team.md:19), y su veredicto no bloquea (mision-1-auto.js:161-172).\n- El 'evaluador científico' es director-cientifico, sin WebSearch ni WebFetch (mision-1-auto.js:142-146, :171; .claude/agents/director-cientifico.md:4).\n- evaluar-oportunidad-auto pide 'descarte_rapido' pero nunca lo usa ni ordena el análisis (.claude/workflows/evaluar-oportunidad-auto.js:27, :39-59) y deja omitir especialistas (:41).\n\nNingún esquema tiene un campo de destino digestivo (oportunidad.schema.json:5-35; hipotesis.schema.json:5-26). En el informe es solo un comentario HTML (src/nutria/reports/plantilla_informe.md:43)."
+ },
+ {
+  "id": "D4-4",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "Las concentraciones alcanzables in vivo y la dosis que llega al intestino son solo una instrucción, sin herramienta ni campo de datos. No se puede registrar ni calcular:\n- la fracción que escapa al rumen;\n- la digestibilidad intestinal;\n- la concentración activa in vitro frente a la esperable en rumen o plasma.\nTampoco se advierte de la adaptación microbiana ni de las incubaciones cortas en lote, trampas habituales con los modificadores ruminales.",
+  "evidencia": "Las instrucciones están en .claude/agents/fisiologia-bioquimica.md:14-19 y .claude/agents/critico-red-team.md:17-19.\n\nEl cliente de PubChem solo obtiene propiedades fisicoquímicas (src/nutria/sources/pubchem.py:12-13).\n\nLa protección queda en el texto libre 'forma_producto' (src/nutria/data/schemas/extraccion.schema.json:24), sin campos para el escape ruminal ni la digestibilidad intestinal.\n\nLa adaptación microbiana y las incubaciones de corta duración no aparecen en .claude/ ni en docs/ (grep). docs/PROMPT_MAESTRO_v2.md:321 solo cita 'incubaciones, RUSITEC' como métodos."
+ },
+ {
+  "id": "D4-5",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "El contexto biológico que el sistema llama 'obligatorio' no lo exigen los esquemas. Se aceptan:\n- extracciones sin etapa, dieta basal, dosis, base de expresión, forma del producto, n ni medias;\n- hipótesis sin especie ni etapa;\n- afirmaciones [PUB] sin especie;\n- oportunidades con especie 'animales' y etapa 'todas'.",
+  "evidencia": "La norma está en CLAUDE.md:19-21 y docs/PROMPT_MAESTRO_v2.md:24-25, :61-62 y :136-140.\n\nLo que exige cada esquema:\n- extraccion.schema.json:5-6 solo requiere fuente, especie, diseno, unidad_experimental, intervencion, variable, unidad y ubicacion.\n- hipotesis.schema.json:8-25 no tiene campos de especie ni de etapa, y 'oportunidad' no es obligatoria (:5-7).\n- afirmacion.schema.json:5-15 no tiene especie.\n- oportunidad.schema.json:10-11 deja especie y etapa en texto libre.\n\nReproducido con el mismo validador que usa la CLI (src/nutria/cli.py:39-41) en /tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/audit_d4/t_schemas.py: los cuatro registros mínimos dan 'VALIDO'.\n\nEl esqueleto del informe no recoge la especie ni la etapa (src/nutria/reports/render.py:37-42)."
+ },
+ {
+  "id": "D4-6",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "La dieta basal es texto libre y no puede usarse como moderador. Sin embargo, el sistema la considera determinante de la respuesta (forraje:concentrado, FND, almidón, grasa, PDR, DCAD). Por tanto, la hipótesis 'el efecto depende de la dieta basal' no se puede contrastar con los datos del registro sin recodificarlos a mano. La exportación tampoco filtra por especie ni por etapa.",
+  "evidencia": "src/nutria/data/schemas/extraccion.schema.json:19 ('dieta_basal': string). Los determinantes aparecen en .claude/agents/nutricion-formulacion.md:15-16 y docs/PROMPT_MAESTRO_v2.md:136-137.\n\nLa meta-regresión exige columnas numéricas (src/nutria/cli.py:558, float(r[c])).\n\n'extraccion exportar' solo filtra por --fuente y --variable (src/nutria/cli.py:342, :814-819)."
+ },
+ {
+  "id": "D4-7",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "La fisiología del periodo de transición aparece solo como palabras clave. No hay contenido sobre:\n- balance energético negativo, AGNE y BHB;\n- caída de la ingestión preparto;\n- hipocalcemia y DCAD;\n- inflamación y exportación hepática de VLDL.\nTampoco hay campos para el momento respecto al parto (ventana de suplementación pre o posparto, DEL del muestreo) ni para la definición de caso o el umbral de cetosis o hipocalcemia subclínicas. Así, pueden combinarse incidencias con definiciones distintas.",
+  "evidencia": "Menciones: .claude/skills/mision-1/SKILL.md:27; .claude/agents/fisiologia-bioquimica.md:10; docs/PROMPT_MAESTRO_v2.md:25; ejemplos/oportunidad_ejemplo.json:5.\n\nLa palabra 'parto' no aparece en ningún agente ni skill, en CLAUDE.md, en docs/ ni en src/nutria/data (grep).\n\nsrc/nutria/data/schemas/extraccion.schema.json:9-41 solo tiene duracion_dias, estado_fisiologico y paridad, en texto libre."
+ },
+ {
+  "id": "D4-8",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "El modelo del ganadero usa los mismos días para el coste y para la respuesta. En la plantilla de un producto para la transición (de -21 a +21 d) valora 42 días de leche corregida por energía, cuando unos 21 son de periodo seco sin leche. Además, no puede representar el efecto residual en la lactación, y la respuesta umbral queda reducida a la mitad.",
+  "evidencia": "src/nutria/econ/farm.py:64 y :68 (beneficio diario × days) y :115-118 (respuesta umbral). Plantilla: ejemplos/econ_ganadero_ILUSTRATIVO.toml:5-8 y :16-20, con la definición de transición de ejemplos/oportunidad_ejemplo.json:5. La skill manda copiar esa plantilla (.claude/skills/evaluacion-economica/SKILL.md:10-11).\n\nEjecutado en la copia: 'Respuesta umbral en leche corregida por energía: 0.610 unidades/animal/día', prorrateada en 42 d; con los 21 días de lactación serían unos 1,2 kg/d.\n\nSolo se evita usando por_dia=false con una respuesta total por ciclo, y eso no se documenta."
+ },
+ {
+  "id": "D4-9",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "La herramienta de dosis-respuesta (St-Pierre) afirma que estima la pendiente 'dentro de cada estudio' y elimina el sesgo entre estudios. En realidad ajusta un intercepto aleatorio, que mezcla la información dentro y entre estudios. Si el nivel de dosis se correlaciona con las condiciones del estudio (por ejemplo, la dieta basal), la pendiente se sesga hacia la relación entre estudios. No ofrece la alternativa de estudio como efecto fijo ni la descomposición dentro/entre.",
+  "evidencia": "La afirmación está en src/nutria/stats/mixed.py:4-6; el modelo, en :33-36.\n\nSimulación en la copia con /tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/audit_d4/t_stpierre2.py (10 estudios, 150 réplicas, pendiente verdadera 1,0):\n- sin correlación: 1,003;\n- correlación -1 y 2 dosis por estudio: 0,348;\n- correlación -1 y 4 dosis: 0,758;\n- correlación -0,5 y 4 dosis: 0,774.\nCon el estudio como efecto fijo sale 1,00 en todos los casos.\n\nEs la herramienta que el sistema indica para la dosis-respuesta (docs/PROMPT_MAESTRO_v2.md:183; .claude/skills/metaanalisis/SKILL.md:17-18; .claude/agents/estadistico.md:22-23) y, por tanto, para los 'rangos exploratorios justificados' de CLAUDE.md:26."
+ },
+ {
+  "id": "D4-10",
+  "dimension": "D4",
+  "gravedad": "media",
+  "texto": "No se ha medido la competencia de dominio de los modelos en los que descansa todo el razonamiento fisiológico y nutricional. El banco de evaluación tiene una sola pregunta de fisiología, trivial, y ninguna de nutrición ni de racionamiento. Los modelos de los agentes de fisiología y nutrición se eligieron por reputación.",
+  "evidencia": "evals/dominio_semilla.jsonl:1-10: 5 preguntas de regulación, 4 de estadística y 1 de fisiología (:10, 'biohidrogenación'). La elección por reputación está en README.md:73-76 y contradice docs/PROMPT_MAESTRO_v2.md:273-274. research/evals/ está vacío."
+ },
+ {
+  "id": "D4-11",
+  "dimension": "D4",
+  "gravedad": "baja",
+  "texto": "La escala de madurez acepta como EMC-2 el efecto in vivo de 'un análogo cercano'. En rumiantes, la forma química o la protección cambian la llegada al intestino, así que esto contradice la regla de registrar la forma del producto y evaluar el destino digestivo, y puede inflar la madurez de un candidato.",
+  "evidencia": "docs/PROMPT_MAESTRO_v2.md:40, frente a CLAUDE.md:19-25 y docs/PROMPT_MAESTRO_v2.md:61-64."
+ },
+ {
+  "id": "D5-1",
+  "dimension": "D5",
+  "gravedad": "alta",
+  "texto": "Frontera con el medicamento incompleta: solo detecta el medicamento veterinario por la alegación o el efecto buscado ('prevenir, tratar o curar'). Omite el criterio funcional del R. (UE) 2019/6, art. 4.1.b): es medicamento lo que restaura, corrige o modifica funciones fisiológicas mediante una acción farmacológica, inmunológica o metabólica, aunque no alegue nada. Como remedio propone 'rediseñar la alegación' hacia un efecto fisiológico, y la revisión llama a los estabilizadores de las condiciones fisiológicas 'categoría natural' para productos contra la inflamación. El sistema busca dianas y mecanismos farmacológicos (ChEMBL --mecanismos), así que la compuerta regulatoria puede dejar pasar candidatos que serían medicamentos por función. Ningún documento regulatorio menciona ese criterio.",
+  "evidencia": "docs/REGULACION_UE.md:12-13; .claude/skills/triage-regulatorio/SKILL.md:12-14; .claude/agents/regulacion-seguridad.md:15-17; CLAUDE.md:29-30; docs/REVISION_PROMPT_ORIGINAL.md:79-82; .claude/agents/compuestos-toxicologia.md:17-18"
+ },
+ {
+  "id": "D5-2",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Orden erróneo del árbol: la pregunta '¿prevenir, tratar o curar una enfermedad?' va antes que la de pienso dietético, que solo se alcanza por la rama 'No'. Así, 'reducir el riesgo de fiebre de la leche e hipocalcemia subclínica' o 'de cetosis', usos del R. 2020/354 que el propio documento pone de ejemplo (la entrada 60 está confirmada), se clasificaría como medicamento. El árbol no recoge las excepciones del art. 13.3 del R. 767/2009: coccidiostáticos e histomonóstatos, desequilibrios nutricionales sin síntomas patológicos y fines de nutrición específicos listados. Además, contradice su propia tabla, que pone los coccidiostáticos como categoría de aditivo.",
+  "evidencia": "docs/REGULACION_UE.md:12-13, :22-25, :40, :52; .claude/skills/triage-regulatorio/SKILL.md:12-14 frente a :28-29"
+ },
+ {
+  "id": "D5-3",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "El nodo D clasifica como materia prima todo lo que cubre necesidades nutricionales. Pero el art. 5.3.d) del R. 1831/2003 incluye 'satisfacer las necesidades nutricionales' entre las funciones de un aditivo, y la categoría 3 (vitaminas y sustancias de efecto similar, compuestos de oligoelementos, aminoácidos y análogos, urea) son aditivos. Aplicado al pie de la letra, el árbol clasifica como materia prima los aminoácidos protegidos, los oligoelementos o la urea, productos centrales en vacuno lechero, aunque la tabla de la línea 38 dice lo contrario. La skill solo lo matiza ('nutricional específico') y el árbol no tiene nodo de premezcla.",
+  "evidencia": "docs/REGULACION_UE.md:16-18 frente a :38; .claude/skills/triage-regulatorio/SKILL.md:16-18; src/nutria/data/schemas/oportunidad.schema.json:14-16"
+ },
+ {
+  "id": "D5-4",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "No hay control de sustancias prohibidas o restringidas. La compuerta regulatoria bloquea si hay 'sustancia prohibida en piensos', pero no existe ninguna lista ni referencia con la que comprobarlo: no se cita la prohibición de autorizar como aditivos antibióticos distintos de coccidiostáticos e histomonóstatos (art. 11.2 del R. 1831/2003; 'antibi' no aparece en el repositorio) ni el anexo III del R. 767/2009. Es relevante para moduladores ruminales con actividad antimicrobiana; los ionóforos solo se mencionan como interacción.",
+  "evidencia": "src/nutria/data/rubrica.toml:110-112; docs/RUBRICA.md:105; docs/REGULACION_UE.md:44-66; .claude/agents/compuestos-toxicologia.md:24"
+ },
+ {
+  "id": "D5-5",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Vía de autorización incompleta. Falta el R. (UE) 2019/1381 de transparencia: los estudios de un expediente encargados desde el 27-3-2021 deben notificarse a EFSA (Connect.EFSA) antes de empezar, y existe asesoramiento previo (arts. 32a y 32b del R. 178/2002). El método trata el registro previo del protocolo como opcional, 'cuando no comprometa la confidencialidad', así que un plan F10 podría diseñar ensayos que no servirían para el expediente. Tampoco aparece el R. (CE) 378/2005 (funciones del EURL-FA, muestras de referencia y tasa). Ni '2019/1381', ni 'transparen', ni '378/2005' aparecen en el repositorio.",
+  "evidencia": "docs/PROMPT_MAESTRO_v2.md:304-306, :331-335; docs/REGULACION_UE.md:21, :44-66; .claude/skills/triage-regulatorio/SKILL.md:24-26"
+ },
+ {
+  "id": "D5-6",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Guía FEEDAP de eficacia desfasada. La que se da como 'verificada' es la de 2018 (EFSA J 16(5):5274, DOI 10.2903/j.efsa.2018.5274). La sustituye la de 2024 (EFSA J 22(7):e8856, adoptada el 6-6-2024 y aplicable desde el 1-12-2024), y aun así se usa para diseñar los ensayos del expediente (número de estudios y duraciones). 'Verificada' solo significa que la referencia existe, no que esté vigente.",
+  "evidencia": "docs/REGULACION_UE.md:70-73; docs/REVISION_PROMPT_ORIGINAL.md:192, :273; docs/PROMPT_MAESTRO_v2.md:332-334"
+ },
+ {
+  "id": "D5-7",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "La base legal apenas está verificada y la herramienta no puede verificarla:\n- Solo 3 de las 21 filas son 'verificada'; las 18 restantes, incluidas 1831/2003, 429/2008 y 767/2009, siguen 'pendiente'.\n- No se registra la versión consolidada (CELEX y fecha) ni de dónde sale lo 'verificado'.\n- `informe comprobar` solo da un aviso con las referencias que tienen solo URL (EUR-Lex o ELI), y `verificar` solo extrae DOI y PMID. Ninguna cita normativa se comprueba en código.",
+  "evidencia": "docs/REGULACION_UE.md:3-6, :46-66; src/nutria/reports/check.py:113-114; src/nutria/verify/citations.py:22-23, :45-51"
+ },
+ {
+  "id": "D5-8",
+  "dimension": "D5",
+  "gravedad": "alta",
+  "texto": "Las compuertas de seguridad y regulatoria no están protegidas:\n- Cualquier actor puede fijarlas o revertirlas; la atribución es la que el propio actor declara (--agente o NUTRIA_AGENT).\n- Basta un motivo cualquiera: no hay firma humana ni control de rol, y cuentan de inmediato en el ranking.\n- No hay coherencia con la ruta regulatoria registrada.\n\nReproducido en una copia temporal:\n- O-0001, con ruta 'fuera_de_alcance_medicamento', quedó APTA porque economia-mercado-pi puso las 5 compuertas en 'superada' con motivo 'x'.\n- Una compuerta regulatoria 'bloqueada' la revirtió sostenibilidad-bienestar con motivo 'y'.\n\nContradice CLAUDE.md:38-39 y :55.",
+  "evidencia": "src/nutria/cli.py:435-438, :854-859; src/nutria/db.py:417-435; src/nutria/provenance.py:51-52; src/nutria/scoring/engine.py:171-180; src/nutria/data/schemas/oportunidad.schema.json:17-20; CLAUDE.md:38-39, :55"
+ },
+ {
+  "id": "D5-9",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Una compuerta sin resolver no bloquea. Por defecto vale 'no_resuelta' (CONDICIONAL), que se ordena igual que APTA y puede entrar en el top 3 con plan. El prompt original exige bloquear los candidatos con incertidumbres críticas de seguridad o barreras regulatorias no resueltas. La compuerta de seguridad solo bloquea ante una señal positiva de toxicidad, no ante la falta de datos críticos. Reproducido: O-0002, sin ninguna compuerta evaluada, quedó 1.ª (CONDICIONAL) por delante de dos APTA.",
+  "evidencia": "src/nutria/scoring/engine.py:172, :177-180, :230-233; src/nutria/data/rubrica.toml:107; .claude/workflows/mision-1-auto.js:179; docs/PROMPT_ORIGINAL.md:105; docs/PROMPT_MAESTRO_v2.md:368-370"
+ },
+ {
+  "id": "D5-10",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "La compuerta de seguridad del triage la decide el agente regulatorio sin el especialista en toxicología:\n- En mision-1-auto y en /mision-1, compuestos-toxicologia solo genera oportunidades.\n- El esquema COMPUERTA devuelve una sola compuerta: la de seguridad solo se 'resume' y no aparece en la salida final.\n- En evaluar-oportunidad-auto, 'compuerta_propuesta' es texto libre que el workflow nunca registra.\n- El mismo tipo de agente genera oportunidades y 'alimenta la compuerta de seguridad', contra 'quien genera no evalúa'.",
+  "evidencia": ".claude/workflows/mision-1-auto.js:46-48, :90, :137, :209; .claude/workflows/evaluar-oportunidad-auto.js:31; .claude/skills/mision-1/SKILL.md:47, :59; .claude/agents/compuestos-toxicologia.md:3, :32-33; CLAUDE.md:31"
+ },
+ {
+  "id": "D5-11",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Las alegaciones permitidas solo se tratan como prohibiciones. Falta todo esto:\n- Condiciones de justificación (art. 13.1 del R. 767/2009).\n- Alegaciones permitidas de optimización de la nutrición y de apoyo o protección de las condiciones fisiológicas (art. 13.2).\n- Excepción de los desequilibrios nutricionales.\n- Procedimiento del art. 10 para añadir o modificar usos dietéticos (como el R. 2024/2899).\n- Código de buenas prácticas de etiquetado de la UE.\n- Que la alegación de un aditivo zootécnico se ciñe al efecto autorizado.\n\nEl esquema no tiene campo de alegación prevista y la salida del triage no la recoge, aunque el método exige 'alegaciones posibles'. La sección 14 del informe puede quedar vacía: los estados de compuerta van dentro de un comentario HTML y el informe pasa la comprobación con 0 errores (reproducido).",
+  "evidencia": "docs/REGULACION_UE.md:28-30; docs/PROMPT_MAESTRO_v2.md:243; src/nutria/data/schemas/oportunidad.schema.json:5-35; .claude/skills/triage-regulatorio/SKILL.md:41-48; src/nutria/reports/plantilla_informe.md:65-67; src/nutria/reports/check.py:84"
+ },
+ {
+  "id": "D5-12",
+  "dimension": "D5",
+  "gravedad": "baja",
+  "texto": "La clasificación registrada es incompleta y no se concilia con el triage. A la ruta preliminar le faltan coccidiostáticos e histomonóstatos, pienso complementario o compuesto y premezcla. No hay campo de grupo funcional ni de situación (autorizado, catalogado o nuevo). En mision-1-auto la rellena el director al registrar la oportunidad, antes del triage regulatorio, y nunca se compara con el resultado del triage.",
+  "evidencia": "src/nutria/data/schemas/oportunidad.schema.json:17-20; docs/PROMPT_MAESTRO_v2.md:302; .claude/workflows/mision-1-auto.js:34-38, :151-153"
+ },
+ {
+  "id": "D5-13",
+  "dimension": "D5",
+  "gravedad": "baja",
+  "texto": "OMG y microorganismos: la tabla aplica el R. 1829/2003 a todo 'producto de fermentación con cepas modificadas'. Pero el considerando 16 excluye lo producido 'con' un OMG, y el alcance para las cepas de producción depende de que queden células viables o ADN recombinante (está en clarificación legislativa). No se menciona el estatus QPS de EFSA en ningún documento. El esquema de seguridad de la skill omite los genes de resistencia y la toxigenicidad, que solo figuran en el prompt maestro.",
+  "evidencia": "docs/REGULACION_UE.md:59; .claude/skills/triage-regulatorio/SKILL.md:34-37; docs/PROMPT_MAESTRO_v2.md:285-287"
+ },
+ {
+  "id": "D5-14",
+  "dimension": "D5",
+  "gravedad": "baja",
+  "texto": "El banco de evaluación regulatoria tiene 5 preguntas de memoria y ninguna de clasificación. Se corrige por subcadena y da por buenas respuestas erróneas. Reproducido:\n- reg-01: 'No es un aditivo zootécnico: pertenece a los tecnológicos' → True.\n- reg-02: 'No es el 2020/354 sino el 2019/962' → True.\n- reg-05: '... regula los piensos' → True.\n\nNo sirve para medir qué modelo es competente en el rol regulatorio.",
+  "evidencia": "evals/dominio_semilla.jsonl:1-5; src/nutria/llm/router.py:144-160; docs/PROMPT_MAESTRO_v2.md:273"
+ },
+ {
+  "id": "D5-15",
+  "dimension": "D5",
+  "gravedad": "baja",
+  "texto": "Las fuentes regulatorias no tienen acceso determinista. No hay cliente para el Registro de aditivos de la UE, el Catálogo o Registro de materias primas, OpenFoodTox ni los informes del EURL-FA: todo depende de WebFetch y del LLM. settings.json no preautoriza joint-research-centre.ec.europa.eu (EURL-FA), el Registro de materias primas, boe.es (enlazado en la tabla) ni ema.europa.eu, aunque FUENTES.md los declara como fuentes.",
+  "evidencia": ".claude/settings.json:9-31; docs/FUENTES.md:28-32, :78-80; docs/REGULACION_UE.md:65"
+ },
+ {
+  "id": "D5-16",
+  "dimension": "D5",
+  "gravedad": "media",
+  "texto": "Nada está comprobado en uso. No existe ninguna clasificación, compuerta ni informe regulatorio real, y el árbol no tiene casos de prueba: los tests solo cubren la mecánica de las compuertas en el ranking, no la clasificación.",
+  "evidencia": "research/oportunidades/.gitkeep, research/informes/.gitkeep (únicos ficheros de research/); tests/test_scoring.py:30-34; tests/test_registry_cli.py:21"
+ },
+ {
+  "id": "D6-1",
+  "dimension": "D6",
+  "gravedad": "alta",
+  "texto": "Sesgo silencioso: si el CSV no trae la columna tipo_disp, `meta analizar` toma cualquier dispersión como DE sin avisar. La exportación de extracciones usa otros nombres de columna, lo que facilita el error.",
+  "evidencia": "Código:\n- /home/user/nutria/src/nutria/cli.py:505 usa `r.get(\"tipo_disp\") or \"SD\"`.\n- /home/user/nutria/src/nutria/cli.py:496-505 espera estudio, media_trt y tipo_disp. En cambio, `extraccion exportar` escribe source_id, mean_trt y dispersion_type (/home/user/nutria/src/nutria/db.py:32-45, /home/user/nutria/src/nutria/cli.py:346-349).\n- La preparación del CSV es manual (/home/user/nutria/.claude/skills/metaanalisis/SKILL.md:11-13).\n\nReproducido con 3 estudios con SEM combinado de 0,5, 0,6 y 0,7 (n 12, 10 y 8), REML con prueba z:\n- Con tipo_disp: EE 0,4762, IC [-0,013; 1,854], p 0,053.\n- Sin la columna: EE 0,1503, IC [0,620; 1,209], p 1,2e-9.\n- Con SMD, g pasa de 0,475 a 1,478.\n\nLa exportación sin modificar da un TypeError sin capturar (exit 1). Una columna dispersion_type sin renombrar se ignora igual que si faltara."
+ },
+ {
+  "id": "D6-2",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "La dependencia entre comparaciones (control compartido, varias variables por estudio) no se trata en Python ni genera aviso. La única vía es una plantilla R sin probar, que además no convierte el SEM.",
+  "evidencia": "Código:\n- /home/user/nutria/src/nutria/stats/meta.py:5-8 remite la dependencia a R.\n- /home/user/nutria/src/nutria/cli.py:492-546 no comprueba si se repite 'estudio' e ignora 'comparacion'.\n- En la plantilla, /home/user/nutria/src/nutria/cli.py:579-580 usa escalc con disp_trt y disp_ctrl como DE aunque sean SEM.\n- /home/user/nutria/src/nutria/cli.py:588-590 usa rma.mv con V diagonal más robust.\n- Ninguna prueba cubre exportar-r y R no está instalado.\n\nReproducido con 3 brazos de E1 frente al mismo control, 2 de E2 y 1 de E3:\n- Se tratan como k=6 independientes: p 0,0013 y pendiente de dosis con p 0,0019, sin aviso.\n- La salida uno-fuera dice 'sin E1' aunque solo quita 1 de las 3 filas de E1."
+ },
+ {
+  "id": "D6-3",
+  "dimension": "D6",
+  "gravedad": "baja",
+  "texto": "Los diseños (crossover y cuadrado latino frente a paralelo) y la unidad experimental se controlan solo por instrucciones. Los tamaños de efecto no tienen en cuenta el diseño.",
+  "evidencia": "Código:\n- /home/user/nutria/src/nutria/stats/effect_sizes.py:76-97 no recibe el diseño.\n- diseno y unidad_experimental se registran (/home/user/nutria/src/nutria/data/schemas/extraccion.schema.json:16-17), pero ningún análisis los usa (/home/user/nutria/src/nutria/cli.py:492-509).\n- El control está solo en /home/user/nutria/.claude/agents/estadistico.md:24-25.\n\nReproducido con el mismo efecto de 1 kg/d:\n- Paralelo con DE entre animales 4 y n=20: g=0,245.\n- Crossover con DE intraanimal 1,5, n=8 y SEM combinado: g=0,630, es decir, 2,6 veces más.\n- La varianza del crossover se calcula como si hubiera 16 animales independientes."
+ },
+ {
+  "id": "D6-4",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "El modelo de St-Pierre:\n- Su docstring dice que estima la pendiente dentro de cada estudio, y no es así con intercepto aleatorio.\n- Por defecto no usa pendiente aleatoria.\n- Usa p de Wald z, sin gl de Satterthwaite ni de Kenward-Roger.\n- No pondera.\n- No tiene pruebas.",
+  "evidencia": "Código:\n- Docstring: /home/user/nutria/src/nutria/stats/mixed.py:4-6.\n- Intercepto aleatorio por defecto: /home/user/nutria/src/nutria/stats/mixed.py:34-36 y /home/user/nutria/src/nutria/cli.py:900.\n- p de statsmodels: /home/user/nutria/src/nutria/stats/mixed.py:42-46.\n- Sin ponderar: /home/user/nutria/src/nutria/stats/mixed.py:51.\n\nMi simulación:\n- 8 estudios × 3 dosis, con el nivel del estudio correlacionado con su rango de dosis: pendiente media 0,570 frente a 0,5 real. Con efectos fijos de estudio sale 0,495.\n- 5 estudios × 3 dosis con pendiente heterogénea: error tipo I del 18,3 % por defecto y del 9,7 % con --pendiente-aleatoria, frente al 5 % nominal. Hubo ConvergenceWarnings."
+ },
+ {
+  "id": "D6-5",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "No existe validación de modelos predictivos agrupada por estudio: solo se menciona. Tampoco hay modelos bayesianos, PCA ni regresión multivariante, que pide el encargo.",
+  "evidencia": "- La exigen /home/user/nutria/.claude/agents/estadistico.md:29-30, /home/user/nutria/docs/PROMPT_MAESTRO_v2.md:195-196 y /home/user/nutria/docs/PROMPT_ORIGINAL.md:67,71.\n- Busqué validación cruzada, LOSO, GroupKFold, RMSPE, CCC y Theil en src/ sin resultados.\n- Ningún modelo de St-Pierre se valida dejando estudios fuera."
+ },
+ {
+  "id": "D6-6",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "El sesgo de publicación con k pequeño está mal resuelto:\n- La CLI ejecuta Egger con cualquier k≥3, contra su propia skill.\n- Si todas las vi son iguales, aborta el análisis completo.\n- No hay alternativas en Python.",
+  "evidencia": "- /home/user/nutria/src/nutria/cli.py:536-540 ejecuta Egger, mientras /home/user/nutria/.claude/skills/metaanalisis/SKILL.md:23 dice 'solo si k ≥ 10'. Con k=3 da gl=1 y p 0,051.\n- /home/user/nutria/src/nutria/stats/meta.py:257-266 no controla una precisión constante. Con vi idénticas, la CLI responde 'Error: math domain error' (exit 2), aunque el modelo RE funciona, y no hay forma de omitir Egger.\n- No hay embudo, recorte y relleno, PET-PEESE ni modelos de selección.\n- El Egger clásico se aplica también a SMD.\n- La plantilla R usa regtest() por defecto, que es otra variante (/home/user/nutria/src/nutria/cli.py:593)."
+ },
+ {
+  "id": "D6-7",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "HKSJ, el modelo principal recomendado:\n- No tiene variante modificada max(1,q).\n- Falla con q=0.\n- Con q<1 da un IC más estrecho que Wald.\n- La CLI no lo aplica por defecto.",
+  "evidencia": "- /home/user/nutria/src/nutria/stats/meta.py:214-223: la variante max(1,q) solo aparece en una nota.\n- Con efectos idénticos, :218 lanza ZeroDivisionError, que /home/user/nutria/src/nutria/cli.py:985 no captura: traza y exit 1, también en uno-fuera.\n\nReproducido con k=3 homogéneo y SEM:\n- REML+HKSJ: p 0,030, IC [0,218; 1,623].\n- Wald: p 0,053.\n- HKSJ modificado: p 0,193, IC [-1,129; 2,969].\n\nEl modelo principal es REML+HKSJ (/home/user/nutria/.claude/skills/metaanalisis/SKILL.md:14), pero /home/user/nutria/src/nutria/cli.py:892 lo deja como opción."
+ },
+ {
+  "id": "D6-8",
+  "dimension": "D6",
+  "gravedad": "media",
+  "texto": "No hay medidas para variables binarias (RR, OR, RD, Mantel-Haenszel, Peto) ni recuentos de eventos en el esquema. Las incidencias de salud y reproducción no se pueden sintetizar dentro del sistema.",
+  "evidencia": "- /home/user/nutria/src/nutria/cli.py:889 solo admite MD, SMD y ROM.\n- /home/user/nutria/src/nutria/stats/effect_sizes.py:73.\n- /home/user/nutria/src/nutria/data/schemas/extraccion.schema.json:28-34 no tiene campos de eventos.\n- La prueba BCG calcula el log RR a mano (/home/user/nutria/tests/conftest.py:16-18)."
+ },
+ {
+  "id": "D6-9",
+  "dimension": "D6",
+  "gravedad": "baja",
+  "texto": "La heterogeneidad se da sin incertidumbre. El intervalo de predicción no está probado y no coincide con el de la plantilla R.",
+  "evidencia": "- /home/user/nutria/src/nutria/stats/meta.py:229-233 da tau², I² y H² sin IC Q-profile.\n- /home/user/nutria/src/nutria/stats/meta.py:235-238 calcula el IP con t(k-2) y, con HKSJ, con el EE de HKSJ. No hay prueba.\n- La plantilla imprime predict() de metafor (/home/user/nutria/src/nutria/cli.py:584).\n- En BCG, Python da [-2,0084; 0,5793]; metafor con z da [-1,8667; 0,4376] (cálculo propio)."
+ },
+ {
+  "id": "D6-10",
+  "dimension": "D6",
+  "gravedad": "baja",
+  "texto": "Incoherencias en la CLI:\n- FE se cambia en silencio por REML.\n- PM con moderadores aborta.\n- No admite moderadores categóricos.\n- Hay un error con la coma decimal.",
+  "evidencia": "- /home/user/nutria/src/nutria/cli.py:541, :549 y :559 sustituyen FE por REML.\n- /home/user/nutria/src/nutria/stats/metareg.py:76-84 rechaza PM.\n- /home/user/nutria/src/nutria/cli.py:558 aplica float(), así que 'diseno' no puede ser moderador, aunque estadistico.md:24-25 lo pide.\n- /home/user/nutria/src/nutria/cli.py:476-480: con --decimal ',' el valor '1.0' se lee como 10. La estimación sale 3,249 en vez de ≈1."
+ },
+ {
+  "id": "D6-11",
+  "dimension": "D6",
+  "gravedad": "baja",
+  "texto": "En potencia, el efecto de diseño se calcula pero no se aplica: n_por_grupo sigue contando animales. Solo cubre crossover AB/BA.",
+  "evidencia": "- /home/user/nutria/src/nutria/cli.py:600-606: con delta 1,5, DE 2, 10 animales por corral e ICC 0,3, devuelve n_por_grupo=29 y una nota (DE 3,70). Calculado sobre medias de corral hacen falta 12 corrales por grupo.\n- /home/user/nutria/src/nutria/stats/power.py:33-36 trata el cuadrado latino como aproximación."
+ },
+ {
+  "id": "D6-12",
+  "dimension": "D6",
+  "gravedad": "baja",
+  "texto": "Las pruebas no cubren la parte propia de la ciencia animal y la documentación sobrevende la validación. No hay ningún análisis real.",
+  "evidencia": "- /home/user/nutria/tests/test_meta.py:8-79 y /home/user/nutria/tests/test_effect_sizes.py:8-30 no prueban el IP, St-Pierre, exportar-r, la varianza de SMD ni de ROM, ni la ruta `meta analizar`.\n- /home/user/nutria/tests/test_power.py:11-14 solo comprueba que el crossover necesita menos que el paralelo.\n- /home/user/nutria/docs/REVISION_PROMPT_ORIGINAL.md:130-132 presenta como validados St-Pierre y potencia.\n- /home/user/nutria/research/datos solo contiene .gitkeep."
+ },
+ {
+  "id": "D7-1",
+  "dimension": "D7",
+  "gravedad": "alta",
+  "texto": "La comprobación de retractación de los DOI de Crossref depende de OpenAlex y se desactiva en silencio si OpenAlex falla.\n\nCómo ocurre:\n- crossref.parse solo marca un trabajo como retractado si el título empieza por 'RETRACTED' o 'RETRACTION:'. El campo update-to solo sirve para etiquetar avisos.\n- Si la consulta a OpenAlex lanza NetworkError, retracted queda en None, ok vale True y check_report_online no emite ni error ni aviso.\n\nReproducido con Crossref respondiendo y OpenAlex bloqueado:\n- `verificar --doi` → 'verificada' (exit 0).\n- `informe comprobar --online --sellar` → '0 error(es), 0 aviso(s) | referencias verificadas en línea'.\n- `informe sello` → 'Sello válido'.\n\nCon OpenAlex accesible e is_retracted=true, el mismo DOI sale 'RETRACTADO' (exit 2). Como OpenAlex ya exige clave (D7-5), el fallo es probable con la configuración por defecto.",
+  "evidencia": "src/nutria/sources/crossref.py:38-49; src/nutria/verify/citations.py:95-97, :146-151; src/nutria/reports/check.py:131-139"
+ },
+ {
+  "id": "D7-2",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "Las claves de API y el correo se filtran a ficheros versionables.\n\nCómo ocurre:\n- Los errores HTTP incluyen resp.url con la consulta completa: api_key, email y mailto.\n- verify_doi y verify_pmid copian ese texto en Verification.message.\n- Ese mensaje se escribe en `<informe>.verificacion.json` (incidencias y referencias) y en stdout y stderr.\n- La limpieza de secretos solo actúa sobre las claves de diccionario de procedencia.jsonl.\n\nReproducido con un 403 simulado de OpenAlex y un 400 de NCBI:\n- 'SECRETO-OA-123' y 'SECRETO-NCBI-456' aparecen en el sello y no en procedencia.jsonl.\n- La clave de NCBI aparece también en el stderr de `buscar pubmed`.\n\n.gitignore no excluye research/informes.",
+  "evidencia": "src/nutria/http.py:115-116, :124-125; src/nutria/verify/citations.py:137-144, :160-163; src/nutria/reports/check.py:133-135, :147-155; src/nutria/provenance.py:55-64; .gitignore:1-8"
+ },
+ {
+  "id": "D7-3",
+  "dimension": "D7",
+  "gravedad": "alta",
+  "texto": "Sin red, o con errores de red, la verificación se queda en avisos y el sello se marca como verificado en línea.\n\nReproducido con `python -m nutria --offline informe comprobar nota.md --online --sellar` y el DOI inventado 10.9999/doi.inventado.2021.001:\n- Salida: 'Resultado: 0 error(es), 1 aviso(s) | referencias verificadas en línea'.\n- El sello guarda en_linea:true y la referencia con estado 'offline'.\n- `informe sello` → 'Sello válido'.\n\nEl evento de procedencia 'sello_informe' solo guarda el número de errores, no las referencias sin verificar.",
+  "evidencia": "src/nutria/reports/check.py:133-135, :149, :158-169; src/nutria/cli.py:640-651"
+ },
+ {
+  "id": "D7-4",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "Los intervalos mínimos por host solo se respetan dentro de un proceso, porque viven en el diccionario _last de cada HttpClient. Cada orden `nutria` es un proceso nuevo, y los workflows lanzan en paralelo agentes que ejecutan `nutria buscar`.\n\nReproducido: dos procesos simultáneos llamaron a string-db.org con 0,020 s de diferencia, pese al mínimo de 1 s.\n\nAdemás, el intervalo de Crossref (0,05 s, es decir 20 peticiones/s) supera los límites que Crossref publica desde el 1-dic-2025: 5 peticiones/s con concurrencia 1 en el pool público y 10 peticiones/s en el polite pool. Por defecto no hay email, así que se usa el pool público.\n\nEsto contradice 'el sistema respeta las políticas de uso de cada API'.",
+  "evidencia": "src/nutria/http.py:3-5, :35-45, :56-68; src/nutria/config.py:20; .claude/workflows/mision-1-auto.js:71, :107"
+ },
+ {
+  "id": "D7-5",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "El modelo de acceso a OpenAlex está desfasado. El código y la documentación tratan la clave como opcional y siguen hablando del 'polite pool' con email. Según el changelog de OpenAlex, desde el 13-feb-2026 todas las peticiones requieren clave. Lo consulté por búsqueda web y no lo he comprobado en vivo, porque el proxy bloquea api.openalex.org.\n\nOpenAlex es el respaldo de existencia de los DOI y la única fuente de retractación para los DOI de Crossref. Además, `doctor` lo prueba sin clave, así que puede dar OK sin detectar el problema.",
+  "evidencia": "src/nutria/config.py:18-20; README.md:47-48; docs/FUENTES.md:14; src/nutria/sources/openalex.py:13-20; src/nutria/cli.py:88, :105; src/nutria/verify/citations.py:133-134, :146-151"
+ },
+ {
+  "id": "D7-6",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "`fuente agregar --doi` no registra los DOI que solo están en OpenAlex (por ejemplo, de DataCite o mEDRA, como los datasets de Zenodo). Tras verificar, vuelve a pedir el registro a Crossref y además pone verified_via='crossref' sin comprobarlo.\n\nReproducido:\n- `verificar --doi 10.5281/zenodo.123456` → 'verificada' (exit 0).\n- `fuente agregar --doi` → 'Error de red: No encontrado (404): https://api.crossref.org/works/10.5281/zenodo.123456' (exit 4).",
+  "evidencia": "src/nutria/cli.py:196-202; src/nutria/verify/citations.py:130-136"
+ },
+ {
+  "id": "D7-7",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "El registro de consultas está incompleto, aunque http.py dice dejar 'constancia de cada consulta':\n- Las respuestas servidas desde caché y las peticiones fallidas no dejan evento.\n- molecula, diana, proteina, rutas y verificar no tienen evento propio.\n- Solo se guarda el SHA-256 de la respuesta. El cuerpo vive en .cache/, que git excluye y que se sobrescribe al caducar, así que no se puede reconstruir qué devolvió una búsqueda.\n- WebFetch y WebSearch (EUR-Lex, Registro UE, EFSA, Feedipedia) no se registran, porque el hook solo cubre Write, Edit y MultiEdit.\n\nReproducido:\n- `molecula pubchem aspirin` desde caché → 0 eventos nuevos.\n- `verificar --doi` desde caché → 0 eventos nuevos.\n- Búsqueda bloqueada por el proxy → 0 eventos nuevos.",
+  "evidencia": "src/nutria/http.py:3-5, :88-92, :130-132; src/nutria/cli.py:254-317; .gitignore:4; .claude/settings.json:37-49"
+ },
+ {
+  "id": "D7-8",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "`buscar efsa` ignora --desde y --hasta (solo la rama europepmc añade PUB_YEAR), pero los registra en la procedencia como si se hubieran aplicado. Esto falsea la traza de la búsqueda (PRISMA).\n\nReproducido:\n- Consulta enviada con efsa: '(selenium yeast) AND JOURNAL:\"EFSA Journal\"'.\n- Con europepmc, en cambio: 'selenium yeast AND PUB_YEAR:[2018 TO 2020]'.\n- Evento registrado: {'desde': '2018', 'hasta': '2020', 'fuente': 'efsa', ...}.",
+  "evidencia": "src/nutria/cli.py:146-152, :164-167"
+ },
+ {
+  "id": "D7-9",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "Hay fuentes que pide el encargo y que son clave para el dominio, pero no tienen integración en código:\n- Regulación y seguridad: Registro UE de aditivos, Catálogo y Registro de materias primas, EFSA OpenFoodTox, EURL-FA y EMA.\n- Nutrición: Feedipedia, FEDNA, INRAE, NASEM y FAO.\n- Biología: PDB, AlphaFold DB, GO, GEO/ArrayExpress, MetaboLights, PRIDE y Ensembl.\n\nSe consultan con WebFetch o WebSearch del LLM, sin analizador, sin verificación y sin procedencia. Así, las compuertas regulatoria y de seguridad dependen de que el agente lea bien páginas web.",
+  "evidencia": "docs/PROMPT_ORIGINAL.md:41, :45, :47; docs/FUENTES.md:23-32, :40-53, :57-64; .claude/agents/regulacion-seguridad.md:18-21; .claude/agents/bioinformatico.md:19-21"
+ },
+ {
+  "id": "D7-10",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "El modo sin red es frágil y opaco:\n- Con --offline se sirve caché de cualquier antigüedad sin indicar la fecha.\n- La clave de caché incluye api_key y email, así que el modo offline falla si el entorno no tiene exactamente las mismas variables.\n\nReproducido:\n- Una caché de hace 400 días se sirve sin aviso (exit 0).\n- `--offline buscar pubmed` sin NCBI_API_KEY → 'Error de red: Modo offline: no hay copia en caché' (exit 4); con la clave, exit 0.",
+  "evidencia": "src/nutria/http.py:81-96; src/nutria/sources/pubmed.py:12-19; src/nutria/sources/openalex.py:13-20"
+ },
+ {
+  "id": "D7-11",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "`diana --organismo` filtra en el cliente después del límite. A ChEMBL solo se envían q y limit, y la especie se filtra entre los 20 primeros resultados, que suelen ser humanos. En un sistema centrado en vacuno esto produce falsos negativos ('no hay diana bovina').\n\nReproducido: la URL enviada es '.../chembl/api/data/target/search.json?q=PPARA&limit=20' y el resultado con --organismo 'Bos taurus' es [].",
+  "evidencia": "src/nutria/sources/chembl.py:24-32; src/nutria/cli.py:273-281"
+ },
+ {
+  "id": "D7-12",
+  "dimension": "D7",
+  "gravedad": "media",
+  "texto": "Ningún cliente se ha probado contra los servicios reales.\n- Solo hay pruebas para 5 analizadores (crossref, europepmc, openalex, pubmed y uniprot), con respuestas sintéticas mínimas.\n- No hay pruebas de http.py (caché, reintentos, límites, modo offline) ni de chembl, pubchem, stringdb, reactome o patents.\n- En este entorno el proxy bloquea los 9 hosts, así que no he podido comprobar que funcionen de verdad.",
+  "evidencia": "README.md:112-114; tests/test_parsers.py:1-3; tests/ (9 ficheros, ninguno para http, chembl, pubchem, stringdb, reactome ni patents)"
+ },
+ {
+  "id": "D7-13",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "Las búsquedas no son exhaustivas y se pierden avisos de la API:\n- No hay paginación: Europe PMC devuelve next_cursor y la CLI lo descarta; OpenAlex siempre usa page=1; PubMed no usa retstart. Una revisión sistemática solo ve la primera página.\n- Se ignoran errorlist y warninglist de esearch.\n\nReproducido: con una frase no encontrada, la salida es 'pubmed: 0 resultados totales' sin ningún aviso, y la procedencia registra total 0.",
+  "evidencia": "src/nutria/sources/europepmc.py:46-55; src/nutria/sources/openalex.py:72-84; src/nutria/sources/pubmed.py:22-35; src/nutria/cli.py:143-156"
+ },
+ {
+  "id": "D7-14",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "Los errores tienen una semántica confusa:\n- Un recurso inexistente se presenta como 'Error de red' (exit 4), porque NotFoundError hereda de NetworkError. Reproducido con un compuesto inexistente en PubChem.\n- `doctor` hace 9 peticiones aunque se pida --offline (reproducido), no comprueba api.lens.org, no usa la clave de OpenAlex y siempre sale con 0.\n- ghs_hazards devuelve [] tanto si PubChem no tiene clasificación GHS como ante cualquier error cuyo texto contenga '404'. El resultado no se distingue de 'sin frases H'.",
+  "evidencia": "src/nutria/http.py:26-27, :115-116; src/nutria/cli.py:85-120, :982-984; src/nutria/sources/pubchem.py:53-64"
+ },
+ {
+  "id": "D7-15",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "Las bases que cambian con el tiempo no son reproducibles. STRING se consulta en la URL sin versión, aunque su ayuda recomienda la dirección versionada (por ejemplo, version-12-0) para obtener resultados estables. Tampoco se registra la versión de STRING, Reactome, ChEMBL ni UniProt junto a los resultados; `doctor` consulta las versiones pero no las guarda.",
+  "evidencia": "src/nutria/sources/stringdb.py:5; src/nutria/sources/reactome.py:7-8; src/nutria/http.py:130-132; src/nutria/cli.py:90-94"
+ },
+ {
+  "id": "D7-16",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "Las licencias están documentadas con inexactitudes y no se registran por fuente:\n- Feedipedia figura como 'Abierto', pero su página de copyright limita la copia a usos no comerciales y remite los derechos comerciales a AFZ.\n- No se mencionan las condiciones comerciales de la API de Lens. Según fuentes secundarias, el acceso gratuito es para uso no comercial; no lo he confirmado en los términos oficiales.\n- Reactome figura como CC BY 4.0, pero sus datos son CC0 (error conservador).\n- Ningún registro guarda la licencia del artículo o del dato, aunque Europe PMC y OpenAlex la exponen.",
+  "evidencia": "docs/FUENTES.md:45, :64, :71; src/nutria/sources/base.py:72-92; src/nutria/db.py:21-28"
+ },
+ {
+  "id": "D7-17",
+  "dimension": "D7",
+  "gravedad": "baja",
+  "texto": "Los DOI SICI antiguos de Wiley se truncan en '<', porque DOI_RE excluye '<' y '>'. El identificador que se envía a Crossref es incorrecto, así que es previsible que una referencia legítima se marque como inexistente.\n\nReproducido: '10.1002/(SICI)1097-0010(199709)75:1<1::AID-JSFA842>3.0.CO;2-R' se extrae como '10.1002/(sici)1097-0010(199709)75:1'.",
+  "evidencia": "src/nutria/verify/citations.py:22, :45-53"
+ },
+ {
+  "id": "D8-1",
+  "dimension": "D8",
+  "gravedad": "alta",
+  "texto": "Las compuertas sin resolver no bloquean. Una oportunidad sin ninguna compuerta evaluada tiene las 5 en 'no_resuelta' por defecto y queda CONDICIONAL. Aun así compite en el Monte Carlo y se ordena junto a las APTA, de modo que puede quedar primera y entrar en el top 3 con plan de investigación. Contradice el requisito explícito del encargo: bloquear los candidatos con incertidumbres críticas de seguridad o barreras regulatorias no resueltas, sea cual sea su puntuación.",
+  "evidencia": "src/nutria/scoring/engine.py:172 (compuerta ausente = 'no_resuelta'), :177-180, :202-203 (solo se excluye BLOQUEADA) y :230-233 (APTA y CONDICIONAL con el mismo orden 0); .claude/workflows/mision-1-auto.js:179 (top 3 'NO bloqueadas'); docs/PROMPT_ORIGINAL.md:105; CLAUDE.md:27-28. Reproducido en un proyecto temporal: O-0001, sin compuertas registradas, queda CONDICIONAL en el rango 1 con P(top1)=1,00, por delante de O-0002, APTA con las 5 superadas."
+ },
+ {
+  "id": "D8-2",
+  "dimension": "D8",
+  "gravedad": "alta",
+  "texto": "Las decisiones de compuerta no exigen firma humana ni evidencia, y cualquier agente puede revertirlas. Una compuerta de seguridad bloqueada se desbloquea con un motivo arbitrario y la oportunidad vuelve al primer puesto del ranking en ese mismo instante. El 'humano en el bucle' para las compuertas es solo una instrucción.",
+  "evidencia": "src/nutria/cli.py:854-859 ('puntuar compuerta' sin --firma-humana; --evidencia opcional en :859) y :436-437; src/nutria/db.py:417-435 (set_gate sin parámetro de firma; _log_decision en :435 sin human_signoff). Contradice CLAUDE.md:38-39 y docs/PROMPT_MAESTRO_v2.md:278-279. Reproducido: 'nutria --agente regulacion-seguridad puntuar compuerta O-0001 seguridad bloqueada' y luego 'nutria --agente cualquiera puntuar compuerta O-0001 seguridad superada --motivo x'. O-0001 vuelve al rango 1 con P(top1)=1,00, y 'decision listar' muestra los dos cambios sin firma."
+ },
+ {
+  "id": "D8-3",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "Las compuertas no condicionan las transiciones de estado, y el estado de registro no condiciona el ranking:\n- se puede pasar a 'en_validacion' con la compuerta de seguridad bloqueada, cuatro sin resolver y sin firma;\n- una oportunidad en estado 'bloqueada' sigue compitiendo, porque el ranking solo excluye 'descartada'.\nLa regla 'no_resuelta: no puede pasar a validación experimental' no está implementada.",
+  "evidencia": "src/nutria/db.py:319-330 (set_opportunity_status no consulta las compuertas); src/nutria/cli.py:403 y :847 (firma opcional) y :444 (solo filtra 'descartada'). docs/PROMPT_MAESTRO_v2.md:369-370 y el pie de tabla de src/nutria/scoring/engine.py:259-260 prometen lo contrario. Reproducido: 'oportunidad estado O-0001 en_validacion --motivo seguimos' termina con exit 0 aunque seguridad=bloqueada. En estado 'bloqueada' y sin compuerta bloqueada, O-0001 sigue en el rango 1."
+ },
+ {
+  "id": "D8-4",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "La robustez frente a los pesos es débil por defecto y puede dar una falsa seguridad. Con alfa=200, la Dirichlet solo mueve cada peso unos 2-3 puntos (DE), así que P(top-k) no cubre la alternativa documentada de pesos. El código no compara los perfiles 'recomendado' y 'original': lo hace un LLM que lee dos salidas.",
+  "evidencia": "src/nutria/scoring/engine.py:9-10 (dice detectar la dependencia de los pesos), :144-145 y :208-210; src/nutria/cli.py:864 (alfa por defecto 200); .claude/workflows/mision-1-auto.js:178-179; docs/REVISION_PROMPT_ORIGINAL.md:138-143. Medido: DE de los pesos entre 2,11 y 2,81 puntos (P5-P95 de 'evidencia': 15,5-24,8). Caso construido sin incertidumbre de puntuación: con 'recomendado', O-B tiene P(top1)=0,96; con 'original' gana O-A con P(top1)=0,994."
+ },
+ {
+  "id": "D8-5",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "El escenario 'conservador' del ganadero está mal construido cuando la respuesta puede ser negativa. Multiplica el P10 de la respuesta por el P10 del precio, y con respuesta negativa un precio bajo reduce la pérdida. Además, al apilar percentiles, el contenido probabilístico de los escenarios queda indefinido: caen fuera del P5-P95 del propio Monte Carlo y el informe no lo advierte.",
+  "evidencia": "src/nutria/econ/farm.py:3-6, :78-87 (cuantil independiente para respuesta y valor unitario) y :90-96; docs/PROMPT_MAESTRO_v2.md:346-347.\nPrueba con respuesta PERT(-1,5; 0,3; 1,0), precio PERT(0,30; 0,42; 0,60) y 100 días:\n- beneficio conservador: -18,38 EUR, frente a -26,13 EUR con el precio P90 (7,75 EUR/vaca menos de pérdida);\n- queda por encima del P10 real del beneficio (-21,98).\nCon ejemplos/econ_ganadero_ILUSTRATIVO.toml: conservador -11,66 frente a P5 -10,39 del Monte Carlo; optimista 16,32 frente a P95 12,52.\ntests/test_econ.py:30-36 solo comprueba el orden en el ejemplo."
+ },
+ {
+  "id": "D8-6",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "Las anclas de 'potencial_economico' no encajan con el código y mezclan perspectivas.\n- El código llama ROI al cociente beneficio/coste. Las anclas puntúan 'ROI positivo', que con esa definición se cumple aunque el ganadero pierda dinero.\n- La disyunción 'o mercado grande' permite compensar un ganadero en pérdidas con un mercado grande, contra la regla de no mezclar perspectivas.",
+  "evidencia": "src/nutria/econ/farm.py:72-74 y :133-135 (ROI = beneficio/coste); src/nutria/data/rubrica.toml:99-102 ('ROI positivo ... o mercado grande'); docs/PROMPT_MAESTRO_v2.md:339 y .claude/skills/evaluacion-economica/SKILL.md:27 ('no mezcles perspectivas'). Con el ejemplo del propio sistema, el escenario conservador da ROI 0,06 (positivo) y un neto de -11,66 EUR/vaca: el ancla 0,75 se cumpliría al pie de la letra."
+ },
+ {
+  "id": "D8-7",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "El informe de empresa da P(rNPV>0) como cifra principal, pero esa cifra mide la incertidumbre de los parámetros sobre un valor esperado ya ajustado por riesgo. No es la probabilidad de que el proyecto gane dinero. Tampoco se informa de la distribución de resultados incluido el fracaso ni de la probabilidad de pérdida, y ni el informe ni la skill lo explican.",
+  "evidencia": "src/nutria/econ/rnpv.py:83-98 (cada simulación es un rNPV esperado) y :103-108; .claude/skills/evaluacion-economica/SKILL.md:22-23. Con ejemplos/econ_desarrollador_ILUSTRATIVO.toml el informe da P(rNPV>0)=0,45 y probabilidad acumulada 0,17. Simulando el árbol de éxito y fracaso por fase con las mismas entradas: P(VAN realizado>0)=0,175 y P(pérdida >1 M EUR)=0,21."
+ },
+ {
+  "id": "D8-8",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "En la misión 1 se puntúa el potencial económico, que pesa 15, sin ejecutar el modelo económico. Ni el workflow ni la skill llaman a 'nutria econ' antes de puntuar, y en el triage el agente económico solo evalúa la PI. Las anclas piden escenarios y P(ROI>1), que en ese momento no existen.",
+  "evidencia": ".claude/workflows/mision-1-auto.js:136-146 (en :139 economia-mercado-pi solo atiende 'propiedad_intelectual') y :166-172 (puntuación); .claude/skills/mision-1/SKILL.md:56-67; src/nutria/data/rubrica.toml:98-102 y :131 (peso 15)."
+ },
+ {
+  "id": "D8-9",
+  "dimension": "D8",
+  "gravedad": "media",
+  "texto": "No están garantizados ni el número de evaluadores ni su independencia.\n- El código solo avisa con menos de 2 evaluadores, aunque el método exige al menos 3.\n- Cuenta evaluadores sobre todos los criterios a la vez, así que dos que se reparten los criterios no generan aviso.\n- Los tres 'evaluadores ciegos' de los workflows son el mismo agentType, director-cientifico. Su propio prompt le ordena consultar 'oportunidad ver --json', que muestra las puntuaciones, y 'puntuar ranking' antes de opinar.\n- El nombre del evaluador es texto libre.",
+  "evidencia": "src/nutria/scoring/engine.py:161-170 y :199-200; docs/PROMPT_MAESTRO_v2.md:269-271 y :372; .claude/workflows/mision-1-auto.js:142-146 y :171; .claude/workflows/evaluar-oportunidad-auto.js:71-76; .claude/agents/director-cientifico.md:23-24 frente a .claude/skills/puntuacion/SKILL.md:9-10; src/nutria/cli.py:398-399; src/nutria/data/schemas/puntuacion.schema.json:8. Reproducido: con 2 evaluadores, flags=[]; con A en 4 criterios y B en los otros 4, raters=2, APTA y sin aviso."
+ },
+ {
+  "id": "D8-10",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "No se pueden reconstruir puntuaciones ni rankings anteriores:\n- volver a puntuar sobrescribe los valores (UPSERT) sin historial;\n- la procedencia solo guarda el número de criterios y el orden del ranking;\n- la economía registra la ruta del TOML pero no su hash;\n- los dos workflows escriben el mismo fichero JSON de puntuación.",
+  "evidencia": "src/nutria/db.py:397-404; src/nutria/cli.py:431-432, :451-452 y :627-628; .claude/workflows/mision-1-auto.js:169 y .claude/workflows/evaluar-oportunidad-auto.js:74 (misma ruta research/oportunidades/<ID>_puntuacion_<ev>.json). Reproducido: ev1 pasa de 0,75 a 0,0 en O-0001; quedan 8 filas, ninguna decisión y un evento de procedencia que solo dice {'criterios': 8}."
+ },
+ {
+  "id": "D8-11",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "La rúbrica está anclada en el texto, pero no en los datos: se acepta cualquier valor entre 0 y 1, no solo 0, 0,25, 0,5, 0,75 y 1.",
+  "evidencia": "src/nutria/data/schemas/puntuacion.schema.json:17-19; src/nutria/db.py:392-396; .claude/skills/puntuacion/SKILL.md:13 pide el ancla más cercana. Reproducido: un valor de 0,37 en los 8 criterios se acepta (composite 37,0)."
+ },
+ {
+  "id": "D8-12",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "La respuesta umbral del informe de texto confunde:\n- deja fuera los demás beneficios sin decirlo (la advertencia solo está en el JSON);\n- mezcla el coste mediano con el valor modal.\nEn el ejemplo da 0,610 kg/d, por encima de la respuesta modal de 0,5, mientras el escenario intermedio tiene un neto positivo de +0,82 EUR.",
+  "evidencia": "src/nutria/econ/farm.py:115-125 (el cálculo y la 'nota' solo están en el diccionario) y :139-140 (el texto no lleva la advertencia); salida de 'nutria econ ganadero ejemplos/econ_ganadero_ILUSTRATIVO.toml' en la copia temporal."
+ },
+ {
+  "id": "D8-13",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "El presupuesto parcial del ganadero se queda corto frente a lo pedido:\n- No calcula el coste por tonelada de pienso, que exigen el encargo y el prompt v2.\n- La fórmula de la skill omite el factor /1000.\n- No admite correlaciones entre entradas; solo pide documentarlas.\n- No hay análisis de sensibilidad, aunque la skill pregunta qué parámetro domina la incertidumbre.\n- No vincula cada entrada a una fuente registrada.\n- No compara con las alternativas comerciales.",
+  "evidencia": "src/nutria/econ/farm.py:64 (solo coste por animal) y :7-8; docs/PROMPT_ORIGINAL.md:100-101; docs/PROMPT_MAESTRO_v2.md:241 y :341; .claude/skills/evaluacion-economica/SKILL.md:15 y :28 ('dosis (g/t) × precio'); src/nutria/econ/dist.py:45-73 (no lee ningún campo de fuente)."
+ },
+ {
+  "id": "D8-14",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "El modelo rNPV es correcto pero básico.\n- Toma las ventas pico como dato de entrada en lugar de construirlas como mercado direccionable × adopción × precio, que es lo que piden el prompt v2 y el agente.\n- Los años hasta el pico, los años de comercialización y la tasa de descuento son fijos.\n- No incluye lanzamiento o capex, impuestos, erosión de precios, renovación de la autorización ni valor terminal.\n- El plazo y el coste regulatorio no tienen valores de referencia: siempre son [SUP].",
+  "evidencia": "src/nutria/econ/rnpv.py:47-53 y :58-72; docs/PROMPT_MAESTRO_v2.md:343-344; .claude/agents/economia-mercado-pi.md:21; docs/REGULACION_UE.md:80-81; ejemplos/econ_desarrollador_ILUSTRATIVO.toml:1."
+ },
+ {
+  "id": "D8-15",
+  "dimension": "D8",
+  "gravedad": "baja",
+  "texto": "Las pruebas no cubren la semántica crítica de la dimensión. No hay pruebas de:\n- la política CONDICIONAL frente a APTA ni el bloqueo de transiciones;\n- el efecto de alfa ni la comparación entre perfiles;\n- el rNPV con descuento mayor que 0 ni su Monte Carlo;\n- los escenarios con respuesta negativa ni la respuesta umbral.\nAdemás, nada se ha ejercitado con oportunidades reales: research/ está vacío.",
+  "evidencia": "tests/test_scoring.py:30-56; tests/test_econ.py:11-65 (el rNPV solo se prueba con tasa 0, en :39-59); research/*/ solo contiene .gitkeep. Lo que sí he comprobado yo, en la copia temporal: el rNPV al 10 % coincide con el cálculo manual (-56,8625), la inversa triangular coincide con scipy y la media PERT es correcta."
+ },
+ {
+  "id": "D9-1",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "La clave de API y el correo de contacto se filtran al sello de verificación, a stdout/stderr y al contexto de los agentes. El sello es un fichero versionable.",
+  "evidencia": "Cómo ocurre: src/nutria/http.py:116 y :125 meten resp.url, con api_key y email en la query, en el mensaje de la excepción. src/nutria/verify/citations.py:139-144 y :162-163 lo copian en Verification.message. src/nutria/reports/check.py:133-135 lo pasa a la incidencia, y :147-154 escribe 'incidencias' y 'referencias' en <informe>.verificacion.json. .gitignore:1-8 no excluye ese fichero (comprobado con git check-ignore). La limpieza de src/nutria/provenance.py:55-64 solo protege la procedencia.\n\nReproducido con un HTTP 400 simulado en esummary, NCBI_API_KEY=SECRETO_NCBI_abc123 y el correo puesto en nutria.toml:\n- research/informes/O-0001.md.verificacion.json contiene 2 veces la clave y 2 veces 'auditor.privado%40example.org'.\n- `verificar --pmid` y `fuente agregar --pmid` las imprimen.\n- procedencia.jsonl no contiene la clave.\n- El sello sale 'válido' con la referencia sin verificar (1 aviso)."
+ },
+ {
+  "id": "D9-2",
+  "dimension": "D9",
+  "gravedad": "alta",
+  "texto": "La comprobación de retractación falla en abierto y usa respuestas en caché antiguas. Aun así el informe se sella como 'verificado en línea'.",
+  "evidencia": "Cuando OpenAlex no responde: src/nutria/verify/citations.py:146-151 deja retracted=None, :95-97 da ok=True con None, y src/nutria/reports/check.py:131-139 no emite ni un aviso. Reproducido con Crossref respondiendo y OpenAlex bloqueado por el proxy: 0 errores, 0 avisos, 'Sello válido', y el hook no bloquea un informe con 'estado: revisado'.\n\nCaché: src/nutria/http.py:86-92 reutiliza respuestas durante 30 días (src/nutria/config.py:28) y sin límite en modo offline (:91). Ninguna verificación desactiva la caché (src/nutria/verify/citations.py:131, :134, :149 y :159). Reproducido:\n- Día 0: el trabajo no está retractado.\n- Después, OpenAlex lo marca is_retracted=true.\n- `informe comprobar --online --sellar` hace 0 peticiones, imprime 'referencias verificadas en línea' (src/nutria/cli.py:648-649) y escribe un sello válido con en_linea=true (src/nutria/reports/check.py:149).\n- Control sin caché: '[ERROR] ... está RETRACTADO'."
+ },
+ {
+  "id": "D9-3",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Una búsqueda posterior borra la marca de retractación y sustituye metadatos ya verificados, sin dejar rastro.",
+  "evidencia": "src/nutria/db.py:184-185 sobrescribe retracted siempre que el valor nuevo no sea None, y :200-205 actualiza todos los campos no nulos sin tocar verified. Los analizadores devuelven False, nunca None (src/nutria/sources/pubmed.py:60, src/nutria/sources/openalex.py:68, src/nutria/sources/europepmc.py:40). `buscar --registrar` llama a esa actualización sin verificar (src/nutria/cli.py:159-163).\n\nReproducido:\n- `fuente agregar --doi` con título 'RETRACTED: ...' deja retracted=1.\n- Después, `buscar pubmed ... --registrar` con el mismo DOI deja retracted=0 y cambia el título.\n- verified=1 y verified_via='crossref' siguen intactos, y `estado` muestra 'retractadas 0'.\n- No queda ninguna decisión ni evento de procedencia.\n\nUna afirmación [PUB] solo exige que la fuente esté registrada (src/nutria/db.py:265-269)."
+ },
+ {
+  "id": "D9-4",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Entradas previsibles provocan excepciones sin capturar: traza, exit 1 en lugar de los códigos 2/3/4 documentados y trabajo a medias.",
+  "evidencia": "main solo captura RegistryError, NetworkError, ValueError, KeyError y FileNotFoundError (src/nutria/cli.py:977-987). Reproducido:\n(a) sqlite3.IntegrityError 'UNIQUE constraint failed: sources.pmid' cuando Europe PMC trae DOI y PMID de un trabajo ya registrado dos veces: por OpenAlex (solo DOI) y por PubMed (solo PMID) (src/nutria/db.py:29-30, :170-173, :200-205). El trabajo duplicado como doi:… y pmid:… sigue en el registro.\n(b) TypeError si falta una media en el CSV (src/nutria/cli.py:500-505; src/nutria/stats/effect_sizes.py:48). Pasa también con el CSV que genera la propia `extraccion exportar`, porque sus columnas mean_trt/mean_ctrl/dispersion_type (src/nutria/db.py:32-45) no coinciden con media_trt/media_ctrl/tipo_disp (src/nutria/cli.py:503-505).\n(c) ZeroDivisionError con yi idénticos y --hksj (src/nutria/stats/meta.py:215-218).\n(d) RuntimeError en `meta stpierre` sin statsmodels (src/nutria/stats/mixed.py:19-23).\nAdemás, con un moderador constante, 'Error: Singular matrix' (src/nutria/stats/metareg.py:86-88) descarta todo el análisis."
+ },
+ {
+  "id": "D9-5",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Algunos resultados numéricos salen erróneos sin ningún aviso.",
+  "evidencia": "- src/nutria/cli.py:473-489: con --decimal ',' se borran todos los puntos, así que '0.5' pasa a valer 5.0. Reproducido: la estimación da 1.8809 en lugar de unos 0.38.\n- src/nutria/stats/meta.py:257-268: con varianzas iguales la precisión es constante y colineal con el intercepto. Egger devuelve 'EE 57208962.111, p = 1' en vez de declararse no estimable (reproducido).\n- src/nutria/cli.py:505: sin la columna tipo_disp, la dispersión se trata como DE sin avisar. El inventario lo reprodujo: EE 0.1067 frente a 0.3918."
+ },
+ {
+  "id": "D9-6",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "El sello puede cubrir contenido que nunca se comprobó (condición de carrera TOCTOU), y su significado depende de la orden que lo genera.",
+  "evidencia": "src/nutria/cli.py:636 lee el texto, la verificación en línea viene después (puede durar minutos con reintentos) y src/nutria/reports/check.py:149 calcula el sha256 del fichero en el momento de sellar, no del texto comprobado. Reproducido editando el informe durante la fase en línea: sale 'Sello válido (… 0 aviso(s))', pero `informe comprobar` sobre el contenido sellado da 1 error ([R9] inexistente). Además, `verificar <md> --sellar` desactiva la comprobación de secciones antes de sellar (src/nutria/cli.py:249-250, :643-644)."
+ },
+ {
+  "id": "D9-7",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "La procedencia no basta para reproducir resultados, y las puntuaciones se sobrescriben sin historial.",
+  "evidencia": "src/nutria/db.py:397-404 (ON CONFLICT DO UPDATE) borra la puntuación anterior, en contra de src/nutria/db.py:4-5 ('para que nada se borre'). Los eventos 'puntuacion' y 'ranking' (src/nutria/cli.py:430-432, :451-452) no guardan valores, rúbrica ni huella del estado. Reproducido: dos rankings con las mismas entradas registradas dan compuesto 45.0 y 100.0; en scores solo queda el último valor y en decisions solo 'creada (propuesta)'.\n\nOtros huecos:\n- 'metaanalisis' y 'econ_*' registran la ruta del CSV o TOML sin su sha256 (src/nutria/cli.py:563-566, :627-628).\n- Las versiones de librerías solo se guardan en init y doctor (src/nutria/cli.py:80, :101; src/nutria/provenance.py:77-86).\n- git_commit no indica si el árbol tenía cambios sin confirmar (src/nutria/provenance.py:67-74).\n- 'busqueda' guarda recuentos pero no los IDs devueltos (src/nutria/cli.py:164-167).\n- El JSONL no tiene cadena de hashes (src/nutria/provenance.py:100-112)."
+ },
+ {
+  "id": "D9-8",
+  "dimension": "D9",
+  "gravedad": "baja",
+  "texto": "La clave de la caché depende de las credenciales y la caché no se versiona: el modo offline y la reproducción en otra máquina fallan.",
+  "evidencia": "src/nutria/http.py:81-84 calcula la clave de caché con los parámetros, que incluyen api_key y email/mailto (src/nutria/sources/pubmed.py:12-19, src/nutria/sources/openalex.py:13-20, src/nutria/sources/crossref.py:12-16). .cache/ está en .gitignore:4 y la procedencia solo guarda el sha256 del cuerpo (src/nutria/http.py:130-132). Reproducido:\n- Búsqueda en línea con NCBI_API_KEY=k1.\n- `--offline` con la misma clave: funciona.\n- `--offline` sin clave, o con otro correo en nutria.toml: 'Modo offline: no hay copia en caché', exit 4."
+ },
+ {
+  "id": "D9-9",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Las altas por lotes no son atómicas: un error a mitad deja altas parciales y el reintento crea duplicados.",
+  "evidencia": "src/nutria/cli.py:380-387 (también :333-340 y :359-366) valida y registra elemento a elemento, cada uno en su propia transacción (src/nutria/db.py:291-304). Un JSON inválido termina con SystemExit y exit 1 (src/nutria/cli.py:45). Reproducido: en un lote de 3 con el tercero inválido se crean O-0001 y O-0002 y sale exit 1. Al reintentar con el lote corregido se crean O-0003 a O-0005, es decir, dos duplicados que no se pueden borrar, solo marcar como 'descartada'."
+ },
+ {
+  "id": "D9-10",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "El hook falla en abierto: si no puede importar sus dependencias o se rompe, no bloquea.",
+  "evidencia": ".claude/settings.json:44 ejecuta el python3 del PATH, mientras que README.md:31-37 instala en .venv. scripts/hooks/check_research_file.py:81-82 sale sin bloquear si falla una importación, y nutria.reports.check necesita requests. Reproducido:\n- Con un intérprete sin requests, un informe 'estado: final' con 23 errores pasa sin salida.\n- Con un sello corrupto hay JSONDecodeError con traza y exit 1, que no bloquea (src/nutria/reports/check.py:162), pese a 'Nunca falla de forma ruidosa' (scripts/hooks/check_research_file.py:10).\nAdemás es PostToolUse y solo vigila Write|Edit|MultiEdit (.claude/settings.json:38-40)."
+ },
+ {
+  "id": "D9-11",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Los workflows tratan los fallos de los agentes como resultados favorables.",
+  "evidencia": ".claude/workflows/red-team-auto.js:38-41 descarta los refutadores que fallan (filter(Boolean)) y aplica la mayoría sobre los que quedan: si fallan los tres, hay 0 refutaciones y la afirmación sale 'sostenida'. .claude/workflows/evaluar-oportunidad-auto.js:53-58 y :66 pasan a la síntesis aportaciones con critica/verif nulos sin marcarlas, y descartan en silencio a los especialistas que fallan; :80-81 solo devuelve fuentes_problematicas: null. No hay pruebas de los workflows; solo comprobé la sintaxis (node --check con el cuerpo envuelto en una función async: OK)."
+ },
+ {
+  "id": "D9-12",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "Las pruebas cubren sobre todo los caminos felices y no hay infraestructura para reproducir el entorno.",
+  "evidencia": "Las 42 pruebas pasan, pero la cobertura aproximada es del 60 % de líneas:\n- 0 % en src/nutria/llm/router.py, src/nutria/stats/mixed.py y en los clientes chembl, pubchem, stringdb, reactome y patents.\n- 34 % en src/nutria/http.py, 50 % en src/nutria/cli.py y 60 % en src/nutria/db.py.\n\nNo hay pruebas del hook, los workflows, la concurrencia, la limpieza de secretos, el paso exportar→analizar ni las rutas de error, y ninguna detecta D9-1 a D9-11. Con -W default aparecen 19 ResourceWarning: las conexiones de src/nutria/cli.py:48-51 nunca se cierran y tests/conftest.py:13 deja un fichero abierto. pyproject.toml:11-20 solo fija cotas inferiores; no hay fichero de bloqueo, CI ni configuración de lint o de tipos."
+ },
+ {
+  "id": "D9-13",
+  "dimension": "D9",
+  "gravedad": "media",
+  "texto": "La comprobación del año de la cita toma los años que aparecen dentro del DOI.",
+  "evidencia": "src/nutria/verify/citations.py:116-118 elige el año más cercano entre todos los números de 4 cifras de la entrada (YEAR_RE en :25), incluido el DOI. Reproducido: una cita con '2005' de un trabajo de 2019 con DOI 10.3168/jds.2019-16789 da year_in_citation=2019, discrepancia False y ok True. Los DOI de J Dairy Sci llevan el año, así que el control no actúa en la revista principal del dominio. Control con un DOI sin año: discrepancia True."
+ },
+ {
+  "id": "D9-14",
+  "dimension": "D9",
+  "gravedad": "baja",
+  "texto": "`fuente agregar --doi` falla con los DOI que solo se verifican en OpenAlex.",
+  "evidencia": "src/nutria/cli.py:196-202 vuelve a pedir el registro a Crossref aunque verify_doi lo resolvió con OpenAlex (src/nutria/verify/citations.py:131-136). Reproducido: `verificar --doi 10.9876/solo.openalex` da 'verificada' (exit 0), pero `fuente agregar --doi` da 'Error de red: No encontrado (404): https://api.crossref.org/works/...?mailto=auditor.privado%40example.org' (exit 4), y el mensaje muestra el correo."
+ },
+ {
+  "id": "D9-15",
+  "dimension": "D9",
+  "gravedad": "baja",
+  "texto": "El límite de frecuencia se aplica por proceso, no de forma global.",
+  "evidencia": "src/nutria/http.py:56-68 guarda _last en cada instancia (cada orden de la CLI crea la suya) y duerme con el lock tomado. Con varios agentes en paralelo (src/nutria/db.py:4) se pueden superar los intervalos de src/nutria/http.py:35-45, por ejemplo 3 peticiones/s en NCBI. src/nutria/http.py:111-114 y :117-123 duermen también después del último intento."
+ },
+ {
+  "id": "D9-16",
+  "dimension": "D9",
+  "gravedad": "baja",
+  "texto": "La CLI tiene inconsistencias: --offline, --json, NUTRIA_HOME y códigos de salida.",
+  "evidencia": "- `--offline doctor` hace 9 peticiones de red porque src/nutria/cli.py:102-105 usa session.get directamente (reproducido).\n- El router de LLM llama a requests.post sin respetar el modo offline (src/nutria/llm/router.py:73, :86, :100).\n- --json se ignora en varias órdenes de escritura (src/nutria/cli.py:350, :404, :433, :438, :463), pese a README.md:104-105. Reproducido: JSONDecodeError al leer la salida.\n- `init` con NUTRIA_HOME escribe nutria.toml en el directorio actual y la base de datos en NUTRIA_HOME (src/nutria/cli.py:72-79 frente a src/nutria/config.py:43-45; reproducido).\n- El exit 1 se usa tanto para JSON inválido como para fallos internos."
+ },
+ {
+  "id": "D10-1",
+  "dimension": "D10",
+  "gravedad": "alta",
+  "texto": "La garantía antialucinación que declara el README no se cumple, y la CLI muestra mensajes engañosos.\n- El README dice que el hook 'bloquea informes con referencias no verificables'.\n- En realidad, sin red las referencias no verificables pasan a ser avisos. La CLI responde 'referencias verificadas en línea' y 'Sello válido', y el hook deja pasar un informe marcado 'final'.\n- El propio error de red recomienda '--offline', que lleva al mismo resultado.\n- 'Garantías y límites' no menciona esta degradación.",
+  "evidencia": "Código y documentación:\n- README.md:10, frente a README.md:107-117, que no menciona la degradación.\n- .claude/settings.json:38-45: el hook es PostToolUse.\n- scripts/hooks/check_research_file.py:29-34: solo comprueba la estructura y el sello.\n- src/nutria/reports/check.py:133-135: error_red/offline → aviso; :149: en_linea=online; :158-169: criterio del sello.\n- src/nutria/cli.py:648-649 (mensaje) y src/nutria/http.py:108 ('usa --offline').\n\nReproducido en la copia temporal:\n- O-0002.md con 20 secciones, 'estado: final', [PUB] [R1] y DOI 10.9999/doi.inventado.2021.001.\n- `informe comprobar --online --sellar` → '0 error(es), 1 aviso(s) | referencias verificadas en línea', exit 0.\n- `informe sello` → 'Sello válido (…, 1 aviso(s))'.\n- El hook no devuelve nada, así que no bloquea.\n- El esqueleto vacío de `informe nuevo` también obtiene 'Sello válido'."
+ },
+ {
+  "id": "D10-2",
+  "dimension": "D10",
+  "gravedad": "media",
+  "texto": "La instalación crea un venv, pero no dice que debe estar activo al abrir Claude Code.\n- El hook se ejecuta con el python3 del PATH.\n- Si a ese intérprete le faltan requests o jsonschema, el hook se desactiva sin avisar: el único control en código sobre research/ desaparece.\n- `nutria doctor` no lo detecta.",
+  "evidencia": "Código y documentación:\n- README.md:31-37 y :56-59: no se pide activar el venv antes de abrir Claude Code.\n- .claude/settings.json:44: se ejecuta `python3 …check_research_file.py`.\n- scripts/hooks/check_research_file.py:10 ('Nunca falla de forma ruidosa') y :81-82 (except ImportError: return).\n- src/nutria/cli.py:98-120: doctor no comprueba el hook.\n\nReproducido:\n- Con el python del venv, el hook bloquea un informe con 23 errores y un JSON de oportunidad que no cumple el esquema.\n- Con un intérprete sin dependencias ('No module named requests'), ambos pasan sin salida y con exit 0."
+ },
+ {
+  "id": "D10-3",
+  "dimension": "D10",
+  "gravedad": "media",
+  "texto": "El coste en tokens y tiempo no se cuantifica ni se acota.\n- Solo se avisa de que 'consume muchos tokens'.\n- n_oportunidades es un mínimo, no un tope.\n- Ningún workflow usa el presupuesto (budget) de la API, aunque la v2 dice haber corregido la 'falta de presupuesto'.\n- No hay estimación de duración.",
+  "evidencia": "Código y documentación:\n- README.md:64.\n- .claude/workflows/mision-1-auto.js:4, :16 y :121-133: no hay truncado a N_OPS.\n- Un grep de 'budget' en los 3 workflows no encuentra nada.\n- docs/REVISION_PROMPT_ORIGINAL.md:231 y docs/PROMPT_MAESTRO_v2.md:79.\n- 7 agentes usan opus y 3 tienen effort: high (critico-red-team.md:6, estadistico.md:6, regulacion-seguridad.md:6).\n\nSimulación con agent() simulado (/tmp/claude-0/-home-user/138dffb0-b92f-5c6c-af2b-97d3ea9fa185/scratchpad/d10/jscheck/harness.mjs; todas las novedades 'nueva', sin fallos):\n- mision-1-auto lanza 141 subagentes con 6 problemas × 2 oportunidades.\n- Con 8 × 3 lanza 263 y procesa 24 oportunidades, el doble del objetivo de 12. Entre 56 y 104 de esos subagentes son director-cientifico en opus.\n- evaluar-oportunidad-auto llega a 29 subagentes y red-team-auto a 47."
+ },
+ {
+  "id": "D10-4",
+  "dimension": "D10",
+  "gravedad": "media",
+  "texto": "Las limitaciones declaradas no cubren lo principal.\n- 'Garantías y límites' admite que las APIs no se han probado, pero no que la capa principal (agentes, skills y workflows) nunca se ha ejecutado de principio a fin.\n- Los workflows se venden como 'deterministas' y 'reproducibles', pero solo lo es el flujo de control.\n- Los modelos se indican por alias y su versión no queda registrada, aunque la v2 lo exige.",
+  "evidencia": "- README.md:107-117.\n- En research/*/ solo hay .gitkeep; no existen research/nutria.sqlite ni research/procedencia.jsonl (find).\n- README.md:64; .claude/workflows/mision-1-auto.js:4 ('orquestada y reproducible'); .claude/workflows/evaluar-oportunidad-auto.js:4 ('completa y reproducible').\n- Alias de modelo en .claude/agents/*.md (p. ej. director-cientifico.md:5 'model: opus').\n- src/nutria/provenance.py:92-99: el evento no guarda el modelo.\n- docs/PROMPT_MAESTRO_v2.md:396-397: pide conservar las versiones de los modelos de lenguaje usados."
+ },
+ {
+  "id": "D10-5",
+  "dimension": "D10",
+  "gravedad": "media",
+  "texto": "No queda claro lo que el sistema NO hace.\n- No hay ningún módulo de modelización, simulación ni optimización de formulaciones: ni docking, ni dinámica molecular, ni PK/PD, ni fermentación ruminal, ni mínimo coste.\n- Aun así, la tabla de trazabilidad hace corresponder 'Modelización' con órdenes que solo consultan bases de datos, y el README no lo advierte.\n- R, metafor y clubSandwich hacen falta para los modelos con dependencia, pero no figuran como requisito.\n- settings.json no permite Rscript ni dominios que FUENTES.md manda consultar con WebFetch.",
+  "evidencia": "- docs/REVISION_PROMPT_ORIGINAL.md:242: '6. Modelización → nutria molecula/diana/proteina/red/rutas'.\n- src/nutria/ solo tiene cli, config, db, econ, http, llm, provenance, reports, scoring, sources, stats y verify.\n- pyproject.toml:11-20.\n- docs/PROMPT_MAESTRO_v2.md:215-216: 'Herramientas posibles', sin decir que no están instaladas.\n- src/nutria/reports/plantilla_informe.md:59-61: sección 12 'Resultados de las simulaciones'.\n- README.md:21 solo pide Python, frente a .claude/skills/metaanalisis/SKILL.md:16-17 y .claude/agents/estadistico.md:21-23, que usan rma.mv en R.\n- Aquí `which R Rscript` no devuelve nada.\n- .claude/settings.json:3-29 no incluye Rscript, rcsb.org, alphafold.ebi.ac.uk ni www.ncbi.nlm.nih.gov, que se citan en docs/FUENTES.md:42-43 y :49-50."
+ },
+ {
+  "id": "D10-6",
+  "dimension": "D10",
+  "gravedad": "media",
+  "texto": "El flujo documentado `extraccion exportar → meta analizar` falla con una traza de Python.\n- Conviven tres nomenclaturas de columnas distintas.\n- `meta analizar --help` no documenta el CSV que espera.\n- Si solo se renombran las medias, el SEM se trata en silencio como DE.",
+  "evidencia": "Código y documentación:\n- docs/ARQUITECTURA.md:60.\n- src/nutria/db.py:40-41 y :229: mean_trt, dispersion_type.\n- src/nutria/data/schemas/extraccion.schema.json: media_tratamiento, tipo_dispersion.\n- src/nutria/cli.py:503-505: media_trt, tipo_disp, con 'SD' por defecto.\n- cli.py:883-894: la ayuda no lista columnas; cli.py:985 no captura TypeError.\n- El contrato del CSV solo aparece en .claude/skills/metaanalisis/SKILL.md:11-13.\n\nReproducido:\n- Con 3 extracciones SEM_combinado, exportar → `meta analizar` da 'TypeError: unsupported operand type(s) for -: NoneType and NoneType'.\n- Renombrando solo mean_*, devuelve EE 0,2186 y p 0,0395 tratando el SEM como DE, sin aviso."
+ },
+ {
+  "id": "D10-7",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "Un diagnóstico auxiliar aborta todo el metaanálisis con un mensaje opaco.\n- Egger se calcula siempre que k≥3.\n- Con varianzas iguales lanza 'Singular matrix' y la orden falla, aunque el modelo de efectos aleatorios se haya calculado bien.",
+  "evidencia": "- src/nutria/cli.py:536-537 y src/nutria/stats/meta.py:265 (np.linalg.inv).\n- .claude/skills/metaanalisis/SKILL.md:23: Egger solo con k≥10.\n- Reproducido: con 3 estudios y vi=0,72, `meta analizar --metodo REML [--hksj]` y `--metodo DL` terminan con 'Error: Singular matrix' y exit 2.\n- random_effects, llamado directamente, da 1,0667 [0,126; 2,007]."
+ },
+ {
+  "id": "D10-8",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "--json no cumple lo prometido y los códigos de salida no son fiables.\n- README y CLAUDE.md lo presentan como salida procesable en todas las órdenes, pero al menos 9 lo ignoran y responden en texto.\n- Los errores salen como texto sin estructura.\n- Los códigos de salida no están documentados y son incoherentes entre órdenes.",
+  "evidencia": "- README.md:104-105 y CLAUDE.md:65.\n- Órdenes que ignoran --json en src/nutria/cli.py (reproducido con --json en todas): :81 init, :350 extraccion exportar, :404 oportunidad/hipotesis estado, :433 puntuar registrar, :438 puntuar compuerta, :463 decision registrar, :525 meta exportar-r, :664 informe nuevo, :669 informe sello.\n- Códigos de salida: cli.py:979-987 usa 3, 4 y 2, pero SystemExit(str) devuelve 1.\n- Con la red bloqueada, `fuente agregar` sale con 1 (cli.py:199) y `buscar` con 4."
+ },
+ {
+  "id": "D10-9",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "Los workflows se presentan como órdenes con barra sin explicar cómo se invocan ni cómo se les pasan argumentos.\n- Dos necesitan un argumento obligatorio que la tabla omite.\n- 'La misma misión' oculta que la versión automática quita los dos puntos de control humanos.\n- No se ha podido comprobar que /mision-1-auto funcione como orden con barra.",
+  "evidencia": "- README.md:64, :66 y :70; CLAUDE.md:112-114.\n- .claude/workflows/evaluar-oportunidad-auto.js:14-18 y red-team-auto.js:14-15 devuelven error sin argumento.\n- .claude/skills/mision-1/SKILL.md:41 y :75-76, frente a mision-1-auto.js:79-89 y :176-181: sigue sin pararse y registra la propuesta 'sin --firma-humana'.\n- La referencia de la API de workflows describe la invocación por nombre con la herramienta Workflow, no como orden con barra."
+ },
+ {
+  "id": "D10-10",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "Dos órdenes producen el mismo sello con criterios distintos.\n- `nutria verificar <md> --sellar` no está documentado como forma de sellar.\n- Fuerza 'sin secciones' y sella como válido un informe incompleto.\n- /estado se fía de `informe sello` para listar los informes sin sello válido.",
+  "evidencia": "- src/nutria/cli.py:249 y :766; .claude/skills/estado/SKILL.md:12; CLAUDE.md:69 y :83.\n- Reproducido con un informe 'estado: final' que solo tiene '## 20. Bibliografía':\n  - `informe comprobar` → 19 errores.\n  - `verificar --sellar` → '0 error(es)… referencias verificadas en línea'.\n  - `informe sello` → 'Sello válido'."
+ },
+ {
+  "id": "D10-11",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "La secuencia de ejemplos del README no funciona tal cual en una instalación nueva, y no hay ninguna demostración de extremo a extremo sin red.",
+  "evidencia": "- README.md:101, tras init: 'Error: [Errno 2] No such file or directory: research/informes/O-0001.md', exit 2.\n- README.md:93 devuelve una tabla vacía.\n- README.md:81 y :85 necesitan red: aquí salen con exit 4 y 1.\n- ejemplos/ solo trae formatos (README.md:115)."
+ },
+ {
+  "id": "D10-12",
+  "dimension": "D10",
+  "gravedad": "baja",
+  "texto": "`nutria doctor` informa de menos de lo que promete la documentación.\n- Sale con 0 aunque todas las fuentes estén bloqueadas.\n- Ignora --offline.\n- No comprueba Lens, los dominios de WebFetch, R ni el intérprete del hook, aunque FUENTES.md remite a él para comprobar los dominios.",
+  "evidencia": "- src/nutria/cli.py:85-95: no incluye api.lens.org.\n- cli.py:102-105: llama a session.get directamente, sin pasar por el modo offline.\n- cli.py:120: return 0.\n- docs/FUENTES.md:76-80.\n- Reproducido: `nutria --offline doctor` intenta la red y muestra 'BLOQUEADO'; con los 9 hosts bloqueados sale con exit 0."
+ },
+ {
+  "id": "D11-1",
+  "dimension": "D11",
+  "gravedad": "baja",
+  "texto": "No se ha ejecutado la primera misión ni ninguna otra investigación. No hay mapa de problemas, ni las al menos 10 oportunidades (al menos 6 en rumiantes), ni hipótesis, compuertas, puntuaciones, ranking, informes ni los 3 planes revisados. Por tanto, nada demuestra que el sistema produzca investigación de calidad, original y verificable: los workflows y skills que deberían generarla nunca se han ejecutado de principio a fin. Lo anoto como hecho; según el criterio de D11 no rebaja la puntuación (n/a).",
+  "evidencia": "docs/PROMPT_ORIGINAL.md:115-118 (encargo: 'Identifica al menos 10 oportunidades...', 'selecciona las tres oportunidades más prometedoras y desarrolla un plan...'); docs/PROMPT_MAESTRO_v2.md:416-439 (M1a-M1d y entregables); los únicos ficheros versionados en research/ son research/{datos,evals,hipotesis,informes,oportunidades,planes,revisiones}/.gitkeep ('git ls-files research'); commit único 236a161 (2026-11-04 11:11:53 +0000), sin otras ramas ni stash; /home/user/nutria.zip (unzip -l: research/ solo con .gitkeep)"
+ },
+ {
+  "id": "D11-2",
+  "dimension": "D11",
+  "gravedad": "baja",
+  "texto": "No hay registro ni trazas con los que auditar el poco contenido de dominio que existe. Nunca se ejecutó 'nutria init': faltan nutria.toml, research/nutria.sqlite y research/procedencia.jsonl, aunque CLAUDE.md dice que 'se versionan con git' y el README describe research/ como 'registro, procedencia y resultados de la investigación'. Por eso el estado 'verificada' de 10 de las 18 referencias (más 2 parciales) y de 3 de las 21 normas es solo autodeclarado: se obtuvo con búsqueda web durante la construcción y no dejó ninguna traza reproducible. Además, la frontera entre 'verificada' y 'pendiente' es arbitraria: R2 y R11, marcadas 'pendiente', se verifican con la misma búsqueda web en un minuto.",
+  "evidencia": "CLAUDE.md:98-99; README.md:132; src/nutria/config.py:24 (ruta por defecto research/nutria.sqlite, ausente); docs/REVISION_PROMPT_ORIGINAL.md:255-258 ('verificada = comprobada con búsqueda web'); :259-276 (6 'pendiente', R4 parcial, R6 'DOI pendiente'); docs/REGULACION_UE.md:4-6 y :46-66 (18 filas 'pendiente' frente a 3 'verificada'); ls /home/user/nutria (no hay nutria.toml)"
+ },
+ {
+  "id": "D11-3",
+  "dimension": "D11",
+  "gravedad": "baja",
+  "texto": "R6 (St-Pierre 2001) es la base del enfoque de metaanálisis con modelos mixtos que adopta el sistema (nutria meta stpierre). Se cita sin DOI y con la portada genérica de la revista como URL, que no identifica el artículo. Incumple la regla del encargo de dar DOI, PMID o enlace verificable, aunque el DOI existe y aparece en la primera búsqueda.",
+  "evidencia": "docs/REVISION_PROMPT_ORIGINAL.md:264 ('URL: https://www.journalofdairyscience.org/ (verificada; DOI pendiente)'); docs/PROMPT_ORIGINAL.md:109; DOI real 10.3168/jds.S0022-0302(01)74530-4 según [Scilit](https://scilit.com/publications/6a7a97b4806f9740f853cbd98b1c6035), obtenido con WebSearch"
+ }
+]
