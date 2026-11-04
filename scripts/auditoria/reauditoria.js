@@ -13,6 +13,7 @@ const ARCHIVO = A.archivo || ''
 const TOTAL = Object.values(IDS).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0)
 if (!TOTAL || !ARCHIVO) return { error: 'Pasa args.archivo (JSON con la lista de hallazgos) y args.ids = {D1: [ids], ...}' }
 const RAIZ = A.raiz || '/home/user/nutria'
+const PREVIO = A.previo || ''
 
 const BLOQUES = [
   { id: 'B1', dims: ['D1', 'D2'], tema: 'corrección del prompt, arquitectura y orquestación (.claude/, CLAUDE.md, workflows)' },
@@ -31,7 +32,8 @@ const BASE = `Eres un auditor EXTERNO e independiente del repositorio ${RAIZ} (s
   'resolver solo con código, pero que ahora está mitigado y declarado honestamente, es "mitigado". La red externa está bloqueada ' +
   'en este entorno: lo que dependa de servicios reales solo puede quedar "mitigado" si el código es correcto según la documentación de la API. ' +
   `Usa python3 con PYTHONPATH=${RAIZ}/src (pruebas: cd ${RAIZ} && python3 -m pytest -q; órdenes: PYTHONPATH=${RAIZ}/src python3 -m nutria ...). ` +
-  `Los defectos originales están en ${ARCHIVO}: lista JSON de objetos {id, dimension, gravedad, texto, evidencia}; lee los de tu bloque.`
+  `Los defectos originales están en ${ARCHIVO}: lista JSON de objetos {id, dimension, gravedad, texto, evidencia}; lee los de tu bloque.` +
+  (PREVIO ? ` La reauditoría anterior está en ${PREVIO} (clave hallazgos: para cada id, estado_final, verificador y esceptico): úsala solo como lista de casos de prueba adicionales —en particular, las vías de elusión que encontró el escéptico—, comprueba que también están cerradas y forma tu propio juicio sin dar por bueno su veredicto.` : '')
 
 const S = (props, required) => ({ type: 'object', properties: props, required })
 const STR = { type: 'string' }
