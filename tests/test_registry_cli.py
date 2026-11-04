@@ -123,9 +123,20 @@ def test_extraction_batch_export_and_double_extraction(project, capsys):
     (project / "e.json").write_text(json.dumps(base), "utf-8")
     assert main(["extraccion", "agregar", "--datos", str(project / "e.json")]) == 0
     csv_path = project / "leche.csv"
-    assert main(["extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path)]) == 0
+    with pytest.raises(SystemExit):       # solo hay una extracción simple: no pasa al análisis por defecto
+        main(["extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path)])
+    assert main(["extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path),
+                 "--incluir-sin-conciliar"]) == 0
     header = csv_path.read_text("utf-8").splitlines()[0].split(",")
     assert {"estudio", "comparacion", "media_trt", "media_ctrl", "disp_trt", "tipo_disp", "n_trt"} <= set(header)
+    conciliated = dict(base, estado_verificacion="doble_concordante", media_tratamiento=32.0)
+    (project / "c.json").write_text(json.dumps(conciliated), "utf-8")
+    assert main(["extraccion", "agregar", "--datos", str(project / "c.json")]) == 0
+    capsys.readouterr()
+    assert main(["--json", "extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["filas"] == 1 and out["excluidas"] == {"simple": 1}
+    assert len(csv_path.read_text("utf-8").splitlines()) == 2      # cabecera + la fila conciliada
     other = dict(base, media_tratamiento=31.5)
     (project / "b.json").write_text(json.dumps(other), "utf-8")
     capsys.readouterr()
@@ -138,3 +149,36 @@ def test_invalid_json_is_rejected(project):
     bad.write_text(json.dumps({"titulo": "x"}), "utf-8")
     with pytest.raises(SystemExit):
         main(["oportunidad", "nueva", "--datos", str(bad)])
+
+
+def test_evaluators_cannot_see_other_scores_ranking_or_provenance(project, capsys):
+    # Ceguera técnica de los evaluadores (regla 9): ni puntuaciones ajenas, ni ranking, ni procedencia.
+    assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
+    _three_raters(project)
+    capsys.readouterr()
+    assert main(["--json", "--agente", "evaluador-2", "oportunidad", "ver", "O-0001"]) == 0
+    assert "puntuaciones" not in json.loads(capsys.readouterr().out)
+    assert main(["--json", "--agente", "director-cientifico", "oportunidad", "ver", "O-0001"]) == 0
+    assert json.loads(capsys.readouterr().out)["puntuaciones"]
+    with pytest.raises(SystemExit):
+        main(["--agente", "evaluador-2", "puntuar", "ranking", "--sim", "100"])
+    with pytest.raises(SystemExit):
+        main(["--agente", "evaluador-2", "procedencia"])
+    # la procedencia registra quién puntuó, pero no los valores
+    trace = (project / "research" / "procedencia.jsonl").read_text("utf-8")
+    events = [json.loads(line) for line in trace.splitlines() if '"puntuacion"' in line]
+    assert events and all("valores" not in json.dumps(e["outputs"]) for e in events)
+
+
+def test_intended_claim_schema(project):
+    opp = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
+    opp["alegacion_prevista"] = {"texto": "Apoyo al equilibrio mineral en el preparto",
+                                 "tipo": "finalidad_nutricional_especifica"}
+    opp["ruta_regulatoria_preliminar"] = "aditivo_zootecnico"
+    f = project / "o.json"
+    f.write_text(json.dumps(opp), "utf-8")
+    with pytest.raises(SystemExit):       # art. 13.2: solo piensos dietéticos
+        main(["oportunidad", "nueva", "--datos", str(f)])
+    opp["ruta_regulatoria_preliminar"] = "pienso_dietetico"
+    f.write_text(json.dumps(opp), "utf-8")
+    assert main(["oportunidad", "nueva", "--datos", str(f)]) == 0

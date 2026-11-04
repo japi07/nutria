@@ -14,7 +14,7 @@ otras especies.
 Esta misión es una **revisión de alcance con exploración de horizonte** (no una revisión sistemática). Su producto
 son oportunidades priorizadas e hipótesis falsables, no efectos demostrados.
 
-`/mision-1-auto` ejecuta las mismas fases como workflow, una por invocación y con un punto de control humano entre
+El workflow `mision-1-auto` (lánzalo por su nombre con la herramienta Workflow) ejecuta las mismas fases, una por invocación y con un punto de control humano entre
 ellas: `{"fase": "mapa"}` (por defecto) → `{"fase": "oportunidades", "problemas": [...aprobados por una persona...]}`
 → `{"fase": "planes", "seleccion": ["O-xxxx", ...]}`. Cada entregable (mapa, ranking, planes) pasa por
 `verificador-citas` (`nutria verificar <md>`) antes de presentarse.

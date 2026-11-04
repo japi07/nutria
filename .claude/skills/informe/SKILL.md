@@ -25,7 +25,7 @@ disable-model-invocation: true
    con Respaldo en `respalda`, `parcial`, `no_respalda` o `no_verificable`. Cada `[Rn]` usado en una línea `[PUB]`
    necesita una fila `respalda` o `parcial`; si no la tiene, se corrige la afirmación o deja de ser `[PUB]`. Después
    ejecuta `nutria informe comprobar ... --online --sellar`.
-6. `critico-red-team` (o `/red-team-auto`): revisión adversarial; incorpora correcciones.
+6. `critico-red-team` (o el workflow `red-team-auto`): revisión adversarial; incorpora correcciones.
 7. Vuelve a sellar tras cualquier cambio (el sello caduca si el informe cambia). El sello solo es válido con la
    verificación en línea **completa** (todas las referencias verificadas, retractación comprobada, ninguna pendiente
    por falta de red) y la estructura completa. El informe solo pasa a `estado: revisado` (o `final`) con sello válido

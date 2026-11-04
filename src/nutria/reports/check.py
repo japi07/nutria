@@ -151,6 +151,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         for number, name in SECTION_TITLES.items():
             if not re.search(rf"^##\s*{number}\.\s", clean, re.MULTILINE):
                 issues.append(Issue("error", f"Falta la sección {number} ({name})"))
+    if require_sections:
+        lines = clean.splitlines()
+        start, end = _section(lines, r"^14\.\s")
+        if start is not None and not re.search(r"alegaci[oó]n", "\n".join(lines[start + 1:end]), re.IGNORECASE):
+            issues.append(Issue("error" if strict else "aviso",
+                                "La sección 14 no recoge la alegación prevista (Reglamento (CE) 767/2009, art. 13)",
+                                start + 1))
     body, entries, bib_line = split_bibliography(clean)
     if bib_line is None:
         issues.append(Issue("error", "No hay sección de bibliografía"))

@@ -266,7 +266,7 @@ legibles y, además, estructuradas (JSON validado contra esquemas).
 | 12. Priorización | §14 | `nutria puntuar`, `docs/RUBRICA.md` |
 | 13. Informes | §15 | Plantilla, `nutria informe`, hook |
 | 14. Metodología | §16, §17 | Registro de decisiones, procedencia |
-| 15. Primera misión | §18 | `/mision-1`, `/mision-1-auto` |
+| 15. Primera misión | §18 | `/mision-1`, workflow `mision-1-auto` |
 
 ## Referencias
 

@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Revisión adversarial de $ARGUMENTS
 
-`/red-team-auto` ejecuta este procedimiento como workflow.
+El workflow `red-team-auto` (`{"archivo": "<ruta>"}`) ejecuta este procedimiento.
 
 1. Identifica las 5-15 afirmaciones que sostienen la conclusión del documento.
 2. Lanza en paralelo `critico-red-team` (refutación) y `verificador-citas` (fuentes). Pásales el documento y las

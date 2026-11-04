@@ -68,6 +68,8 @@ revisado_por_humano: null
 
 <!-- Clasificación propuesta, vía de autorización, estado de las compuertas: {compuertas} -->
 
+Alegación prevista (Reglamento (CE) 767/2009, art. 13): {alegacion}
+
 ## 15. Formulación teórica candidata
 
 <!-- Rangos exploratorios justificados, nunca dosis "óptimas" sin datos. -->

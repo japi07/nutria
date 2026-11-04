@@ -344,3 +344,29 @@ def test_ratelimit_is_respected_between_processes(tmp_path):
         spans.append(tuple(map(float, out.split())))
     # 6 llamadas en serie (2 procesos x 3): al menos 5 intervalos de 0,1 s entre la primera y la última.
     assert max(end for _, end in spans) - min(begin for begin, _ in spans) >= 0.45
+
+
+def test_critic_role_gets_refutation_instructions_by_default(tmp_path, monkeypatch):
+    # `nutria llm preguntar --rol critico` sin --sistema envía instrucciones de refutación
+    from nutria.llm import router
+    seen = {}
+
+    class Spec:
+        id, provider, model, roles, data_policy = "local", "ollama", "m", ["critico"], "local"
+
+        def usable(self, cfg):
+            return True, ""
+
+    monkeypatch.setattr(router, "load_registry", lambda cfg: [Spec()])
+    monkeypatch.setattr(router, "SAFE_POLICIES", ("local",))
+    monkeypatch.setattr(router, "log_event", lambda *a, **k: None)
+
+    def fake_call(cfg, spec, prompt, system, max_tokens, temperature):
+        seen["system"] = system
+        return {"text": "ok"}
+
+    monkeypatch.setattr(router, "_call", fake_call)
+    router.ask(object(), "documento", role="critico")
+    assert "refutar" in seen["system"]
+    router.ask(object(), "documento", role="critico", system="propio")
+    assert seen["system"] == "propio"

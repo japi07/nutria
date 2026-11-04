@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Evaluación en profundidad de $ARGUMENTS
 
-`/evaluar-oportunidad-auto` ejecuta este mismo procedimiento como workflow.
+El workflow `evaluar-oportunidad-auto` (`{"id": "O-xxxx"}`) ejecuta este mismo procedimiento.
 
 1. **Contexto**: `nutria oportunidad ver $ARGUMENTS --sin-puntuaciones --json`. Lee `research/planes/$ARGUMENTS.md` si
    existe; si no, pide antes un plan a `director-cientifico`.

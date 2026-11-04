@@ -16,6 +16,16 @@ def _bullets(items) -> str:
     return "\n".join(f"- {x}" for x in items)
 
 
+def _claim_text(claim) -> str:
+    if not claim:
+        return ("[DESC] Pendiente: define la alegación prevista (art. 13.1 funcional; art. 13.2 solo piensos "
+                "dietéticos) y comprueba que no alega prevenir, tratar o curar enfermedades (art. 13.3).")
+    text = f"{claim.get('texto', '')} (tipo: {claim.get('tipo', 'indeterminado')})"
+    if claim.get("fundamento"):
+        text += f". Fundamento previsto: {claim['fundamento']}"
+    return text
+
+
 def new_report(conn, opp_id: str) -> str:
     opp = db.get_opportunity(conn, opp_id)
     if opp is None:
@@ -38,5 +48,5 @@ def new_report(conn, opp_id: str) -> str:
         opp_id=opp_id, fecha=date.today().isoformat(), titulo=opp["title"],
         problema=data.get("problema") or opp.get("problem") or "[DESC] Pendiente.",
         hipotesis=hyp_text, candidatos=_bullets(data.get("candidatos")), compuertas=gate_text,
-        decisiones=dec_text,
+        decisiones=dec_text, alegacion=_claim_text(data.get("alegacion_prevista")),
     )

@@ -77,17 +77,26 @@ nutria doctor
 Abre Claude Code en la carpeta del proyecto, con el entorno activado. `CLAUDE.md` convierte la sesión principal en
 el director científico y orquestador.
 
-| Orden | Qué hace |
+| Orden (skill) | Qué hace |
 |---|---|
 | `/mision-1 [foco]` | Primera misión paso a paso, con revisión humana entre fases |
-| `/mision-1-auto` | La misión 1 como workflow multiagente (tabla de abajo) |
 | `/oportunidad O-0003` | Evaluación en profundidad de una oportunidad, paso a paso |
-| `/evaluar-oportunidad-auto` | Evaluación de una oportunidad como workflow: especialistas en paralelo, crítica y verificación de cada aportación, informe y puntuación ciega |
 | `/revision-sistematica "<pregunta PECO>"` | Revisión sistemática según PRISMA 2020 |
 | `/metaanalisis O-0003 "<variable>"` | Síntesis cuantitativa a partir de las extracciones |
 | `/informe O-0003` | Informe de 20 secciones, verificado y sellado |
-| `/red-team <fichero>` · `/red-team-auto` | Revisión adversarial |
+| `/red-team <fichero>` | Revisión adversarial |
 | `/estado` | Estado del proyecto y siguientes pasos |
+
+Los workflows (`.claude/workflows/`) **no son órdenes con `/`**: pídeselos a la sesión principal por su nombre y con
+sus argumentos JSON, por ejemplo «ejecuta el workflow `mision-1-auto` con `{"fase": "mapa", "foco": "transición en
+vacuno lechero"}`». La sesión los lanza con la herramienta Workflow; su avance se sigue con `/workflows`.
+
+| Workflow | Argumentos |
+|---|---|
+| `mision-1-auto` | Una fase por ejecución, con revisión humana entre fases: `{"fase": "mapa", "foco": "..."}` (por defecto) → `{"fase": "oportunidades", "problemas": [problemas del mapa aprobados por una persona], "n_oportunidades": 12}` → `{"fase": "planes", "seleccion": ["O-0003", "..."]}`. Opcional: `"fecha": "AAAA-MM-DD"` |
+| `evaluar-oportunidad-auto` | `{"id": "O-0003"}` u `"O-0003"`; opcional `"max_estudios": 10` (límite de la doble extracción) |
+| `red-team-auto` | `{"archivo": "research/informes/O-0003.md", "sensibilidad": "confidencial"}` (`normal` solo con información no confidencial) |
+| `comparar-sistemas` | `{"sistemas": [{"nombre": "nutria", "ruta": "nutria"}, {"nombre": "otro", "ruta": "otro"}], "salida": "COMPARACION.md", "prompt_original": "docs/PROMPT_ORIGINAL.md"}` |
 
 ### Workflows y número de agentes
 
@@ -96,8 +105,8 @@ en tokens y en tiempo no se ha medido: empieza por las versiones paso a paso.
 
 | Workflow | Para qué | Subagentes por ejecución |
 |---|---|---|
-| `mision-1-auto` | Misión 1: mapa de problemas, oportunidades con novedad comprobada, triage, crítica, puntuación ciega y planes | Del orden de **100-300**: unos 10 por oportunidad (registro, compuertas, crítica y tres evaluadores) para 12-24 oportunidades, más el mapa, la generación, la comprobación de novedad y los planes |
-| `evaluar-oportunidad-auto` | Evaluación de una oportunidad registrada | Del orden de **30**: hasta 8 especialistas, cada uno con crítica y verificación de fuentes, más plan, informe y 3 evaluadores |
+| `mision-1-auto` | Misión 1 por fases: mapa de problemas; oportunidades con novedad comprobada, seis compuertas propuestas, crítica, puntuación ciega y ranking; planes de las oportunidades elegidas | Del orden de **150-300** en la fase `oportunidades` (unos 11 por oportunidad: registro, 6 propuestas de compuerta, crítica y 3 evaluadores; más 4 por problema y 2 de ranking; 12-24 oportunidades; más rondas extra y reintentos), **6** en la fase `mapa` y **4 por oportunidad elegida** en la fase `planes` |
+| `evaluar-oportunidad-auto` | Evaluación de una oportunidad registrada | Del orden de **20-70**: 11 fijos (descarte rápido, plan, revisión bibliográfica, informe, su verificación y 3 evaluadores), 3 por estudio con doble extracción (máximo `max_estudios`, 10 por defecto), 1 de metaanálisis si hay al menos 3 estudios comparables y hasta 3 por pregunta de especialista |
 | `red-team-auto` | Revisión adversarial de un documento | Del orden de **20-50**: 3 refutadores por cada una de sus 5-15 afirmaciones clave |
 | `comparar-sistemas` | Auditar o comparar sistemas construidos desde el mismo prompt (no investiga) | Del orden de **100**: inventario, 11 dimensiones y una verificación por cada hallazgo de gravedad media o alta |
 
@@ -143,8 +152,15 @@ nutria informe comprobar research/informes/O-0001.md --online --sellar
 ```
 
 `nutria meta analizar` usa por defecto REML con el ajuste de Hartung-Knapp-Sidik-Jonkman (`--ajuste hksj`). Lista
-completa: `nutria --help` y `nutria <orden> --help`. Todas las órdenes aceptan `--json`, `--agente <nombre>` y
-`--offline` (solo caché: la verificación de referencias queda incompleta y no hay sello válido).
+completa: `nutria --help` y `nutria <orden> --help`. Todas las órdenes aceptan `--json` (salida en JSON; la única
+excepción es `puntuar rubrica --markdown`, que imprime la tabla en Markdown), `--agente <nombre>` y `--offline` (solo
+caché: la verificación de referencias queda incompleta y no hay sello válido).
+
+Con `--agente evaluador-<n>`, la CLI no muestra puntuaciones (`oportunidad ver` las omite) y rechaza `puntuar
+ranking` y `procedencia`; la procedencia no guarda los valores de las puntuaciones, solo quién puntuó (los valores
+están en la base de datos). Es una barrera frente a descuidos, no un control de seguridad: un agente con Bash podría
+leer la base de datos directamente. `extraccion exportar` (formato `analisis`) solo exporta extracciones conciliadas
+(`doble_concordante` o `resuelta`); `--incluir-sin-conciliar` añade las demás para una exploración.
 
 ## Garantías y limitaciones
 

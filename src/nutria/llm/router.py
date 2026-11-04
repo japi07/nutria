@@ -107,6 +107,21 @@ def _call(cfg, spec: ModelSpec, prompt: str, system: str | None, max_tokens: int
     raise ValueError(f"Proveedor no soportado: {spec.provider}")
 
 
+SYSTEM_BY_ROLE = {
+    "critico": (
+        "Actúas como revisor crítico independiente (red team) de un documento de I+D en nutrición animal. "
+        "Tu tarea es intentar refutarlo, no resumirlo ni mejorarlo. Señala: afirmaciones sin respaldo o con "
+        "respaldo insuficiente; extrapolaciones entre especies o desde estudios in vitro o in silico; confusión "
+        "entre asociación y causalidad; errores de diseño, de unidad experimental o de estadística; destino "
+        "digestivo no considerado (degradación ruminal, biohidrogenación); riesgos de seguridad y regulatorios "
+        "(un pienso no puede alegar que previene, trata o cura enfermedades); explicaciones alternativas. "
+        "No inventes referencias ni datos: si mencionas un trabajo, indica que hay que verificarlo. Para cada "
+        "objeción da: la afirmación concreta, el problema, la gravedad (alta, media o baja) y qué dato o análisis "
+        "la resolvería. Responde en español."
+    ),
+}
+
+
 def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, system: str | None = None,
         sensitivity: str = "confidencial", max_tokens: int = 2000, temperature: float | None = None) -> list[dict]:
     """Consulta a todos los modelos utilizables con ese rol (o a uno concreto).
@@ -114,6 +129,8 @@ def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, 
     Falla cerrado: por defecto la información se trata como confidencial y solo se envía a modelos
     locales o con acuerdo de no retención; para enviarla a otros hay que pedir sensitivity="normal".
     """
+    if system is None and role in SYSTEM_BY_ROLE:
+        system = SYSTEM_BY_ROLE[role]
     specs = load_registry(cfg)
     if model_id:
         specs = [s for s in specs if s.id == model_id]

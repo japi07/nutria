@@ -161,7 +161,13 @@ salida y descarte en `docs/PROMPT_MAESTRO_v2.md` §3.
 
 ## Misiones
 
-`/mision-1` (paso a paso, con revisión humana entre fases) · `/mision-1-auto` (workflow por fases —mapa,
-oportunidades, planes— con revisión humana entre ellas) · `/oportunidad O-xxxx` · `/evaluar-oportunidad-auto` ·
-`/revision-sistematica` · `/metaanalisis` · `/informe` · `/red-team` · `/red-team-auto` · `/estado`.
-En los workflows el control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.
+Skills (órdenes con `/`): `/mision-1` (paso a paso, con revisión humana entre fases) · `/oportunidad O-xxxx` ·
+`/revision-sistematica` · `/metaanalisis` · `/informe` · `/red-team` · `/estado`.
+
+Workflows de `.claude/workflows/` (no son órdenes con `/`: la sesión principal los lanza por su nombre con la
+herramienta Workflow y argumentos JSON; su avance se sigue con `/workflows`): `mision-1-auto` por fases, con revisión
+humana entre ellas (`{"fase": "mapa", "foco": "..."}` → `{"fase": "oportunidades", "problemas": [...]}` →
+`{"fase": "planes", "seleccion": ["O-xxxx"]}`) · `evaluar-oportunidad-auto` (`{"id": "O-xxxx"}`) ·
+`red-team-auto` (`{"archivo": "<ruta>", "sensibilidad": "confidencial"}`) · `comparar-sistemas`
+(`{"sistemas": [{"nombre": "...", "ruta": "..."}]}`). En los workflows el control de flujo es fijo, pero cada agente
+puede dar resultados distintos en cada ejecución.

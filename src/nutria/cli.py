@@ -34,6 +34,17 @@ def _emit(args, data, text: str | None = None) -> None:
         print(text if text is not None else json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
 
+def _es_evaluador(args) -> bool:
+    """Los evaluadores independientes se identifican con --agente evaluador-<n> (regla 9 de CLAUDE.md)."""
+    return str(getattr(args, "agente", None) or "").strip().lower().startswith("evaluador")
+
+
+def _no_para_evaluadores(args, what: str) -> None:
+    if _es_evaluador(args):
+        raise SystemExit(f"Los evaluadores independientes no pueden {what}: puntúan a ciegas "
+                         "(regla 9 de CLAUDE.md). Usa `oportunidad ver <ID> --sin-puntuaciones`.")
+
+
 def _load_json(path: str):
     raw = sys.stdin.read() if path == "-" else Path(path).read_text("utf-8")
     return json.loads(raw)
@@ -96,7 +107,8 @@ def cmd_init(args, cfg) -> int:
         (cfg.research_dir / sub).mkdir(parents=True, exist_ok=True)
     registry.init_db(cfg.db_path).close()
     log_event(cfg, "init", outputs={"entorno": environment_snapshot(cfg.root)})
-    print(f"Proyecto inicializado en {root}\n  configuración: {conf}\n  base de datos: {cfg.db_path}")
+    _emit(args, {"raiz": str(root), "configuracion": str(conf), "base_de_datos": str(cfg.db_path)},
+          f"Proyecto inicializado en {root}\n  configuración: {conf}\n  base de datos: {cfg.db_path}")
     return 0
 
 
@@ -274,7 +286,8 @@ def cmd_verificar(args, cfg) -> int:
         registry.add_manual_verification(conn, targets[1], args.firma_humana, args.nota)
         log_event(cfg, "verificacion_manual", inputs={"url": targets[1]}, outputs={"firma": args.firma_humana},
                   actor=args.agente)
-        print(f"Verificación manual registrada para {targets[1]} (firma: {args.firma_humana})")
+        _emit(args, {"url": targets[1], "firma": args.firma_humana},
+              f"Verificación manual registrada para {targets[1]} (firma: {args.firma_humana})")
         return 0
     client = _client(cfg, fresh=True)
     if args.doi or args.pmid:
@@ -406,6 +419,7 @@ ANALYSIS_COLUMNS = [
     ("dcad_meq_kg_ms", "dcad_meq_kg_dm"), ("financiacion", "funding"), ("estado_verificacion", "check_status"),
 ]
 COMPARE_IGNORED = {"notas", "estado_verificacion", "verificado_por"}
+CONCILIATED = ("doble_concordante", "resuelta")
 
 
 def _same(a, b) -> bool:
@@ -446,6 +460,17 @@ def cmd_extraccion(args, cfg) -> int:
     if args.accion == "exportar":
         if not rows:
             raise SystemExit("No hay extracciones con esos filtros")
+        excluded: dict[str, int] = {}
+        if args.formato == "analisis" and not args.incluir_sin_conciliar:
+            # Doble extracción (regla del proyecto): al análisis solo pasan los registros conciliados.
+            for r in rows:
+                if r["check_status"] not in CONCILIATED:
+                    excluded[r["check_status"]] = excluded.get(r["check_status"], 0) + 1
+            rows = [r for r in rows if r["check_status"] in CONCILIATED]
+            if not rows:
+                raise SystemExit("Ninguna extracción conciliada ('doble_concordante' o 'resuelta') con esos filtros "
+                                 f"(excluidas: {excluded}). Concilia la doble extracción con `extraccion comparar` o, "
+                                 "solo para una exploración, usa --incluir-sin-conciliar.")
         if args.formato == "registro":
             fieldnames = list(rows[0].keys())
             out_rows = rows
@@ -457,7 +482,17 @@ def cmd_extraccion(args, cfg) -> int:
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(out_rows)
-        print(f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato})")
+        note = ""
+        if excluded:
+            note = ("\nExcluidas por no estar conciliadas: "
+                    + ", ".join(f"{k}={v}" for k, v in sorted(excluded.items()))
+                    + " (usa --incluir-sin-conciliar solo para una exploración)")
+        elif args.formato == "analisis" and args.incluir_sin_conciliar:
+            pending = sum(1 for r in rows if r["check_status"] not in CONCILIATED)
+            if pending:
+                note = f"\nAVISO: {pending} fila(s) sin conciliar incluidas: el análisis es solo exploratorio"
+        _emit(args, {"filas": len(rows), "csv": args.csv, "formato": args.formato, "excluidas": excluded},
+              f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato}){note}")
         return 0
     _emit(args, rows, "\n".join(f"#{r['id']} {r['source_id']} | {r['species']} | {r['intervention']} | {r['outcome']} "
                                 f"({r['outcome_unit']}) | {r['check_status']}" for r in rows) or "(sin extracciones)")
@@ -506,14 +541,14 @@ def _entity_cmd(args, cfg, kind: str) -> int:
         if kind == "oportunidad":
             row["compuertas"] = registry.list_gates(conn, args.id)
             row["compuertas_efectivas"] = registry.effective_gates(conn, args.id, _rubric(cfg).gate_ids)
-            if not getattr(args, "sin_puntuaciones", False):
+            if not getattr(args, "sin_puntuaciones", False) and not _es_evaluador(args):
                 row["puntuaciones"] = registry.list_scores(conn, args.id)
             row["hipotesis"] = registry.list_hypotheses(conn, opportunity_id=args.id)
         _emit(args, row)
     else:
         gate_ids = _rubric(cfg).gate_ids if kind == "oportunidad" else None
         set_status(conn, args.id, args.nuevo_estado, args.motivo, args.agente, args.firma_humana, gate_ids)
-        print(f"{args.id} -> {args.nuevo_estado}")
+        _emit(args, {"id": args.id, "estado": args.nuevo_estado}, f"{args.id} -> {args.nuevo_estado}")
     return 0
 
 
@@ -540,10 +575,14 @@ def cmd_puntuar(args, cfg) -> int:
         data = _load_json(args.json_file)
         _validate("puntuacion", data)
         n = registry.add_scores(conn, data["oportunidad"], data["evaluador"], data["puntuaciones"], rubric.criterion_ids)
+        # Los valores quedan en la base de datos (scores y scores_history), no en la procedencia, que es legible por
+        # otros agentes: así un evaluador no puede ver las puntuaciones de otro consultando las trazas.
         log_event(cfg, "puntuacion", inputs={"oportunidad": data["oportunidad"], "evaluador": data["evaluador"]},
-                  outputs={"criterios": n, "valores": {p["criterio"]: [p.get("min"), p["valor"], p.get("max")]
-                                                        for p in data["puntuaciones"]}}, actor=args.agente)
-        print(f"{n} puntuaciones registradas para {data['oportunidad']} (evaluador {data['evaluador']})")
+                  outputs={"criterios": n, "sha256_puntuaciones": sha256_text(json.dumps(data["puntuaciones"],
+                                                                                         sort_keys=True))},
+                  actor=args.agente)
+        _emit(args, {"oportunidad": data["oportunidad"], "evaluador": data["evaluador"], "criterios": n},
+              f"{n} puntuaciones registradas para {data['oportunidad']} (evaluador {data['evaluador']})")
         return 0
     if args.accion == "compuerta":
         registry.set_gate(conn, args.id, args.compuerta, args.estado, args.motivo, rubric.gate_ids,
@@ -551,9 +590,11 @@ def cmd_puntuar(args, cfg) -> int:
         note = ""
         if args.estado == "superada" and not args.firma_humana:
             note = " (propuesta: no cuenta como superada hasta que la firme una persona)"
-        print(f"{args.id}: compuerta {args.compuerta} -> {args.estado}{note}")
+        _emit(args, {"id": args.id, "compuerta": args.compuerta, "estado": args.estado,
+                     "firmada": bool(args.firma_humana)}, f"{args.id}: compuerta {args.compuerta} -> {args.estado}{note}")
         return 0
     # ranking
+    _no_para_evaluadores(args, "consultar el ranking")
     profile = args.perfil or cfg.scoring_profile
     opps = []
     for o in registry.list_opportunities(conn):
@@ -578,7 +619,8 @@ def cmd_decision(args, cfg) -> int:
     conn = _conn(cfg)
     if args.accion == "registrar":
         registry.add_decision(conn, args.entidad, args.decision, args.motivo, args.agente, args.firma_humana)
-        print("Decisión registrada" + ("" if args.firma_humana else " (sin firma humana: es una propuesta)"))
+        _emit(args, {"entidad": args.entidad, "decision": args.decision, "firmada": bool(args.firma_humana)},
+              "Decisión registrada" + ("" if args.firma_humana else " (sin firma humana: es una propuesta)"))
         return 0
     rows = registry.list_decisions(conn, args.entidad)
     _emit(args, rows, "\n".join(f"{r['ts']} {r['entity_id'] or '-':<8} {r['decision']} | {r['rationale']} | "
@@ -774,7 +816,8 @@ print(leave1out(res))
 if (res$k >= 10) {{ print(regtest(res)); funnel(res) }}
 """
     Path(args.salida).write_text(script, "utf-8")
-    print(f"Datos con yi/vi en {data_path} y script de R (metafor) en {args.salida}")
+    _emit(args, {"datos": str(data_path), "script": args.salida},
+          f"Datos con yi/vi en {data_path} y script de R (metafor) en {args.salida}")
     return 0
 
 
@@ -880,17 +923,18 @@ def cmd_informe(args, cfg) -> int:
             raise SystemExit(f"{out} ya existe (usa --forzar para sobrescribir)")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, "utf-8")
-        print(f"Esqueleto de informe creado: {out}")
+        _emit(args, {"informe": str(out)}, f"Esqueleto de informe creado: {out}")
         return 0
     if args.accion == "sello":
         from .reports.check import stamp_status
         ok, msg = stamp_status(Path(args.archivo))
-        print(msg)
+        _emit(args, {"valido": ok, "mensaje": msg}, msg)
         return 0 if ok else 1
     return _check_report_file(args, cfg, Path(args.archivo), online=args.online)
 
 
 def cmd_procedencia(args, cfg) -> int:
+    _no_para_evaluadores(args, "consultar la procedencia")
     events = read_events(cfg, limit=args.ultimas, action=args.accion_filtro)
     _emit(args, events, "\n".join(f"{e['ts']} {e['actor']:<22} {e['action']:<18} "
                                   f"{json.dumps(e.get('inputs'), ensure_ascii=False)[:110]}" for e in events)
@@ -1058,6 +1102,9 @@ def build_parser() -> argparse.ArgumentParser:
             x.add_argument("--csv", required=True)
             x.add_argument("--formato", choices=["analisis", "registro"], default="analisis",
                            help="analisis: columnas que espera `nutria meta analizar`; registro: columnas internas")
+            x.add_argument("--incluir-sin-conciliar", action="store_true",
+                           help="incluye en el formato analisis las extracciones 'simple' o con 'discrepancia' "
+                                "(solo para exploración; por defecto se excluyen)")
     x = es.add_parser("comparar", parents=[common], help="doble extracción: diferencias campo a campo")
     x.add_argument("a")
     x.add_argument("b")

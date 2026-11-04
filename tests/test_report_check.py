@@ -5,7 +5,8 @@ import pytest
 from nutria.reports import check as rc
 from nutria.reports.check import check_report, stamp_status, write_stamp
 
-SECTIONS = "\n".join(f"## {n}. Sección {n}\n" for n in range(1, 20))
+SECTIONS = "\n".join(f"## {n}. Sección {n}\n" + ("Alegación prevista: ninguna.\n" if n == 14 else "")
+                     for n in range(1, 20))
 
 
 @pytest.fixture(autouse=True)
@@ -102,3 +103,15 @@ def test_stamp_covers_checked_text_not_later_edits(tmp_path):
     report.write_text(checked + "\n[R9] inventada", "utf-8")
     _stamp(report, checked)
     assert not stamp_status(report)[0]
+
+
+def test_section_14_requires_intended_claim():
+    # D5-11: la sección 14 debe recoger la alegación prevista (Reglamento (CE) 767/2009, art. 13)
+    no_claim = SECTIONS.replace("Alegación prevista: ninguna.\n", "")
+    draft = make("", "").replace(SECTIONS, no_claim)
+    issues = [i for i in check_report(draft) if "alegación prevista" in i.message]
+    assert issues and issues[0].severity == "aviso"
+    final = make("", "", estado="final", humano="Ana").replace(SECTIONS, no_claim)
+    issues = [i for i in check_report(final) if "alegación prevista" in i.message]
+    assert issues and issues[0].severity == "error"
+    assert not [i for i in check_report(make("", "")) if "alegación prevista" in i.message]
