@@ -8,6 +8,10 @@
 # - politica_datos: "local" (no sale del equipo), "zero_retention" (acuerdo contractual de no retención)
 #   o "standard". Los datos confidenciales solo pueden ir a "local" o "zero_retention".
 # - Elige qué modelo cubre cada rol con `nutria llm evaluar` sobre tu banco de preguntas, no por reputación.
+# - `nutria llm preguntar` trata por defecto la información como confidencial (solo "local" o "zero_retention");
+#   usa --sensibilidad normal para enviar a modelos "standard" información que no sea confidencial.
+# - Este registro gobierna las llamadas a proveedores ADICIONALES. Las sesiones de Claude Code se rigen por las
+#   condiciones de tu cuenta de Anthropic (consulta su configuración de uso de datos).
 # - Copia este fichero a config/modelos.toml para personalizarlo.
 
 [[modelo]]

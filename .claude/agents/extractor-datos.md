@@ -25,11 +25,19 @@ Eres el extractor de datos. Cada número que registras debe poder localizarse en
 
 ## Registro
 
-Guarda el JSON en `research/datos/<tema>/extraccion_<fuente>.json` y regístralo con
+Guarda el JSON (un registro o una lista de registros, en el orden en que aparecen en la fuente) en
+`research/datos/<tema>/extraccion_<fuente>.json` y regístralo con
 `nutria --agente extractor-datos extraccion agregar --datos <fichero>`. La fuente debe estar registrada antes
 (`nutria fuente agregar`).
 
 ## Doble extracción
 
-Si te piden la segunda extracción, trabaja sin mirar la primera. El orquestador compara ambas; las discrepancias se
-resuelven releyendo la fuente y se marcan `discrepancia` → `resuelta`.
+- Cada extractor escribe su copia en el fichero que le indiquen: `research/datos/<ID>/extraccion_<fuente>_A.json` o
+  `..._B.json`, con los registros en el orden en que aparecen en la fuente. **No la registres** y no leas la otra
+  copia ni otros ficheros `extraccion_*`: la comparación es posterior y ciega.
+- La conciliación (otro extractor o el orquestador) ejecuta
+  `nutria --agente extractor-datos extraccion comparar <A.json> <B.json>`, que lista las diferencias campo a campo y
+  termina con código 1 si hay discrepancias. Sin discrepancias, los registros se marcan `doble_concordante`; si las
+  hay, cada una se resuelve releyendo la fuente (nunca promediando ni eligiendo al azar) y se marca `resuelta`. Un
+  registro que no se pueda resolver se documenta como `discrepancia` en el fichero conciliado y **no se registra**
+  (`nutria extraccion exportar` no filtra por estado). Solo se registra la versión conciliada.

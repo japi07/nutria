@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from ..http import NetworkError
+from ..http import NetworkError, NotFoundError
 
 BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 VIEW = "https://pubchem.ncbi.nlm.nih.gov/rest/pug_view"
@@ -55,10 +55,8 @@ def ghs_hazards(client, cid: int) -> list[str]:
     try:
         data = client.get_json(f"{VIEW}/data/compound/{int(cid)}/JSON",
                                params={"heading": "GHS Classification"})
-    except NetworkError as exc:
-        if "404" in str(exc):
-            return []
-        raise
+    except NotFoundError:  # el compuesto no tiene clasificación GHS notificada
+        return []
     out: list[str] = []
     _collect_strings(data, "Hazard Statements", out)
     return out

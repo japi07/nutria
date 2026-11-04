@@ -1,7 +1,8 @@
 # Fuentes de información: acceso, herramientas y licencias
 
-Revisado el 2026-11-04. Las condiciones de acceso y las licencias cambian: compruébalas antes de construir un flujo
-comercial sobre una fuente. "Orden" indica cómo se consulta desde este sistema.
+Revisado el 2026-11-04. Lo marcado "verificado (2026-11-04)" se comprobó por búsqueda web en esa fecha; el resto de
+condiciones de acceso, límites y licencias es orientativo y está pendiente de verificar. Cambian a menudo: compruébalas
+antes de construir un flujo comercial sobre una fuente. "Orden" indica cómo se consulta desde este sistema.
 
 ## Literatura científica
 
@@ -11,8 +12,8 @@ comercial sobre una fuente. "Orden" indica cómo se consulta desde este sistema.
 | PubMed Central | Abierto | Vía Europe PMC o WebFetch | Licencias de reutilización distintas por artículo |
 | Europe PMC | Abierto, API REST | `nutria buscar europepmc "<q>"` | Incluye texto completo en abierto, preprints y literatura de agencias |
 | EFSA Journal | Acceso abierto | `nutria buscar efsa "<q>"` | Opiniones y guías del Panel FEEDAP |
-| OpenAlex | Abierto (datos CC0), API | `nutria buscar openalex "<q>"` | Citas, acceso abierto, estado de retractación. Clave opcional `OPENALEX_API_KEY` |
-| Crossref | Metadatos abiertos, API | `nutria verificar --doi`, `nutria fuente agregar` | Fuente autoritativa de metadatos por DOI |
+| OpenAlex | Abierto (datos CC0), API con **clave obligatoria** | `nutria buscar openalex "<q>"` | Citas, acceso abierto, estado de retractación. Exige clave de API en todas las peticiones desde el 13-02-2026 (changelog oficial; verificado (2026-11-04)); claves gratuitas en https://openalex.org/settings/api. Guárdala en la variable de entorno `OPENALEX_API_KEY`, nunca en ficheros. Sin clave, `nutria` no consulta OpenAlex (error con instrucciones) y la verificación de referencias comprueba la retractación con Crossref y PubMed |
+| Crossref | Metadatos abiertos, API | `nutria verificar --doi`, `nutria fuente agregar` | Fuente autoritativa de metadatos por DOI. Incluye las retractaciones de sus miembros y de Retraction Watch en el campo `update-to` (cada entrada con DOI, `type` y `source`; verificado (2026-11-04)) |
 | Semantic Scholar | API con límites | WebFetch | Revisar condiciones de la API |
 | Web of Science, Scopus | Suscripción | Manual o API institucional | Solo si la organización tiene licencia |
 | CAB Abstracts | Suscripción (CABI) | Manual | Muy buena cobertura de ciencia animal y veterinaria |
@@ -42,7 +43,7 @@ comercial sobre una fuente. "Orden" indica cómo se consulta desde este sistema.
 | PDB | CC0 | WebFetch |
 | AlphaFold DB (predicciones) | CC BY 4.0 | WebFetch. Los pesos de AlphaFold 3 tienen condiciones de uso no comercial |
 | STRING | CC BY 4.0 | `nutria red GEN1 GEN2 --especie vacuno --enriquecimiento` |
-| Reactome | CC BY 4.0 | `nutria rutas buscar|analizar` |
+| Reactome | CC BY 4.0 | `nutria rutas buscar` y `nutria rutas analizar` |
 | Gene Ontology | CC BY 4.0 | Vía STRING o WebFetch |
 | KEGG | Uso académico gratuito; uso comercial con licencia | Evitar en flujos comerciales sin licencia |
 | DrugBank | Uso comercial con licencia | Evitar sin licencia |
@@ -78,3 +79,8 @@ Para que `nutria` funcione, la red debe permitir: `eutils.ncbi.nlm.nih.gov`, `pu
 usa, `api.lens.org`. Para lectura con WebFetch: `eur-lex.europa.eu`, `efsa.onlinelibrary.wiley.com`,
 `food.ec.europa.eu`, `europepmc.org`, `pubmed.ncbi.nlm.nih.gov`, `www.feedipedia.org`, `doi.org`. Comprueba con
 `nutria doctor`.
+
+En Claude Code, los dominios de lectura con WebFetch de esta lista figuran en la lista `allow` de
+`.claude/settings.json`. WebFetch hacia otras fuentes de este documento que no están en esa lista (p. ej. Semantic
+Scholar, Eurostat o KEGG) no está preautorizado: Claude Code pide permiso para usarlo. `nutria` no usa WebFetch: sus
+peticiones solo dependen de que la red permita los dominios de arriba.

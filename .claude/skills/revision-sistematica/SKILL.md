@@ -15,7 +15,9 @@ disable-model-invocation: true
    protocolo (OSF, SYREAF) es una decisión humana: puede comprometer la confidencialidad.
 2. **Búsqueda**: `investigador-bibliografico` con la skill `busqueda-bibliografica` (≥ 2 fuentes y búsqueda de nulos).
 3. **Cribado** por título y resumen con motivos de exclusión; texto completo cuando esté disponible.
-4. **Doble extracción** independiente (dos `extractor-datos`) y conciliación de discrepancias contra la fuente.
+4. **Doble extracción** independiente (dos `extractor-datos`: `extraccion_<fuente>_A.json` y `_B.json`),
+   comparación con `nutria extraccion comparar <A> <B>` y conciliación de discrepancias contra la fuente (skill
+   `extraccion-datos`).
 5. **Riesgo de sesgo** por estudio, en tabla.
 6. **Síntesis**: `estadistico` con `/metaanalisis`; si no se puede combinar, síntesis narrativa estructurada explicando
    por qué.

@@ -103,21 +103,25 @@ def load_rubric(path: Path | None = None) -> Rubric:
 class RankRow:
     opportunity_id: str
     title: str
-    status: str                      # APTA | CONDICIONAL | BLOQUEADA | INCOMPLETA
+    status: str                      # APTA | CONDICIONAL | INSUFICIENTE | INCOMPLETA | BLOQUEADA
     composite: float | None = None   # puntuación determinista (medianas, pesos nominales)
     p05: float | None = None
     p50: float | None = None
     p95: float | None = None
-    p_top: float | None = None
+    p_top: float | None = None       # probabilidad de quedar entre los k primeros DENTRO de su grupo
     median_rank: float | None = None
     value_axis: float | None = None
     feasibility_axis: float | None = None
     quadrant: str | None = None
     raters: int = 0
+    ranks_by_profile: dict = field(default_factory=dict)
     flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
+
+
+STATUS_ORDER = {"APTA": 0, "CONDICIONAL": 1, "INSUFICIENTE": 2, "INCOMPLETA": 3, "BLOQUEADA": 4}
 
 
 def _quadrant(value: float, feasibility: float, threshold: float = 50.0) -> str:
@@ -141,23 +145,58 @@ def _triangular_inverse(u: np.ndarray, a: np.ndarray, c: np.ndarray, b: np.ndarr
     return np.where(width > 0, out, a)
 
 
-def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado", n_sim: int = 5000,
-         seed: int = 42, alpha: float = 200.0, top_k: int = 3, disagreement: float = 0.5) -> list[RankRow]:
-    """`opportunities`: [{"id", "title", "scores": [{rater, criterion, value, low, high}], "gates": {id: estado}}]
+def _monte_carlo(group: list[tuple[RankRow, list]], w_nominal: np.ndarray, n_sim: int, rng: np.random.Generator,
+                 alpha: float, top_k: int) -> None:
+    if not group or n_sim <= 0:
+        return
+    n_opp, n_crit = len(group), len(w_nominal)
+    if alpha and alpha > 0:
+        conc = np.maximum(alpha * w_nominal / w_nominal.sum(), 1e-6)
+        w = rng.dirichlet(conc, size=n_sim) * 100.0
+    else:
+        w = np.tile(w_nominal, (n_sim, 1))
+    composites = np.zeros((n_sim, n_opp))
+    for j, (_row, crits) in enumerate(group):
+        for ci in range(n_crit):
+            triples = np.array(crits[ci])                       # (n_evaluadores, 3)
+            pick = rng.integers(0, len(triples), size=n_sim)
+            lo, mode, hi = triples[pick, 0], triples[pick, 1], triples[pick, 2]
+            composites[:, j] += w[:, ci] * _triangular_inverse(rng.random(n_sim), lo, mode, hi)
+    order = np.argsort(-composites, axis=1)
+    ranks = np.empty_like(order)
+    ranks[np.arange(n_sim)[:, None], order] = np.arange(1, n_opp + 1)[None, :]
+    for j, (row, _c) in enumerate(group):
+        row.p05, row.p50, row.p95 = (float(x) for x in np.percentile(composites[:, j], [5, 50, 95]))
+        row.p_top = float(np.mean(ranks[:, j] <= top_k))
+        row.median_rank = float(np.median(ranks[:, j]))
 
-    `alpha` es la concentración de la Dirichlet sobre los pesos (mayor = pesos más estables;
-    0 = pesos fijos). Con semilla fija el resultado es reproducible.
+
+def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado", n_sim: int = 5000,
+         seed: int = 42, alpha: float = 50.0, top_k: int = 3, disagreement: float = 0.5,
+         min_raters: int = 3) -> list[RankRow]:
+    """`opportunities`: [{"id", "title", "scores": [{rater, criterion, value, low, high}],
+    "gates": {id: estado_efectivo}, "status": estado_de_registro}]
+
+    Estados: APTA (todas las compuertas superadas y firmadas), CONDICIONAL (alguna sin resolver o sin
+    firmar), INSUFICIENTE (menos de `min_raters` evaluadores en algún criterio), INCOMPLETA (criterios
+    sin puntuar) y BLOQUEADA (compuerta bloqueada u oportunidad bloqueada o descartada).
+    APTA y CONDICIONAL se simulan por separado: P(top-k) se refiere al propio grupo, de modo que una
+    CONDICIONAL nunca adelanta a una APTA. `alpha` es la concentración de la Dirichlet sobre los pesos
+    (menor = más perturbación; 0 = pesos fijos). Con semilla fija el resultado es reproducible.
     """
     weights = rubric.weights(profile)
     crit_ids = [c.id for c in rubric.criteria]
     axis = {c.id: c.axis for c in rubric.criteria}
     w_nominal = np.array([weights[c] for c in crit_ids])
+    other_profiles = {name: rubric.weights(name) for name in rubric.profiles}
     rows: list[RankRow] = []
-    eligible: list[tuple[RankRow, list[list[tuple[float, float, float]]]]] = []
+    groups: dict[str, list] = {"APTA": [], "CONDICIONAL": []}
+    medians_by_row: dict[str, dict[str, float]] = {}
 
     for opp in opportunities:
         row = RankRow(opp["id"], opp.get("title", ""), status="APTA")
         by_crit: dict[str, list[tuple[float, float, float]]] = {c: [] for c in crit_ids}
+        raters_by_crit: dict[str, set] = {c: set() for c in crit_ids}
         raters = set()
         for s in opp.get("scores", []):
             if s["criterion"] not in by_crit:
@@ -166,18 +205,22 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
             lo = float(s["low"]) if s.get("low") is not None else v
             hi = float(s["high"]) if s.get("high") is not None else v
             by_crit[s["criterion"]].append((lo, v, hi))
+            raters_by_crit[s["criterion"]].add(s["rater"])
             raters.add(s["rater"])
         row.raters = len(raters)
         gates = opp.get("gates", {})
-        gate_states = [gates.get(g.id, "no_resuelta") for g in rubric.gates]
-        if "bloqueada" in gate_states:
+        gate_states = {g.id: gates.get(g.id, "no_resuelta") for g in rubric.gates}
+        blocked = [g for g, st in gate_states.items() if st == "bloqueada"]
+        pending = [g for g, st in gate_states.items() if st != "superada"]
+        if opp.get("status") in ("bloqueada", "descartada"):
             row.status = "BLOQUEADA"
-            row.flags.append("Compuertas bloqueadas: " + ", ".join(
-                g.id for g in rubric.gates if gates.get(g.id) == "bloqueada"))
-        elif "no_resuelta" in gate_states:
+            row.flags.append(f"Oportunidad en estado '{opp.get('status')}'")
+        if blocked:
+            row.status = "BLOQUEADA"
+            row.flags.append("Compuertas bloqueadas: " + ", ".join(blocked))
+        elif pending and row.status != "BLOQUEADA":
             row.status = "CONDICIONAL"
-            row.flags.append("Compuertas sin resolver: " + ", ".join(
-                g.id for g in rubric.gates if gates.get(g.id, "no_resuelta") == "no_resuelta"))
+            row.flags.append("Compuertas sin resolver o sin firma humana: " + ", ".join(pending))
         missing = [c for c in crit_ids if not by_crit[c]]
         if missing:
             row.flags.append("Sin puntuar: " + ", ".join(missing))
@@ -185,7 +228,13 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
                 row.status = "INCOMPLETA"
             rows.append(row)
             continue
+        few = [c for c in crit_ids if len(raters_by_crit[c]) < min_raters]
+        if few:
+            row.flags.append(f"Menos de {min_raters} evaluadores independientes en: " + ", ".join(few))
+            if row.status != "BLOQUEADA":
+                row.status = "INSUFICIENTE"
         medians = {c: float(np.median([t[1] for t in by_crit[c]])) for c in crit_ids}
+        medians_by_row[row.opportunity_id] = medians
         row.composite = float(sum(weights[c] * medians[c] for c in crit_ids))
         value_ids = [c for c in crit_ids if axis[c] == "valor"]
         feas_ids = [c for c in crit_ids if axis[c] != "valor"]
@@ -196,58 +245,47 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
             vals = [t[1] for t in by_crit[c]]
             if len(vals) > 1 and max(vals) - min(vals) >= disagreement:
                 row.flags.append(f"Desacuerdo entre evaluadores en '{c}' ({min(vals):.2f}-{max(vals):.2f}): discutir")
-        if row.raters < 2:
-            row.flags.append("Un solo evaluador: puntuación no independiente")
         rows.append(row)
-        if row.status != "BLOQUEADA":
-            eligible.append((row, [by_crit[c] for c in crit_ids]))
+        if row.status in groups:
+            groups[row.status].append((row, [by_crit[c] for c in crit_ids]))
 
-    if eligible and n_sim > 0:
-        rng = np.random.default_rng(seed)
-        n_opp, n_crit = len(eligible), len(crit_ids)
-        if alpha and alpha > 0:
-            conc = np.maximum(alpha * w_nominal / w_nominal.sum(), 1e-6)
-            w = rng.dirichlet(conc, size=n_sim) * 100.0
-        else:
-            w = np.tile(w_nominal, (n_sim, 1))
-        composites = np.zeros((n_sim, n_opp))
-        for j, (_row, crits) in enumerate(eligible):
-            for ci in range(n_crit):
-                triples = np.array(crits[ci])                       # (n_raters, 3)
-                pick = rng.integers(0, len(triples), size=n_sim)
-                lo, mode, hi = triples[pick, 0], triples[pick, 1], triples[pick, 2]
-                samples = _triangular_inverse(rng.random(n_sim), lo, mode, hi)
-                composites[:, j] += w[:, ci] * samples
-        order = np.argsort(-composites, axis=1)
-        ranks = np.empty_like(order)
-        rows_idx = np.arange(n_sim)[:, None]
-        ranks[rows_idx, order] = np.arange(1, n_opp + 1)[None, :]
-        for j, (row, _c) in enumerate(eligible):
-            row.p05, row.p50, row.p95 = (float(x) for x in np.percentile(composites[:, j], [5, 50, 95]))
-            row.p_top = float(np.mean(ranks[:, j] <= top_k))
-            row.median_rank = float(np.median(ranks[:, j]))
+    # Orden determinista con cada perfil de pesos (robustez frente a la elección de pesos)
+    scored = [r for r in rows if r.opportunity_id in medians_by_row and r.status in ("APTA", "CONDICIONAL")]
+    for name, wts in other_profiles.items():
+        totals = sorted(((sum(wts[c] * medians_by_row[r.opportunity_id][c] for c in crit_ids), r) for r in scored),
+                        key=lambda t: (STATUS_ORDER[t[1].status], -t[0]))
+        for position, (_total, r) in enumerate(totals, start=1):
+            r.ranks_by_profile[name] = position
+
+    rng = np.random.default_rng(seed)
+    for name in ("APTA", "CONDICIONAL"):
+        _monte_carlo(groups[name], w_nominal, n_sim, rng, alpha, top_k)
 
     def sort_key(r: RankRow):
-        status_order = {"APTA": 0, "CONDICIONAL": 1, "INCOMPLETA": 2, "BLOQUEADA": 3}[r.status]
-        return (status_order if r.status in ("INCOMPLETA", "BLOQUEADA") else 0,
-                -(r.p_top or 0), -(r.p50 or r.composite or 0))
+        return (STATUS_ORDER[r.status], -(r.p_top or 0), -(r.p50 or r.composite or 0))
 
     return sorted(rows, key=sort_key)
 
 
 def format_table(rows: list[RankRow], top_k: int = 3) -> str:
+    profiles = sorted({p for r in rows for p in r.ranks_by_profile})
     header = (f"{'Oportunidad':<10} {'Estado':<12} {'Punt.':>6} {'P50 [P5-P95]':>20} {f'P(top{top_k})':>9} "
-              f"{'Rango':>6} {'Valor':>6} {'Viab.':>6}  Cuadrante")
+              f"{'Rango':>6} {'Valor':>6} {'Viab.':>6}  " + " ".join(f"{p[:5]:>5}" for p in profiles) + "  Cuadrante")
     lines = [header, "-" * len(header)]
+    current = None
     for r in rows:
+        if r.status != current:
+            current = r.status
+            lines.append(f"[{current}]")
         if r.composite is None:
             lines.append(f"{r.opportunity_id:<10} {r.status:<12} {'-':>6} {'-':>20} {'-':>9} {'-':>6} {'-':>6} {'-':>6}")
         else:
             interval = f"{r.p50:.1f} [{r.p05:.1f}-{r.p95:.1f}]" if r.p50 is not None else "-"
             ptop = f"{r.p_top:.2f}" if r.p_top is not None else "-"
             mrank = f"{r.median_rank:.0f}" if r.median_rank is not None else "-"
+            prof = " ".join(f"{r.ranks_by_profile.get(p, '-'):>5}" for p in profiles)
             lines.append(f"{r.opportunity_id:<10} {r.status:<12} {r.composite:>6.1f} {interval:>20} {ptop:>9} "
-                         f"{mrank:>6} {r.value_axis:>6.1f} {r.feasibility_axis:>6.1f}  {r.quadrant}")
+                         f"{mrank:>6} {r.value_axis:>6.1f} {r.feasibility_axis:>6.1f}  {prof}  {r.quadrant}")
         if r.title:
             lines.append(f"{'':<10} {r.title}")
         for flag in r.flags:
@@ -255,7 +293,9 @@ def format_table(rows: list[RankRow], top_k: int = 3) -> str:
     lines.append("")
     lines.append("Punt. = puntuación con los valores modales y los pesos nominales. P50 [P5-P95] = distribución Monte "
                  "Carlo con los rangos de incertidumbre y pesos perturbados (difiere de Punt. si los rangos son asimétricos). "
-                 "Valor y Viab. = ejes de 0 a 100.")
-    lines.append("La puntuación es orientativa y no demuestra eficacia. Las BLOQUEADAS no compiten; las "
-                 "CONDICIONALES no pueden pasar a validación experimental hasta resolver sus compuertas.")
+                 "P(top-k) y Rango se calculan dentro de cada grupo. Las columnas de perfiles dan la posición con cada "
+                 "perfil de pesos: si cambia mucho, el orden depende de los pesos elegidos.")
+    lines.append("La puntuación es orientativa y no demuestra eficacia. Las APTA tienen todas las compuertas superadas y "
+                 "firmadas por una persona; las CONDICIONALES no pueden pasar a validación experimental; las "
+                 "INSUFICIENTES necesitan más evaluadores independientes; las BLOQUEADAS no compiten.")
     return "\n".join(lines)

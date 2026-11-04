@@ -1,9 +1,10 @@
 # Rúbrica de priorización de oportunidades (versión 2).
 # Las puntuaciones se dan como fracción del máximo (0, 0.25, 0.5, 0.75, 1) con un rango
 # [min, max] que expresa la incertidumbre del evaluador. La puntuación es orientativa:
-# no demuestra eficacia. Las compuertas bloquean con independencia de la puntuación.
+# no demuestra eficacia. Las compuertas bloquean con independencia de la puntuación;
+# una compuerta solo cuenta como superada con firma humana.
 
-version = "2.0"
+version = "2.1"
 
 [[criterio]]
 id = "evidencia"
@@ -90,16 +91,28 @@ descripcion = "Claridad de la clasificación (materia prima, aditivo y grupo fun
 "1" = "Comercializable como materia prima catalogada o pienso dietético con alegaciones ya previstas."
 
 [[criterio]]
-id = "potencial_economico"
-nombre = "Potencial económico (ganadero y empresa)"
+id = "rentabilidad_ganadero"
+nombre = "Rentabilidad para el ganadero"
 eje = "valor"
-descripcion = "Retorno para el ganadero (beneficio neto por animal y día, probabilidad de ROI > 1) y atractivo para la empresa (mercado direccionable, margen, rNPV)."
+descripcion = "Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90 y respuesta umbral frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo."
 [criterio.anclas]
-"0" = "Coste por animal y día superior al beneficio esperado en cualquier escenario."
-"0.25" = "ROI positivo solo en el escenario optimista o mercado muy pequeño."
-"0.5" = "ROI positivo en el escenario intermedio; mercado moderado."
-"0.75" = "ROI positivo en el escenario conservador o mercado grande con margen atractivo."
-"1" = "ROI robusto (P(ROI>1) alta) y mercado grande con barreras de entrada a competidores."
+"0" = "Beneficio neto negativo incluso en el escenario optimista (P90), o coste por animal y día inasumible."
+"0.25" = "Beneficio neto positivo solo en el escenario optimista (P90)."
+"0.5" = "Beneficio neto positivo en el escenario intermedio (P50), pero no en el conservador (P10)."
+"0.75" = "Beneficio neto positivo también en el escenario conservador (P10)."
+"1" = "Beneficio neto positivo en P10 con margen amplio y respuesta umbral claramente por debajo de la respuesta esperada."
+
+[[criterio]]
+id = "atractivo_empresa"
+nombre = "Atractivo para la empresa"
+eje = "valor"
+descripcion = "Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores."
+[criterio.anclas]
+"0" = "VPN ajustado por riesgo central negativo y sin vía razonable para mejorarlo."
+"0.25" = "VPN ajustado por riesgo negativo o marginal; mercado pequeño o plazo regulatorio muy largo."
+"0.5" = "VPN ajustado por riesgo central positivo, pero sensible a supuestos clave."
+"0.75" = "VPN ajustado por riesgo positivo en la mayoría de supuestos; mercado relevante."
+"1" = "VPN ajustado por riesgo claramente positivo, mercado grande y barreras de entrada (protección o autorización ligada al titular)."
 
 [[compuerta]]
 id = "seguridad"
@@ -122,14 +135,23 @@ nombre = "Libertad de operación (FTO)"
 bloquea_si = "Patente vigente que bloquea la explotación en mercados clave sin licencia ni alternativa de diseño."
 
 [[compuerta]]
+id = "destino_digestivo"
+nombre = "Destino digestivo"
+bloquea_si = "El activo no llega a la diana en cantidad relevante a una dosis viable (degradación o transformación ruminal, digestión o absorción), según datos publicados o el cálculo de `nutria destino ruminal`."
+
+[[compuerta]]
 id = "etica"
 nombre = "Ética y bienestar animal"
 bloquea_si = "La validación exige procedimientos no autorizables o el producto compromete el bienestar animal."
 
 [perfiles.recomendado]
-descripcion = "Perfil v2: más peso a la vía regulatoria y al potencial económico; originalidad fusionada con diferenciación/PI."
-pesos = { evidencia = 20, plausibilidad = 10, mejora_productiva = 15, originalidad = 10, seguridad = 10, viabilidad_tecnologica = 10, viabilidad_regulatoria = 10, potencial_economico = 15 }
+descripcion = "Perfil v2: más peso a la vía regulatoria y a la economía; originalidad fusionada con diferenciación y PI; economía separada en ganadero y empresa."
+pesos = { evidencia = 20, plausibilidad = 10, mejora_productiva = 15, originalidad = 10, seguridad = 10, viabilidad_tecnologica = 10, viabilidad_regulatoria = 10, rentabilidad_ganadero = 8, atractivo_empresa = 7 }
 
 [perfiles.original]
-descripcion = "Pesos del prompt original (se conservan para comparar la robustez del ranking)."
-pesos = { evidencia = 20, originalidad = 15, plausibilidad = 15, mejora_productiva = 15, seguridad = 10, viabilidad_tecnologica = 10, viabilidad_regulatoria = 5, potencial_economico = 10 }
+descripcion = "Pesos del prompt original (el potencial económico de 10 se reparte 5/5 entre ganadero y empresa)."
+pesos = { evidencia = 20, originalidad = 15, plausibilidad = 15, mejora_productiva = 15, seguridad = 10, viabilidad_tecnologica = 10, viabilidad_regulatoria = 5, rentabilidad_ganadero = 5, atractivo_empresa = 5 }
+
+[perfiles.uniforme]
+descripcion = "Todos los criterios con el mismo peso: referencia para comprobar si el orden depende de los pesos."
+pesos = { evidencia = 1, plausibilidad = 1, mejora_productiva = 1, originalidad = 1, seguridad = 1, viabilidad_tecnologica = 1, viabilidad_regulatoria = 1, rentabilidad_ganadero = 1, atractivo_empresa = 1 }

@@ -30,7 +30,9 @@ La corrección tiene dos partes:
 - La ficha de hipótesis (fenómeno, mecanismo, diana, variables, evidencia a favor y en contra, experimentos).
 - Las prohibiciones: no inventar publicaciones, dosis ni datos; no presentar hipótesis de IA como hallazgos; no usar el
   docking como prueba de eficacia; no confundir asociación con causalidad.
-- El bloqueo de candidatos por seguridad o regulación con independencia de la puntuación.
+- El bloqueo de candidatos por seguridad o regulación con independencia de la puntuación: una compuerta bloqueada
+  saca al candidato del ranking; una sin resolver o sin firmar lo deja CONDICIONAL (siempre detrás de los APTA y sin
+  poder pasar a validación experimental) hasta que una persona firme su resolución.
 - El informe de 20 secciones, el registro de hipótesis descartadas y la idea de no confundir complejidad con calidad.
 
 ## Problemas críticos (cambian el resultado)
@@ -44,8 +46,10 @@ confirmarla: sus errores están correlacionados. El prompt pide independencia pe
 **Corrección**: agentes con contextos separados; quien genera no evalúa; evaluadores ciegos (no ven las puntuaciones de
 otros); un crítico con el mandato explícito de refutar; opción de segunda opinión de otra familia de modelos; los
 desacuerdos se registran, no se promedian.
-**Implementación**: 14 subagentes en `.claude/agents/`; `nutria oportunidad ver --sin-puntuaciones`; workflows con
-refutación por mayoría (`red-team-auto`) y tres evaluadores ciegos por oportunidad (`mision-1-auto`).
+**Implementación**: 15 subagentes en `.claude/agents/`, entre ellos `evaluador-independiente`, el único que puntúa;
+`nutria oportunidad ver --sin-puntuaciones`; el ranking marca INSUFICIENTE una oportunidad con menos de tres
+evaluadores distintos por criterio; workflows con refutación por mayoría (`red-team-auto`) y tres evaluadores
+ciegos por oportunidad (`mision-1-auto`).
 
 ### C2. "Nunca inventes" sin mecanismo que lo haga cumplir
 
@@ -53,19 +57,22 @@ refutación por mayoría (`red-team-auto`) y tres evaluadores ciegos por oportun
 inexistentes, identificadores reales asignados al trabajo equivocado y fuentes reales citadas para algo que no dicen.
 **Corrección**: etiqueta obligatoria por afirmación (`[PUB]`, `[DER]`, `[HIP]`, `[SUP]`, `[DESC]`); verificación
 automática de existencia (Crossref, PubMed, OpenAlex), de correspondencia entre identificador y cita y de retractación;
-verificación de respaldo por un agente que lee la fuente; sello de verificación con huella SHA-256 que caduca al editar
-el informe.
-**Implementación**: `nutria verificar`, `nutria fuente agregar` (solo registra lo verificado), `nutria informe comprobar
---online --sellar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`, que bloquea informes con
-`[PUB]` sin referencia, referencias sin identificador o marcados como revisados sin sello válido.
+verificación de respaldo por un agente que lee la fuente (tabla del Anexo A); sello de verificación con huella SHA-256
+que caduca al editar el informe y que solo es válido con verificación en línea completa.
+**Implementación**: `nutria verificar`, `nutria fuente agregar` (solo registra lo verificado),
+`nutria informe comprobar --online --sellar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`,
+que bloquea informes con `[PUB]` sin referencia, referencias sin identificador o marcados como revisados sin sello
+válido.
 
 ### C3. Encuadre "farmacológico" sin frontera regulatoria, y regulación al final
 
 **Problema**: en la UE, la etiqueta o presentación de un pienso no puede alegar que previene, trata o cura enfermedades
-(Reglamento (CE) 767/2009, art. 13, con excepciones limitadas). Si el efecto buscado es terapéutico, el producto es un
-medicamento veterinario (Reglamento (UE) 2019/6), con otro marco, otros costes y otros plazos. La frontera se analiza
-con la Recomendación 2011/25/UE [R12]. El prompt sitúa la regulación en el paso 9 de 13, cuando ya se ha invertido
-en evidencia, mecanismo y formulación.
+(Reglamento (CE) 767/2009, art. 13, con excepciones limitadas). Es medicamento veterinario (Reglamento (UE) 2019/6,
+art. 4), con otro marco, otros costes y otros plazos, lo que se presenta como tratamiento o prevención de enfermedades
+y también lo que se usa para restablecer, corregir o modificar funciones fisiológicas ejerciendo una acción
+farmacológica, inmunológica o metabólica: con este criterio funcional, reformular la alegación no basta. La frontera
+se analiza con la Recomendación 2011/25/UE [R12]. El prompt sitúa la regulación en el paso 9 de 13, cuando ya se ha
+invertido en evidencia, mecanismo y formulación.
 **Corrección**: triage regulatorio inmediatamente después de generar oportunidades (fase F3), como compuerta. Se
 reformula "desarrollo farmacológico" como "compuestos bioactivos con efecto nutricional o fisiológico".
 **Implementación**: agente `regulacion-seguridad`, skill `triage-regulatorio`, compuerta `regulatoria`.
@@ -78,8 +85,9 @@ pertinente si el ingrediente también se destina a alimentación humana.
 - Reglamento (CE) 429/2008: normas de desarrollo para preparar y presentar solicitudes de aditivos.
 - Reglamento (UE) 2019/962: añadió a los aditivos zootécnicos el grupo funcional de **estabilizadores de las
   condiciones fisiológicas** (sustancias que, administradas a animales sanos, favorecen su estado fisiológico, incluida
-  la resiliencia frente a factores de estrés) [R13]. Es la categoría natural para productos contra el estrés
-  oxidativo, la inflamación o el estrés por calor.
+  la resiliencia frente a factores de estrés) [R13]. Es una vía posible para productos de resiliencia frente al estrés
+  oxidativo o calórico en animales sanos, siempre que no actúen como medicamento por función (Reglamento (UE) 2019/6,
+  art. 4); un producto antiinflamatorio, por ejemplo, plantea antes esa pregunta.
 - Reglamento (UE) 2020/354: usos previstos de los **piensos para fines de nutrición específicos** (piensos dietéticos),
   con entradas como la reducción del riesgo de cetosis o de fiebre de la leche [R14]. Es una vía de comercialización
   que no exige autorizar un aditivo nuevo si los ingredientes ya están autorizados.
@@ -89,6 +97,10 @@ pertinente si el ingrediente también se destina a alimentación humana.
   (CE) 1829/2003 y 1830/2003 (OMG, relevantes para productos de fermentación), Reglamento (CE) 396/2005 (residuos de
   plaguicidas en extractos vegetales), Reglamentos (CE) 1069/2009 y (UE) 142/2011 (subproductos animales), Reglamento
   (CE) 999/2001 (EET) y Directiva 2010/63/UE (en España, Real Decreto 53/2013) para cualquier procedimiento con animales.
+- Añadidas tras la auditoría de la implementación: la Directiva 96/22/CE y el anexo III del Reglamento (CE) 767/2009
+  (sustancias y materiales prohibidos o restringidos), el art. 13.1 y 13.2 de ese reglamento (alegaciones permitidas)
+  y el Reglamento (UE) 2019/1381 (asesoramiento previo de EFSA y notificación de los estudios encargados para una
+  solicitud). Detalle y estado de verificación en `docs/REGULACION_UE.md`.
 **Implicaciones comerciales ausentes**: un aditivo necesita un método analítico evaluado por el laboratorio de
 referencia de la UE (EURL-FA); las autorizaciones de aditivos zootécnicos se conceden a un titular concreto, lo que
 crea una barrera de entrada con efecto económico (verificar condiciones vigentes); un extracto autorizado como
@@ -127,9 +139,13 @@ PMC, OpenAlex, Crossref, EFSA Journal, ChEMBL, PubChem, UniProt, STRING, Reactom
     filas del mismo estudio.
 11. **Efecto mínimo relevante** fijado antes de analizar, y control de la multiplicidad.
 
-**Implementación**: `nutria.stats` (efectos fijos, DL, REML, Paule-Mandel, Hartung-Knapp [R11], intervalo de
-predicción, Egger, uno-fuera, subgrupos, meta-regresión, modelo de St-Pierre, potencia), validado frente a los
-resultados publicados de metafor [R10] (`tests/test_meta.py`); `nutria meta exportar-r` para modelos multinivel.
+**Implementación**: `nutria.stats`: efectos fijos, DL, REML, Hartung-Knapp [R11] (por defecto), intervalo de
+confianza de tau², Egger y meta-regresión, validados frente a los resultados publicados de metafor [R10]
+(`tests/test_meta.py`); Paule-Mandel, intervalo de predicción, uno-fuera, subgrupos, medidas binarias (RR, OR, RD),
+agregación de efectos dependientes (`--agregar-estudio --rho`), modelo de St-Pierre con descomposición intra y entre
+estudios, validación dejando un estudio fuera (`nutria meta validar-predictivo`) y potencia, con pruebas propias pero
+sin validación frente a otro programa; `nutria meta exportar-r` genera el script de R (metafor) para modelos
+multinivel.
 
 ### C7. Puntuación 0-100 con falsa precisión
 
@@ -138,9 +154,10 @@ evidencia y originalidad tiran en direcciones opuestas (lo muy original casi nun
 el conflicto; la viabilidad regulatoria vale 5/100 aunque es lo que más condiciona plazo y coste; no se comprueba si el
 ranking depende de los pesos elegidos.
 **Corrección**: rúbrica anclada (0-0,25-0,5-0,75-1) con rango [mín, máx]; al menos tres evaluadores ciegos; dos ejes
-(valor frente a viabilidad y confianza); compuertas ampliadas (seguridad, regulatoria, analítica, libertad de operación,
-ética); Monte Carlo sobre puntuaciones y pesos que da la probabilidad de quedar entre los primeros. El perfil de pesos
-original se conserva para comparar.
+(valor frente a viabilidad y confianza); seis compuertas (seguridad, regulatoria, analítica, libertad de operación,
+ética y destino digestivo) que los agentes proponen y que solo cuentan como superadas con firma humana; el potencial
+económico se divide en rentabilidad para el ganadero y atractivo para la empresa; Monte Carlo sobre puntuaciones y
+pesos que da la probabilidad de quedar entre los primeros. El perfil de pesos original se conserva para comparar.
 **Implementación**: `nutria puntuar`, `docs/RUBRICA.md`, `src/nutria/data/rubrica.toml`.
 
 ### C8. Economía con perspectivas mezcladas
@@ -188,9 +205,10 @@ EE. UU.) han rechazado designar a una IA como inventora en los casos DABUS: hay 
 
 - La "fermentación ruminal simulada" necesita líquido ruminal de animales donantes (habitualmente canulados, lo que es
   un procedimiento con animales que requiere autorización) o de matadero. La técnica in situ es un ensayo in vivo.
-- Si el objetivo es un dossier europeo, los ensayos deben diseñarse desde el principio según la guía de eficacia del
-  Panel FEEDAP [R15] (número de estudios, duraciones mínimas por especie, variables); los estudios de seguridad para el
-  dossier suelen exigir buenas prácticas de laboratorio.
+- Si el objetivo es un dossier europeo, los ensayos deben diseñarse desde el principio según la guía de eficacia
+  vigente del Panel FEEDAP [R19], aplicable desde el 1-12-2024, que sustituye a la de 2018 [R15]; los estudios
+  encargados para respaldar la solicitud se notifican a EFSA (Reglamento (UE) 2019/1381); los estudios de seguridad
+  para el dossier suelen exigir buenas prácticas de laboratorio.
 - Potencia con varianzas reales (las del metaanálisis). Las variables de salud requieren muestras grandes: comparar una
   incidencia del 30 % con una del 20 % con potencia del 80 % y α = 0,05 exige unos 294 animales por grupo
   [DER] (cálculo: `nutria potencia proporciones --p1 0.3 --p2 0.2`).
@@ -239,7 +257,7 @@ legibles y, además, estructuradas (JSON validado contra esquemas).
 | 3. Motor de investigación | §5 | `nutria buscar`, `nutria fuente`, `docs/FUENTES.md` |
 | 4. Hipótesis | §6 | Skill `hipotesis`, esquema y registro de hipótesis |
 | 5. Estadística | §7 | `nutria meta`, `nutria potencia`, skill `metaanalisis` |
-| 6. Modelización | §8 | `nutria molecula/diana/proteina/red/rutas` |
+| 6. Modelización | §8 | `nutria destino ruminal` (único modelo implementado); `nutria molecula/diana/proteina/red/rutas` solo consultan bases de datos |
 | 7. Diseño de productos | §9 | Agentes de nutrición e industrial, esquema de oportunidad |
 | 8. Multimodelo | §10 | `.claude/agents/`, workflows, `nutria llm` |
 | 9. Seguridad y regulación | §11 | Agente y skill de regulación, `docs/REGULACION_UE.md` |
@@ -261,7 +279,7 @@ bibliográficos; "pendiente" = sin comprobar en esta sesión (la red bloqueaba C
 [R3] Hooijmans CR, Rovers MM, de Vries RB, et al. 2014. SYRCLE's risk of bias tool for animal studies. BMC Med Res Methodol 14:43. DOI: 10.1186/1471-2288-14-43 (pendiente)
 [R4] O'Connor AM, Sargeant JM, Gardner IA, et al. 2010. The REFLECT statement: methods and processes of creating reporting guidelines for randomized controlled trials for livestock and food safety. Prev Vet Med 93:11-18. DOI: 10.1016/j.prevetmed.2009.10.008 (verificada parcialmente: el DOI varía entre las versiones publicadas en distintas revistas)
 [R5] Percie du Sert N, Hurst V, Ahluwalia A, et al. 2020. The ARRIVE guidelines 2.0: updated guidelines for reporting animal research. PLoS Biol 18(7):e3000410. DOI: 10.1371/journal.pbio.3000410 (pendiente)
-[R6] St-Pierre NR. 2001. Invited review: Integrating quantitative findings from multiple studies using mixed model methodology. J Dairy Sci 84(4):741-755. URL: https://www.journalofdairyscience.org/ (verificada; DOI pendiente)
+[R6] St-Pierre NR. 2001. Invited review: Integrating quantitative findings from multiple studies using mixed model methodology. J Dairy Sci 84(4):741-755. URL: https://www.journalofdairyscience.org/ (pendiente: la URL es la portada de la revista y no identifica el trabajo; falta el DOI)
 [R7] Sauvant D, Schmidely P, Daudin JJ, St-Pierre NR. 2008. Meta-analyses of experimental data in animal nutrition. Animal 2(8):1203-1214. DOI: 10.1017/S1751731108002280 (verificada)
 [R8] Sauvant D, Letourneau-Montminy MP, Schmidely P, Boval M, Loncke C, Daniel JB. 2020. Review: Use and misuse of meta-analysis in Animal Science. Animal 14(S2):s207-s222. DOI: 10.1017/S1751731120001688 (verificada)
 [R9] Lean IJ, Rabiee AR, Duffield TF, Dohoo IR. 2009. Invited review: Use of meta-analysis in animal health and reproduction: methods and applications. J Dairy Sci 92(8):3545-3565. DOI: 10.3168/jds.2009-2140 (verificada)
@@ -270,7 +288,16 @@ bibliográficos; "pendiente" = sin comprobar en esta sesión (la red bloqueaba C
 [R12] Recomendación 2011/25/UE de la Comisión, de 14 de enero de 2011, por la que se establecen directrices para la distinción entre materias primas para piensos, aditivos para piensos, biocidas y medicamentos veterinarios. URL: https://eur-lex.europa.eu/eli/reco/2011/25/oj (verificada)
 [R13] Reglamento (UE) 2019/962 de la Comisión, que modifica el anexo I del Reglamento (CE) 1831/2003 para establecer dos nuevos grupos funcionales de aditivos. URL: https://eur-lex.europa.eu/eli/reg/2019/962/oj (verificada)
 [R14] Reglamento (UE) 2020/354 de la Comisión, de 4 de marzo de 2020, por el que se establece una lista de usos previstos de los piensos destinados a fines de nutrición específicos. URL: https://eur-lex.europa.eu/eli/reg/2020/354/oj (verificada; entrada de fiebre de la leche modificada por el Reglamento (UE) 2024/2899)
-[R15] EFSA FEEDAP Panel. 2018. Guidance on the assessment of the efficacy of feed additives. EFSA J 16(5):5274. DOI: 10.2903/j.efsa.2018.5274 (verificada)
+[R15] EFSA FEEDAP Panel. 2018. Guidance on the assessment of the efficacy of feed additives. EFSA J 16(5):5274. DOI: 10.2903/j.efsa.2018.5274 (verificada; sustituida por la guía de 2024 [R19], aplicable desde el 1-12-2024: ya no es la vigente)
 [R16] National Academies of Sciences, Engineering, and Medicine. 2021. Nutrient Requirements of Dairy Cattle: Eighth Revised Edition. Washington, DC: The National Academies Press. DOI: 10.17226/25806 (verificada)
 [R17] Swanson DR. 1986. Fish oil, Raynaud's syndrome, and undiscovered public knowledge. Perspect Biol Med 30(1):7-18. DOI: 10.1353/pbm.1986.0087 (verificada)
 [R18] Mellor DJ, Beausoleil NJ, Littlewood KE, et al. 2020. The 2020 Five Domains Model: Including Human-Animal Interactions in Assessments of Animal Welfare. Animals 10(10):1870. DOI: 10.3390/ani10101870 (verificada)
+[R19] EFSA FEEDAP Panel. 2024. Guidance on the assessment of the efficacy of feed additives. EFSA J 22(7):e8856. DOI: 10.2903/j.efsa.2024.8856 (verificada (2026-11-04): revista, DOI, adopción el 6-6-2024, aplicación desde el 1-12-2024 y sustitución de [R15]; título exacto pendiente de verificar)
+
+## Auditoría posterior de la implementación
+
+Esta revisión trata del prompt original. La implementación que se construyó a partir de ella pasó después una
+auditoría externa de línea base, cuyos hallazgos se identifican como Dx-y. Lo que ya se ha corregido, lo que
+queda pendiente y los límites reales del sistema están en `docs/ESTADO_Y_LIMITACIONES.md`. Esa auditoría motivó,
+en este documento, la nota de [R15], la referencia [R19], el criterio funcional del medicamento veterinario (C3 y
+C4) y la corrección del estado de [R6].

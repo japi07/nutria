@@ -22,10 +22,23 @@ def molecule_search(client, query: str, limit: int = 10) -> list[dict]:
 
 
 def target_search(client, query: str, organism: str | None = None, limit: int = 20) -> list[dict]:
-    data = client.get_json(f"{BASE}/target/search.json", params={"q": query, "limit": limit})
+    """Dianas de ChEMBL.
+
+    Con `organism` se filtra en el servidor (`target.json?pref_name__icontains=<q>&organism__iexact=<organismo>`),
+    así el límite se aplica a las dianas de esa especie y no a las de todas: la coincidencia es con el
+    nombre preferido de la diana (contiene el texto), no con sinónimos ni símbolos de gen.
+    Sin organismo se usa la búsqueda de texto libre (`target/search.json`).
+    """
+    organism = (organism or "").strip() or None
+    if organism:
+        data = client.get_json(f"{BASE}/target.json", params={"pref_name__icontains": query,
+                                                              "organism__iexact": organism, "limit": limit})
+    else:
+        data = client.get_json(f"{BASE}/target/search.json", params={"q": query, "limit": limit})
     out = []
     for t in data.get("targets", []):
-        if organism and (t.get("organism") or "").lower() != organism.lower():
+        # Comprobación defensiva: el servidor ya filtra por organismo.
+        if organism and (t.get("organism") or "").strip().lower() != organism.lower():
             continue
         out.append({"target_chembl_id": t.get("target_chembl_id"), "nombre": t.get("pref_name"),
                     "organismo": t.get("organism"), "tipo": t.get("target_type")})

@@ -30,3 +30,6 @@ nutria = ["data/*.toml", "data/schemas/*.json", "reports/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "vivo: pruebas contra los servicios reales; requieren red y NUTRIA_PRUEBAS_EN_VIVO=1 (si no, se omiten)",
+]

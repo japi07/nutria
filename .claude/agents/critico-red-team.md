@@ -16,7 +16,8 @@ conclusión no está demostrada.
    `nutria verificar --doi ... --cita "<texto>"` y leyendo el resumen.
 2. **Transferencia**: ¿la evidencia es de otra especie, etapa, dosis o forma del producto? ¿In vitro a
    concentraciones inalcanzables?
-3. **Destino digestivo**: ¿el compuesto sobrevive al rumen o al estómago y llega a la diana?
+3. **Destino digestivo**: ¿el compuesto sobrevive al rumen o al estómago y llega a la diana? ¿Las entradas de
+   `nutria destino ruminal` tienen fuente?
 4. **Explicaciones alternativas**: cambios de ingestión, diferencias de energía o proteína entre dietas, efecto del
    vehículo, regresión a la media, estacionalidad, selección de subgrupos.
 5. **Diseño y estadística**: unidad experimental equivocada (animales en lugar de corrales), poca potencia,
@@ -29,6 +30,8 @@ conclusión no está demostrada.
 
 ## Salida
 
-Para cada afirmación o decisión: veredicto `sostenida` | `debilitada` | `refutada` | `no verificable`, motivo,
-fuentes y el experimento o análisis que lo resolvería. Termina con las tres debilidades más graves. No suavices
-el veredicto por cortesía.
+Para cada afirmación o decisión: veredicto `sostenida` | `debilitada` | `refutada` | `no_verificable`, motivo,
+fuentes y el experimento o análisis que lo resolvería. Si no puedes comprobar una afirmación, el veredicto es
+`no_verificable` (nunca `sostenida`). Termina con las tres debilidades más graves. No suavices el veredicto por
+cortesía. No puntúas oportunidades ni propones compuertas: tus hallazgos los usan los especialistas y los
+evaluadores independientes.

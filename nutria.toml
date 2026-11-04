@@ -1,0 +1,22 @@
+# Configuración del proyecto NUTRIA.
+# Las claves de API NO se escriben aquí: se leen de variables de entorno
+# (NCBI_API_KEY, OPENALEX_API_KEY, LENS_API_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY...).
+
+[contacto]
+# Correo de contacto que piden NCBI, Crossref y OpenAlex para su "polite pool".
+# Déjalo vacío si prefieres no enviarlo; las consultas funcionan igualmente (con límites más estrictos).
+email = ""
+herramienta = "nutria"
+
+[rutas]
+base_datos = "research/nutria.sqlite"
+cache = ".cache/nutria"
+
+[red]
+cache_dias = 30
+timeout_s = 30
+offline = false
+
+[puntuacion]
+# Perfil de pesos por defecto: "recomendado" (v2) u "original" (pesos del prompt inicial).
+perfil = "recomendado"

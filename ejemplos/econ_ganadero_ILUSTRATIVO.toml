@@ -1,13 +1,18 @@
 # ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato.
 # Sustituye cada valor por uno con fuente registrada ([PUB]/[DER]) o márcalo como [SUP] en supuestos.
+#
+# Periodos: el coste usa [coste].dias (si falta, [escenario].dias); cada [[beneficio]] por día usa su propio
+# "dias" (número o distribución; si falta, [escenario].dias). Un beneficio por ciclo (por_dia = false) no
+# lleva "dias".
 
 [escenario]
 nombre = "ILUSTRATIVO - producto X en vacas en transición"
 especie = "vacuno lechero"
 unidad = "vaca"
-dias = 42
+dias = 42            # ILUSTRATIVO: periodo por defecto para coste y beneficios sin "dias" propio
 
 [coste]
+dias = 42            # ILUSTRATIVO: días de administración del producto de transición (preparto + posparto)
 dosis_g_dia = 50
 precio_eur_kg = { dist = "pert", min = 4.0, moda = 5.0, max = 7.0 }
 otros_eur_dia = 0.0
@@ -18,15 +23,19 @@ nombre = "leche corregida por energía (kg/vaca/día)"
 respuesta = { dist = "pert", min = -0.5, moda = 0.5, max = 1.5 }
 valor_unitario = { dist = "pert", min = 0.35, moda = 0.42, max = 0.50 }
 por_dia = true
+dias = 21            # ILUSTRATIVO: la respuesta en leche solo se cuenta en los días posparto del periodo
+# También admite una distribución: dias = { dist = "triangular", min = <...>, moda = <...>, max = <...> }.
+# Si se espera un efecto que dure más allá de la administración, declara esos días con fuente o como [SUP].
 
 [[beneficio]]
 nombre = "casos de cetosis clínica evitados por vaca"
 respuesta = { dist = "pert", min = 0.0, moda = 0.01, max = 0.03 }
 valor_unitario = { dist = "pert", min = 150, moda = 250, max = 400 }
-por_dia = false
+por_dia = false      # por ciclo: sin "dias"
 
 [supuestos]
 lista = [
   "ILUSTRATIVO: ningún valor de este fichero procede de una fuente.",
+  "ILUSTRATIVO: coste durante 42 días de administración; respuesta en leche solo durante 21 días posparto.",
   "Respuestas independientes del precio de la leche (sin correlación).",
 ]

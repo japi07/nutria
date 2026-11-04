@@ -10,11 +10,13 @@ revisado_por_humano: null
 
 # {titulo}
 
-> **Convención obligatoria.** Cada afirmación relevante lleva una etiqueta: **[PUB]** resultado publicado
-> (con referencia `[Rn]` verificable), **[DER]** derivado por cálculo propio a partir de datos publicados
-> (indica el cálculo o la orden `nutria` usada), **[HIP]** hipótesis, **[SUP]** supuesto de trabajo,
-> **[DESC]** dato desconocido (indica cómo obtenerlo). Las hipótesis generadas por IA nunca se presentan
-> como hallazgos.
+> **Convención obligatoria.** Cada afirmación relevante lleva una etiqueta: `[PUB]` resultado publicado
+> (con referencia `[Rn]` verificable y fila de respaldo en el Anexo A), `[DER]` derivado por cálculo propio a
+> partir de datos publicados (indica el cálculo o la orden `nutria` usada), `[HIP]` hipótesis, `[SUP]` supuesto
+> de trabajo, `[DESC]` dato desconocido (indica cómo obtenerlo). Las hipótesis generadas por IA nunca se
+> presentan como hallazgos. Para pasar a `estado: revisado` o `final` hacen falta: verificación en línea
+> completa y sellada (`nutria informe comprobar <informe> --online --sellar`), respaldo comprobado de cada
+> referencia `[PUB]` en el Anexo A y `revisado_por_humano` con el nombre de la persona que lo revisó.
 
 ## 0. Resumen ejecutivo
 
@@ -82,9 +84,16 @@ revisado_por_humano: null
 
 ## 20. Bibliografía científica verificable
 
-<!-- Formato: [R1] Autores. Año. Título. Revista Vol:páginas. DOI: 10.xxxx/xxxx | PMID: nnnnnnnn -->
+<!-- Formato: [R1] Autores. Año. Título. Revista Vol:páginas. DOI: 10.xxxx/xxxx | PMID: nnnnnnnn.
+     Normativa y literatura gris solo con URL: requieren `nutria verificar manual <URL> --firma-humana NOMBRE`. -->
 
-## Anexo A. Tabla de afirmaciones
+## Anexo A. Tabla de afirmaciones y respaldo
+
+<!-- La rellena verificador-citas leyendo cada fuente. Respaldo: respalda | parcial | no_respalda | no_verificable.
+     Cada [Rn] usado en una línea [PUB] necesita una fila con respalda o parcial. -->
+
+| Ref | Afirmación | Respaldo | Motivo |
+|---|---|---|---|
 
 ## Anexo B. Registro de decisiones
 

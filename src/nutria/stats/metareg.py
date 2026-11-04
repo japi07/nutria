@@ -1,8 +1,11 @@
-"""Meta-regresión de efectos mixtos (REML o DL) con prueba de Knapp-Hartung opcional.
+"""Meta-regresión de efectos mixtos (REML o DL) con prueba de Knapp-Hartung opcional
+(estándar o modificada con max(1, s²)).
 
 Útil para modelar respuesta a dosis, efecto de la dieta basal, etapa productiva o diseño
 experimental como moderadores. Recuerda: la meta-regresión es observacional entre estudios
 (sesgo ecológico, confusión) y necesita, como orientación, unos 10 estudios por moderador.
+La matriz de diseño (intercepto + moderadores) debe ser de rango completo: los moderadores
+constantes o colineales se rechazan con un ValueError que los nombra.
 """
 
 from __future__ import annotations
@@ -13,7 +16,10 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 from scipy import stats
 
-from .meta import _arrays, _typical_within_variance, tau2_dl, tau2_reml
+from .meta import _Q_ZERO_TOL, _arrays, _resolve_ajuste, _typical_within_variance, tau2_dl, tau2_reml
+
+# Tolerancia relativa (sobre columnas normalizadas) para decidir que una columna es redundante.
+_RANK_RTOL = 1e-10
 
 
 @dataclass
@@ -39,6 +45,8 @@ class MetaRegResult:
     QE_p: float
     level: float = 0.95
     notes: list[str] = field(default_factory=list)
+    ajuste: str = "ninguno"
+    kh_s2: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,21 +66,77 @@ class MetaRegResult:
         return "\n".join(lines)
 
 
+def _numeric_rank(A: np.ndarray, rtol: float = _RANK_RTOL) -> int:
+    s = np.linalg.svd(A, compute_uv=False)
+    if s.size == 0 or s[0] <= 0:
+        return 0
+    return int(np.sum(s > rtol * s[0]))
+
+
+def _redundant_columns(X: np.ndarray, rtol: float = _RANK_RTOL) -> list[int]:
+    """Índices de las columnas de X que no aumentan el rango: constantes (si hay intercepto),
+    nulas o combinación lineal de las columnas anteriores.
+
+    Las columnas se normalizan antes de calcular el rango numérico, para que la decisión no dependa
+    de las unidades de cada moderador (g frente a mg, kg/d frente a g/d).
+    """
+    X = np.asarray(X, dtype=float)
+    norms = np.linalg.norm(X, axis=0)
+    Xn = X / np.where(norms > 0, norms, 1.0)
+    redundant: list[int] = []
+    previous = 0
+    for j in range(X.shape[1]):
+        current = _numeric_rank(Xn[:, : j + 1], rtol)
+        if current <= previous:
+            redundant.append(j)
+        previous = current
+    return redundant
+
+
 def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | None = None,
-                    method: str = "REML", knha: bool = False, level: float = 0.95) -> MetaRegResult:
-    """`moderators` es la matriz k×m SIN intercepto (se añade automáticamente)."""
+                    method: str = "REML", knha: bool = False, level: float = 0.95,
+                    *, ajuste: str | None = None) -> MetaRegResult:
+    """`moderators` es la matriz k×m SIN intercepto (se añade automáticamente).
+
+    Inferencia sobre los coeficientes:
+    - ajuste="ninguno" (por defecto si knha=False): pruebas z.
+    - ajuste="hksj" (equivale a knha=True): Knapp-Hartung, covarianza escalada por
+      s² = Σw·e²/(k - p) y t con k - p gl; si s² es nulo se usa max(1, s²) para no dar EE nulos.
+    - ajuste="hksj-mod": Knapp-Hartung modificado, siempre con max(1, s²).
+
+    Lanza ValueError("Moderadores constantes o colineales: ...") si la matriz de diseño
+    (intercepto + moderadores) no es de rango completo.
+    """
+    ajuste = _resolve_ajuste("ninguno" if ajuste is None else ajuste, knha)
     y, v = _arrays(yi, vi)
     k = y.size
     M = np.asarray(moderators, dtype=float)
     if M.ndim == 1:
         M = M[:, None]
-    if M.shape[0] != k:
+    if M.ndim != 2 or M.shape[0] != k:
         raise ValueError("La matriz de moderadores debe tener k filas")
+    if not np.all(np.isfinite(M)):
+        raise ValueError("Los moderadores deben ser numéricos y finitos (hay valores ausentes o no numéricos)")
+    if names is not None and len(names) != M.shape[1]:
+        raise ValueError(f"Se dieron {len(names)} nombre(s) para {M.shape[1]} moderador(es)")
     X = np.column_stack([np.ones(k), M])
     p = X.shape[1]
-    names = ["intercepto"] + (names or [f"mod{i + 1}" for i in range(M.shape[1])])
+    names = ["intercepto"] + (list(names) if names is not None else [f"mod{i + 1}" for i in range(M.shape[1])])
     if k <= p:
         raise ValueError(f"Se necesitan más estudios (k = {k}) que coeficientes (p = {p})")
+    redundant = _redundant_columns(X)
+    if redundant:
+        parts = []
+        for j in redundant:
+            col = X[:, j]
+            constant = float(np.ptp(col)) <= _RANK_RTOL * max(1.0, float(np.max(np.abs(col))))
+            parts.append(f"{names[j]} (constante)" if constant
+                         else f"{names[j]} (combinación lineal del intercepto o de otros moderadores)")
+        raise ValueError(
+            "Moderadores constantes o colineales: " + "; ".join(parts)
+            + f". La matriz de diseño (intercepto + moderadores) tiene rango {p - len(redundant)} < {p}: "
+              "elimina los moderadores constantes o redundantes (con variables indicadoras de una categoría, "
+              "deja una como referencia).")
     method = method.upper()
     if method == "REML":
         tau2 = tau2_reml(y, v, X)
@@ -90,14 +154,28 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
     resid = y - X @ beta
     alpha = 1 - level
     notes: list[str] = []
-    if knha:
+    s2: float | None = None
+    if ajuste != "ninguno":
         s2 = float(np.sum(w * resid ** 2) / (k - p))
-        cov = cov * s2
+        if ajuste == "hksj-mod":
+            factor = max(1.0, s2)
+            test = f"t (Knapp-Hartung modificado max(1, s²), gl = {k - p})"
+            notes.append(f"Knapp-Hartung modificado: factor de escala max(1, s²) = {factor:.4g} (s² = {s2:.4g}).")
+        elif s2 < _Q_ZERO_TOL:
+            factor = 1.0
+            test = f"t (Knapp-Hartung con max(1, s²) porque s² = 0, gl = {k - p})"
+            notes.append("Knapp-Hartung con s² = 0 (residuos nulos): para no dar EE nulos se usa max(1, s²) = 1.")
+        else:
+            factor = s2
+            test = f"t (Knapp-Hartung, gl = {k - p})"
+            if s2 < 1:
+                notes.append(f"Knapp-Hartung con s² = {s2:.4g} < 1: los IC pueden ser más estrechos que los de "
+                             "Wald; repite con ajuste 'hksj-mod' (max(1, s²)) como análisis de sensibilidad.")
+        cov = cov * factor
         se = np.sqrt(np.diag(cov))
         stat = beta / se
         pvals = 2 * stats.t.sf(np.abs(stat), k - p)
         crit = stats.t.ppf(1 - alpha / 2, k - p)
-        test = f"t (Knapp-Hartung, gl = {k - p})"
     else:
         se = np.sqrt(np.diag(cov))
         stat = beta / se
@@ -109,7 +187,7 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
     cov_b = cov[1:, 1:]
     QM = float(b @ np.linalg.solve(cov_b, b))
     QM_df = p - 1
-    if knha:
+    if ajuste != "ninguno":
         QM_p = float(stats.f.sf(QM / QM_df, QM_df, k - p))
         QM = QM / QM_df
         notes.append("Con Knapp-Hartung, QM se expresa como estadístico F.")
@@ -131,7 +209,7 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
         statistic=list(map(float, stat)), p_values=list(map(float, pvals)),
         ci_low=list(map(float, beta - crit * se)), ci_high=list(map(float, beta + crit * se)),
         tau2=tau2, I2_res=I2_res, R2=R2, QM=QM, QM_df=QM_df, QM_p=QM_p, QE=QE, QE_df=QE_df,
-        QE_p=float(stats.chi2.sf(QE, QE_df)), level=level, notes=notes,
+        QE_p=float(stats.chi2.sf(QE, QE_df)), level=level, notes=notes, ajuste=ajuste, kh_s2=s2,
     )
 
 

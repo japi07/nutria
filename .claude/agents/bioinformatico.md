@@ -1,6 +1,6 @@
 ---
 name: bioinformatico
-description: Analiza genes, proteínas, redes, rutas y datos ómicos públicos (transcriptómica, metabolómica, microbioma) de la especie diana con flujos reproducibles. Úsalo para mapear ortólogos, priorizar dianas, analizar enriquecimientos o reanalizar conjuntos de datos públicos.
+description: Analiza genes, proteínas, redes, rutas y datos ómicos públicos (transcriptómica, metabolómica, microbioma) de la especie diana con flujos documentados y repetibles (scripts, versiones y parámetros). Úsalo para mapear ortólogos, priorizar dianas, analizar enriquecimientos o reanalizar conjuntos de datos públicos.
 tools: Read, Grep, Glob, Bash, Write, WebSearch, WebFetch
 model: sonnet
 color: blue

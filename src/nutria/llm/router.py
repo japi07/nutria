@@ -108,8 +108,12 @@ def _call(cfg, spec: ModelSpec, prompt: str, system: str | None, max_tokens: int
 
 
 def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, system: str | None = None,
-        sensitivity: str = "normal", max_tokens: int = 2000, temperature: float | None = None) -> list[dict]:
-    """Consulta a todos los modelos utilizables con ese rol (o a uno concreto)."""
+        sensitivity: str = "confidencial", max_tokens: int = 2000, temperature: float | None = None) -> list[dict]:
+    """Consulta a todos los modelos utilizables con ese rol (o a uno concreto).
+
+    Falla cerrado: por defecto la información se trata como confidencial y solo se envía a modelos
+    locales o con acuerdo de no retención; para enviarla a otros hay que pedir sensitivity="normal".
+    """
     specs = load_registry(cfg)
     if model_id:
         specs = [s for s in specs if s.id == model_id]
@@ -128,7 +132,8 @@ def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, 
         try:
             out = _call(cfg, spec, prompt, system, max_tokens, temperature)
         except (requests.RequestException, KeyError, ValueError) as exc:
-            results.append({"modelo": spec.id, "error": str(exc)[:300]})
+            from ..http import redact
+            results.append({"modelo": spec.id, "error": redact(str(exc), cfg)[:300]})
             continue
         log_event(cfg, "llm", inputs={"modelo": spec.id, "proveedor": spec.provider, "id_modelo": spec.model,
                                       "prompt_sha256": sha256_text(prompt), "sensibilidad": sensitivity,
@@ -175,7 +180,9 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
     scores: dict[str, dict] = {}
     rows = []
     for item in items:
-        for res in ask(cfg, item["pregunta"], role=role, model_id=model_id, system=system, max_tokens=400):
+        # El banco de preguntas no contiene información confidencial.
+        for res in ask(cfg, item["pregunta"], role=role, model_id=model_id, system=system, max_tokens=400,
+                       sensitivity="normal"):
             if "texto" not in res:
                 continue
             correct = grade(item, res["texto"])

@@ -1,19 +1,20 @@
-# Rúbrica de priorización (v2.0)
+# Rúbrica de priorización (v2.1)
 
 Puntuaciones como fracción del máximo con rango de incertidumbre `[min, max]`. La puntuación es orientativa y no demuestra eficacia; las compuertas bloquean con independencia de la puntuación.
 
 ## Pesos por perfil
 
-| Criterio | Eje | recomendado | original |
-|---|---|---|---|
-| Solidez de la evidencia en la especie y etapa diana (`evidencia`) | viabilidad | 20 | 20 |
-| Plausibilidad fisiológica y bioquímica (`plausibilidad`) | viabilidad | 10 | 15 |
-| Magnitud esperada de la mejora productiva o sanitaria (`mejora_productiva`) | valor | 15 | 15 |
-| Originalidad, diferenciación y protegibilidad (`originalidad`) | valor | 10 | 15 |
-| Seguridad (animal, consumidor, usuario, medio ambiente) (`seguridad`) | viabilidad | 10 | 10 |
-| Viabilidad tecnológica e industrial (`viabilidad_tecnologica`) | viabilidad | 10 | 10 |
-| Viabilidad regulatoria (vía, plazo y coste) (`viabilidad_regulatoria`) | viabilidad | 10 | 5 |
-| Potencial económico (ganadero y empresa) (`potencial_economico`) | valor | 15 | 10 |
+| Criterio | Eje | recomendado | original | uniforme |
+|---|---|---|---|---|
+| Solidez de la evidencia en la especie y etapa diana (`evidencia`) | viabilidad | 20 | 20 | 1 |
+| Plausibilidad fisiológica y bioquímica (`plausibilidad`) | viabilidad | 10 | 15 | 1 |
+| Magnitud esperada de la mejora productiva o sanitaria (`mejora_productiva`) | valor | 15 | 15 | 1 |
+| Originalidad, diferenciación y protegibilidad (`originalidad`) | valor | 10 | 15 | 1 |
+| Seguridad (animal, consumidor, usuario, medio ambiente) (`seguridad`) | viabilidad | 10 | 10 | 1 |
+| Viabilidad tecnológica e industrial (`viabilidad_tecnologica`) | viabilidad | 10 | 10 | 1 |
+| Viabilidad regulatoria (vía, plazo y coste) (`viabilidad_regulatoria`) | viabilidad | 10 | 5 | 1 |
+| Rentabilidad para el ganadero (`rentabilidad_ganadero`) | valor | 8 | 5 | 1 |
+| Atractivo para la empresa (`atractivo_empresa`) | valor | 7 | 5 | 1 |
 
 ## Anclas de puntuación
 
@@ -87,15 +88,25 @@ Claridad de la clasificación (materia prima, aditivo y grupo funcional, pienso 
 - **0.75**: Sustancias ya autorizadas/catalogadas; requiere notificación o ampliación limitada.
 - **1**: Comercializable como materia prima catalogada o pienso dietético con alegaciones ya previstas.
 
-### Potencial económico (ganadero y empresa) (`potencial_economico`, eje valor)
+### Rentabilidad para el ganadero (`rentabilidad_ganadero`, eje valor)
 
-Retorno para el ganadero (beneficio neto por animal y día, probabilidad de ROI > 1) y atractivo para la empresa (mercado direccionable, margen, rNPV).
+Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90 y respuesta umbral frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo.
 
-- **0**: Coste por animal y día superior al beneficio esperado en cualquier escenario.
-- **0.25**: ROI positivo solo en el escenario optimista o mercado muy pequeño.
-- **0.5**: ROI positivo en el escenario intermedio; mercado moderado.
-- **0.75**: ROI positivo en el escenario conservador o mercado grande con margen atractivo.
-- **1**: ROI robusto (P(ROI>1) alta) y mercado grande con barreras de entrada a competidores.
+- **0**: Beneficio neto negativo incluso en el escenario optimista (P90), o coste por animal y día inasumible.
+- **0.25**: Beneficio neto positivo solo en el escenario optimista (P90).
+- **0.5**: Beneficio neto positivo en el escenario intermedio (P50), pero no en el conservador (P10).
+- **0.75**: Beneficio neto positivo también en el escenario conservador (P10).
+- **1**: Beneficio neto positivo en P10 con margen amplio y respuesta umbral claramente por debajo de la respuesta esperada.
+
+### Atractivo para la empresa (`atractivo_empresa`, eje valor)
+
+Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores.
+
+- **0**: VPN ajustado por riesgo central negativo y sin vía razonable para mejorarlo.
+- **0.25**: VPN ajustado por riesgo negativo o marginal; mercado pequeño o plazo regulatorio muy largo.
+- **0.5**: VPN ajustado por riesgo central positivo, pero sensible a supuestos clave.
+- **0.75**: VPN ajustado por riesgo positivo en la mayoría de supuestos; mercado relevante.
+- **1**: VPN ajustado por riesgo claramente positivo, mercado grande y barreras de entrada (protección o autorización ligada al titular).
 
 ## Compuertas (bloqueo independiente de la puntuación)
 
@@ -105,5 +116,6 @@ Estados: `superada`, `no_resuelta` (candidato condicional: no puede avanzar a va
 - **Clasificación y vía regulatoria** (`regulatoria`): bloquea si el efecto buscado o la alegación implican medicamento veterinario; sustancia prohibida en piensos; ninguna vía legal en los mercados objetivo.
 - **Cuantificación analítica** (`analitica`): bloquea si imposible identificar y cuantificar el activo (o un marcador) en el producto y en el pienso.
 - **Libertad de operación (FTO)** (`propiedad_intelectual`): bloquea si patente vigente que bloquea la explotación en mercados clave sin licencia ni alternativa de diseño.
+- **Destino digestivo** (`destino_digestivo`): bloquea si el activo no llega a la diana en cantidad relevante a una dosis viable (degradación o transformación ruminal, digestión o absorción), según datos publicados o el cálculo de `nutria destino ruminal`.
 - **Ética y bienestar animal** (`etica`): bloquea si la validación exige procedimientos no autorizables o el producto compromete el bienestar animal.
 

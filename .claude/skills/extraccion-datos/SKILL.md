@@ -25,6 +25,14 @@ Esquema: `src/nutria/data/schemas/extraccion.schema.json`. Ejemplo de flujo:
 
 ## Doble extracción
 
-Dos extracciones independientes (dos subagentes `extractor-datos`, el segundo sin ver el primero). El orquestador
-compara campo a campo; las discrepancias se resuelven releyendo la fuente y se marcan `discrepancia` → `resuelta`;
-si coinciden, `doble_concordante`.
+1. Dos extracciones independientes (dos subagentes `extractor-datos`, ninguno ve la del otro), cada una en su
+   fichero y sin registrar: `research/datos/<ID>/extraccion_<fuente>_A.json` y `..._B.json`, con los registros en
+   el orden en que aparecen en la fuente.
+2. Comparación campo a campo: `nutria extraccion comparar <A.json> <B.json>` (código de salida 1 si hay
+   discrepancias).
+3. Si coinciden, los registros se marcan `doble_concordante`. Si no, cada discrepancia se resuelve releyendo la
+   fuente y se marca `resuelta`; lo que no se pueda resolver queda documentado como `discrepancia` y no se registra.
+4. Se registra solo la versión conciliada: `nutria --agente extractor-datos extraccion agregar --datos <conciliada.json>`.
+5. Exportación para el análisis: `nutria extraccion exportar --variable <V> --csv <f>` (formato de análisis:
+   `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable, unidad,
+   especie, diseno, dosis, ...` y la dieta basal numérica).

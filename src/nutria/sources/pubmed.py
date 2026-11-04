@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
-from .base import Record, year_from
+from .base import Record, normalize_doi, year_from
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+# DOI que puede ir sin comillas en un término de Entrez; el resto (paréntesis, corchetes, dos puntos,
+# espacios...) se entrecomilla para que no se interprete como sintaxis de búsqueda.
+_PLAIN_DOI_RE = re.compile(r"[a-z0-9._/-]+")
 
 
 def _base_params(cfg) -> dict:
@@ -33,6 +38,23 @@ def search(client, query: str, retmax: int = 20, mindate: str | None = None,
         "ids": list(result.get("idlist", [])),
         "query_translation": result.get("querytranslation"),
     }
+
+
+def pmid_for_doi(client, doi: str) -> str | None:
+    """PMID del registro de PubMed con ese DOI (esearch con el término `<doi>[doi]`).
+
+    Devuelve None si PubMed no tiene el DOI o si lo tienen varios registros (ambiguo). Sirve como
+    comprobación alternativa de retractación: `summaries` marca el tipo "Retracted Publication".
+    """
+    norm = normalize_doi(doi)
+    if not norm or '"' in norm:
+        return None
+    term_doi = norm if _PLAIN_DOI_RE.fullmatch(norm) else f'"{norm}"'
+    params = {"db": "pubmed", "term": f"{term_doi}[doi]", "retmode": "json", "retmax": 2,
+              **_base_params(client.cfg)}
+    data = client.get_json(f"{EUTILS}/esearch.fcgi", params=params)
+    ids = [str(i) for i in ((data.get("esearchresult") or {}).get("idlist") or [])]
+    return ids[0] if len(ids) == 1 else None
 
 
 def summaries(client, pmids: list[str]) -> list[Record]:

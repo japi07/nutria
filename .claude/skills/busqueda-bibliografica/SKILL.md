@@ -1,9 +1,9 @@
 ---
 name: busqueda-bibliografica
-description: Procedimiento para diseñar, ejecutar y documentar búsquedas bibliográficas reproducibles (PECO, sinónimos, MeSH, varias fuentes, búsqueda de evidencia contraria y recuentos PRISMA). Úsalo siempre que haya que buscar literatura científica.
+description: Procedimiento para diseñar, ejecutar y documentar búsquedas bibliográficas repetibles (PECO, sinónimos, MeSH, varias fuentes, búsqueda de evidencia contraria y recuentos PRISMA). Úsalo siempre que haya que buscar literatura científica.
 ---
 
-# Búsqueda bibliográfica reproducible
+# Búsqueda bibliográfica documentada
 
 ## 1. Pregunta y criterios (antes de buscar)
 
@@ -26,7 +26,9 @@ truncamiento con `*`. Guarda la consulta exacta de cada fuente.
 | Web | WebSearch / WebFetch | EUR-Lex, Registro UE de aditivos, FAO/AGRIS, Feedipedia, literatura gris |
 
 Con suscripción de la organización: Web of Science, Scopus y CAB Abstracts (buena cobertura de ciencia animal).
-Google Scholar no tiene API: solo búsqueda manual complementaria.
+Google Scholar no tiene API: solo búsqueda manual complementaria. OpenAlex exige clave de API en todas las
+peticiones desde el 13-02-2026 (`OPENALEX_API_KEY`; claves gratuitas en https://openalex.org/settings/api): sin
+ella, documenta que la fuente no se consultó.
 
 ## 4. Evidencia contraria (obligatoria)
 

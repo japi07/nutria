@@ -77,3 +77,13 @@ def test_leave_one_out_and_subgroups(bcg):
 def test_input_validation():
     with pytest.raises(ValueError):
         meta.random_effects([0.1, 0.2], [0.01, 0.0])
+
+
+def test_tau2_qprofile_ci_matches_metafor(bcg):
+    # metafor::confint(rma(yi, vi, data = dat.bcg)): tau² [0.1197; 1.1115], I² [81.92; 97.68]
+    yi, vi, _ = bcg
+    ci = meta.tau2_confint(yi, vi)
+    assert ci["tau2"][0] == pytest.approx(0.1197, abs=1e-4)
+    assert ci["tau2"][1] == pytest.approx(1.1115, abs=1e-4)
+    assert ci["I2"][0] == pytest.approx(81.92, abs=0.01)
+    assert ci["I2"][1] == pytest.approx(97.68, abs=0.01)

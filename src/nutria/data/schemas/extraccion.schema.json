@@ -2,42 +2,261 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Extracción de datos de un estudio",
   "type": "object",
-  "required": ["fuente", "especie", "diseno", "unidad_experimental", "intervencion", "variable", "unidad",
-               "ubicacion"],
+  "required": [
+    "dieta_basal",
+    "diseno",
+    "dosis",
+    "dosis_base",
+    "dosis_unidad",
+    "especie",
+    "estado_fisiologico",
+    "forma_producto",
+    "fuente",
+    "intervencion",
+    "media_control",
+    "media_tratamiento",
+    "n_control",
+    "n_tratamiento",
+    "tipo_dispersion",
+    "ubicacion",
+    "unidad",
+    "unidad_experimental",
+    "variable"
+  ],
   "properties": {
-    "fuente": {"type": "string", "pattern": "^(doi|pmid|openalex):.+"},
-    "experimento": {"type": "string"},
-    "especie": {"type": "string"},
-    "raza": {"type": "string"},
-    "sexo": {"type": "string"},
-    "edad": {"type": "string"},
-    "estado_fisiologico": {"type": "string"},
-    "paridad": {"type": "string"},
-    "diseno": {"enum": ["paralelo", "cuadrado_latino", "crossover", "factorial", "bloques", "otro"]},
-    "unidad_experimental": {"enum": ["animal", "corral", "jaula", "tanque", "granja", "otro"]},
-    "duracion_dias": {"type": "number", "minimum": 0},
-    "dieta_basal": {"type": "string"},
-    "intervencion": {"type": "string"},
-    "dosis": {"type": "number"},
-    "dosis_unidad": {"type": "string"},
-    "dosis_base": {"type": "string", "description": "p. ej. g/animal/d, mg/kg MS, % MS"},
-    "forma_producto": {"type": "string", "description": "Forma química, protección ruminal, encapsulado..."},
-    "comparador": {"type": "string"},
-    "variable": {"type": "string"},
-    "unidad": {"type": "string"},
-    "n_control": {"type": "number", "minimum": 1},
-    "n_tratamiento": {"type": "number", "minimum": 1},
-    "media_control": {"type": "number"},
-    "media_tratamiento": {"type": "number"},
-    "tipo_dispersion": {"enum": ["SD", "SE", "SEM_combinado", "SED", "IC95", "ninguno"]},
-    "dispersion_control": {"type": "number", "minimum": 0},
-    "dispersion_tratamiento": {"type": "number", "minimum": 0},
-    "p_valor": {"type": "number", "minimum": 0, "maximum": 1},
-    "ubicacion": {"type": "string", "description": "Tabla, figura (indicar si digitalizada) o página."},
-    "financiacion": {"type": "string"},
-    "conflictos": {"type": "string"},
-    "estado_verificacion": {"enum": ["simple", "doble_concordante", "discrepancia", "resuelta"]},
-    "verificado_por": {"type": "string"},
-    "notas": {"type": "string"}
+    "fuente": {
+      "type": "string",
+      "pattern": "^(doi|pmid|openalex):.+"
+    },
+    "experimento": {
+      "type": "string"
+    },
+    "especie": {
+      "type": "string"
+    },
+    "raza": {
+      "type": "string"
+    },
+    "sexo": {
+      "type": "string"
+    },
+    "edad": {
+      "type": "string"
+    },
+    "estado_fisiologico": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paridad": {
+      "type": "string"
+    },
+    "diseno": {
+      "enum": [
+        "paralelo",
+        "cuadrado_latino",
+        "crossover",
+        "factorial",
+        "bloques",
+        "otro"
+      ]
+    },
+    "unidad_experimental": {
+      "enum": [
+        "animal",
+        "corral",
+        "jaula",
+        "tanque",
+        "granja",
+        "otro"
+      ]
+    },
+    "duracion_dias": {
+      "type": "number",
+      "minimum": 0
+    },
+    "dieta_basal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intervencion": {
+      "type": "string"
+    },
+    "dosis": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "dosis_unidad": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dosis_base": {
+      "description": "p. ej. g/animal/d, mg/kg MS, % MS",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "forma_producto": {
+      "description": "Forma química, protección ruminal, encapsulado...",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "comparador": {
+      "type": "string"
+    },
+    "variable": {
+      "type": "string"
+    },
+    "unidad": {
+      "type": "string"
+    },
+    "n_control": {
+      "minimum": 1,
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "n_tratamiento": {
+      "minimum": 1,
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "media_control": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "media_tratamiento": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "tipo_dispersion": {
+      "enum": [
+        "SD",
+        "SE",
+        "SEM_combinado",
+        "SED",
+        "IC95",
+        "ninguno",
+        null
+      ]
+    },
+    "dispersion_control": {
+      "type": "number",
+      "minimum": 0
+    },
+    "dispersion_tratamiento": {
+      "type": "number",
+      "minimum": 0
+    },
+    "p_valor": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "ubicacion": {
+      "type": "string",
+      "description": "Tabla, figura (indicar si digitalizada) o página."
+    },
+    "financiacion": {
+      "type": "string"
+    },
+    "conflictos": {
+      "type": "string"
+    },
+    "estado_verificacion": {
+      "enum": [
+        "simple",
+        "doble_concordante",
+        "discrepancia",
+        "resuelta"
+      ]
+    },
+    "verificado_por": {
+      "type": "string"
+    },
+    "notas": {
+      "type": "string"
+    },
+    "forraje_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Forraje (% de la MS)"
+    },
+    "fnd_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "FND (% de la MS)"
+    },
+    "almidon_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Almidón (% de la MS)"
+    },
+    "grasa_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Grasa o extracto etéreo (% de la MS)"
+    },
+    "pb_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Proteína bruta (% de la MS)"
+    },
+    "dcad_meq_kg_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "DCAD (mEq/kg de MS)"
+    },
+    "eventos_control": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Animales con el evento (variables binarias)"
+    },
+    "eventos_tratamiento": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "no_consta": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Campos obligatorios que el estudio no publica (se dejan a null)"
+    }
   }
 }

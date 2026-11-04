@@ -1,4 +1,7 @@
 # ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato del modelo rNPV.
+# prob_exito de cada [[fase]]: probabilidad de éxito condicionada a haber llegado a esa fase (no acumulada).
+# `nutria econ desarrollador` da el rNPV (valor esperado) y la simulación de resultados (VPN realizado,
+# con el éxito o fracaso de cada fase muestreado en secuencia).
 
 [proyecto]
 nombre = "ILUSTRATIVO - desarrollo de aditivo zootécnico"

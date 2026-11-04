@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def bcg():
     """Conjunto de validación dat.bcg (metafor), recalculado desde los recuentos originales."""
-    rows = list(csv.DictReader(open(ROOT / "ejemplos" / "validacion_bcg.csv", encoding="utf-8")))
+    with open(ROOT / "ejemplos" / "validacion_bcg.csv", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
     yi, vi, ablat = [], [], []
     for r in rows:
         a, b, c, d = (int(r[k]) for k in ("tpos", "tneg", "cpos", "cneg"))

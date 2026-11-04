@@ -1,22 +1,39 @@
-"""OpenAlex: índice abierto de literatura (citas, acceso abierto, estado de retractación)."""
+"""OpenAlex: índice abierto de literatura (citas, acceso abierto, estado de retractación).
+
+OpenAlex exige una clave de API en todas las peticiones desde el 13-02-2026. Sin `OPENALEX_API_KEY`
+las funciones de este módulo lanzan `NetworkError` con instrucciones antes de hacer la petición
+(en modo offline se permite servir lo que ya esté en caché).
+"""
 
 from __future__ import annotations
 
 import re
 from urllib.parse import quote
 
+from ..http import NetworkError
 from .base import Record
 
 BASE = "https://api.openalex.org"
+KEY_ENV = "OPENALEX_API_KEY"
+KEY_URL = "https://openalex.org/settings/api"
+KEY_REQUIRED_MESSAGE = (
+    "OpenAlex exige una clave de API en todas las peticiones desde el 13-02-2026. Crea una gratuita en "
+    f"{KEY_URL} y guárdala en la variable de entorno {KEY_ENV} (nunca en ficheros del proyecto). "
+    "Mientras tanto usa Crossref, PubMed o Europe PMC, o --offline con lo ya consultado."
+)
 
 
 def _params(cfg, extra: dict | None = None) -> dict:
+    """Parámetros comunes. Sin clave lanza `NetworkError` antes de la petición (salvo en modo offline,
+    donde no se hace ninguna petición y solo se sirve la caché)."""
     params = dict(extra or {})
     if cfg.email:
         params["mailto"] = cfg.email
-    key = cfg.secret("OPENALEX_API_KEY")
+    key = cfg.secret(KEY_ENV)
     if key:
         params["api_key"] = key
+    elif not getattr(cfg, "offline", False):
+        raise NetworkError(KEY_REQUIRED_MESSAGE)
     return params
 
 
