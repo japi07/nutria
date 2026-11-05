@@ -17,17 +17,19 @@
 #     nutria.sqlite o procedencia.jsonl (sin distinguir mayúsculas), borrar research/ entera, importar nutria.db o
 #     nutria.provenance, y las órdenes de git que descartan cambios sin confirmar (stash, clean, reset --hard,
 #     checkout/restore de "." o con -f) o que restauran, borran o mueven el registro;
-#  4. la clave de los sellos (clave_sello, NUTRIA_CLAVE_SELLO, ~/.config/nutria) y el módulo de sellos
-#     (nutria.sello, sello.sign, write_stamp, from nutria import sello);
-#  5. identidad, dentro de un subagente (campo agent_type que Claude Code añade a la entrada del hook): --agente lleva
-#     un nombre literal (no una variable ni una sustitución) y no puede ser el de otro rol del proyecto
-#     (.claude/agents/<rol>.md) ni un evaluador-<n>, salvo para el propio evaluador-independiente, que se identifica
-#     siempre con --agente evaluador-<n>, no importa nutria desde Python y no lee la base de datos del registro.
+#  4. la clave de los sellos (clave_sello, NUTRIA_CLAVE_SELLO, ~/.config/nutria, también con ./ o // en la ruta o con
+#     comodines bajo .config) y el módulo de sellos (nutria.sello, sello.sign, write_stamp, from nutria import sello);
+#  5. identidad, dentro de un subagente (campo agent_type que Claude Code añade a la entrada del hook): nutria se
+#     ejecuta directamente (no desde Python, xargs ni eval), --agente lleva un nombre literal (no una variable, una
+#     sustitución ni un comodín) y no puede ser el de otro rol del proyecto (.claude/agents/<rol>.md) ni un
+#     evaluador-<n>, salvo para el propio evaluador-independiente, que se identifica siempre con --agente
+#     evaluador-<n>, no importa nutria desde Python y no lee la base de datos del registro.
 # Una orden simple de solo lectura (grep, cat, head, tail, wc, ls, stat, file, diff, sha256sum sin ; & | < > $ ni
 # acentos graves) solo se comprueba frente a la clave de los sellos y, en un evaluador, la base de datos: buscar o leer
 # un texto no ejecuta nada.
-# Compara texto: no detiene a un proceso del mismo usuario decidido a falsificar (un programa escrito en un fichero,
-# una orden construida con variables o codificada); ver README.
+# Compara texto: no detiene a un proceso del mismo usuario decidido a falsificar. Lo eluden un programa escrito antes
+# en un fichero y los nombres construidos con variables, concatenación o base64 (T=tm; ${T}ux ...; una opción leída
+# de un fichero); en la sesión principal (sin agent_type) no se comprueba el rol declarado. Ver README.
 payload=$(cat)
 una_linea=$(printf '%s' "$payload" | tr '\n\r\t' '   ')
 # tool_input.command tal como va en el JSON. Una cadena JSON no puede contener comillas sin escapar, así que el texto
@@ -154,8 +156,9 @@ if [ "$solo_lectura" = 0 ]; then
   fi
 fi
 
-# 4. Sellos de verificación (la clave, también en las órdenes de solo lectura)
-if contiene "$minusculas" 'clave_sello|nutria_clave_sello|\.config/nutria|config_home[^[:space:]]*/nutria'; then
+# 4. Sellos de verificación (la clave, también en las órdenes de solo lectura; también con ./ o // en la ruta y con
+#    comodines bajo .config: cat ~/.config/*/*)
+if contiene "$minusculas" 'clave_sello|nutria_clave_sello|(\.config|config_home[^[:space:]/]*)/[./]*nutria|(\.config|config_home[^[:space:]/]*)/[^[:space:];&|]*[*?[]'; then
   bloquea "la clave de los sellos de verificación no es accesible para los agentes."
 fi
 if [ "$solo_lectura" = 0 ] && contiene "$plano" 'nutria\.sello|sello\.(sign|load_key|key_path|_canonical)|write_stamp|from nutria import [^;&|]*sello|(import|__import__|import_module)[^;&|]*sello'; then
@@ -176,12 +179,21 @@ if [ -n "$tipo" ]; then
     exit 0
   fi
   agentes="$(dirname "$0")/../../.claude/agents"
-  valores=$(printf '%s' "$sin_comillas" | grep -oE -- '--agente(=|[[:space:]]+)[^[:space:];&|(){}]+' \
-    | sed -E 's/^--agente(=|[[:space:]]+)//')
+  # nutria se ejecuta directamente, no a través de un intérprete o de otra orden que construya sus argumentos: así el
+  # rol declarado está a la vista (python -c "subprocess.run([... '--agente', R ...])", xargs ... {}, eval).
+  if contiene "$plano" "$menciona_nutria" \
+    && contiene "$plano" "${ini}(xargs|eval|parallel)${fin}|subprocess|os\.(system|popen|exec[a-z]*|spawn[a-z]*)|(from|import)[[:space:]]+nutria|nutria\.(cli|__main__)|runpy|import_module"; then
+    bloquea "dentro de un subagente, nutria se ejecuta directamente (nutria --agente $tipo ...), no a través de Python, xargs ni eval: así el rol declarado con --agente se puede comprobar."
+  fi
+  # Valor de cada --agente: con = o tras espacios o comas (también en una lista de Python), hasta el siguiente espacio,
+  # coma, paréntesis o corchete de cierre o separador de órdenes. Un valor que no sea un nombre literal se bloquea
+  # ($R, ${R}, $(...), `...`, {} de xargs, comodines).
+  valores=$(printf '%s' "$sin_comillas" | grep -oE -- '--agente(=|[[:space:],]+)[^][:space:];&|,)]*' \
+    | sed -E 's/^--agente(=|[[:space:],]+)//')
   for valor in $valores; do
     case "$valor" in
       *[!A-Za-z0-9_-]*)
-        bloquea "--agente '$valor': dentro de un subagente, --agente lleva el nombre literal del rol (sin variables ni sustituciones); este subagente es '$tipo'." ;;
+        bloquea "--agente '$valor': dentro de un subagente, --agente lleva el nombre literal del rol (sin variables, sustituciones ni comodines); este subagente es '$tipo'." ;;
     esac
     minusculas_valor=$(printf '%s' "$valor" | tr 'A-Z' 'a-z')
     case "$minusculas_valor" in

@@ -296,10 +296,12 @@ def test_el_rechazo_sale_con_codigo_3_y_su_texto_explica_el_motivo(registered, c
     assert exc.value.code == 3
     assert "no la registra un agente" in str(exc.value) and "--agente" in str(exc.value)
     capsys.readouterr()
-    with pytest.raises(SystemExit):                       # con --json, el error sale como JSON por stdout
+    with pytest.raises(SystemExit):        # con --json, el error sale como JSON por stdout y, como texto, por stderr
         main(["--json", "--agente", "director-cientifico", *FIRMADAS[0]])
-    payload = json.loads(capsys.readouterr().out)
+    out = capsys.readouterr()
+    payload = json.loads(out.out)
     assert (payload["codigo"], payload["tipo"]) == (3, "registro") and "Firma humana rechazada" in payload["error"]
+    assert out.err.startswith("Error de registro: Firma humana rechazada")
 
 
 @linux_only
@@ -545,6 +547,11 @@ BLOQUEADAS = [
     "cat ~/.config/nutria/clave_sello",
     "cat ~/.config/nutria/*",
     "ls ~/.config/NUTRIA/",
+    "cat ~/.config/*/*",                                      # comodines y rutas equivalentes (ronda 2)
+    "cat ~/.config/n?tria/c*",
+    "cat ~/.config/./nutria/k",
+    "cat ~/.config//nutria/k",
+    "cat \"${XDG_CONFIG_HOME:-$HOME/.config}\"/nut*/*",
     "echo $NUTRIA_CLAVE_SELLO",
     "python3 -c \"from nutria import sello; print(sello.sign({}))\"",
     "python3 -c \"import nutria.sello\"",
@@ -650,6 +657,17 @@ def _subagente(agent_type: str, command: str) -> dict:
     ("critico-red-team", "E=evaluador-1; nutria --agente $E puntuar registrar --datos p.json"),
     ("critico-red-team", "nutria --agente \"${E}\" puntuar registrar --datos p.json"),
     ("critico-red-team", "nutria --agente `echo evaluador-1` puntuar registrar --datos p.json"),
+    # nutria a través de otra orden que construye sus argumentos (ronda 2): Python, xargs, eval
+    ("economia-mercado-pi", "python3 -c \"import subprocess; R='compuestos-toxicologia'; subprocess.run(['nutria', "
+                            "'--agente', R, 'puntuar', 'compuerta', 'O-0001', 'seguridad', 'superada', '--motivo', 'x'])\""),
+    ("economia-mercado-pi", "python3 -c \"from nutria.cli import main; main(['--agente', 'economia-mercado-pi', "
+                            "'estado'])\""),
+    ("economia-mercado-pi", "echo compuestos-toxicologia | xargs -I{} nutria --agente {} puntuar compuerta O-0001 "
+                            "seguridad superada --motivo x"),
+    ("critico-red-team", "eval \"nutria --agente $(cat rol.txt) puntuar registrar --datos p.json\""),
+    ("critico-red-team", "python3 -m nutria --agente evaluador-1, puntuar registrar --datos p.json"),
+    ("economia-mercado-pi", "nutria --agente compuestos-toxicologia* puntuar compuerta O-0001 seguridad superada "
+                            "--motivo x"),
     # el evaluador independiente: siempre --agente evaluador-<n>, sin módulos de Python ni la base de datos
     ("evaluador-independiente", "nutria oportunidad ver O-0001 --json"),
     ("evaluador-independiente", "PYTHONPATH=src python3 -m nutria --json oportunidad ver O-0001"),
@@ -672,6 +690,12 @@ def test_el_hook_ata_la_identidad_al_tipo_de_subagente(agent_type, command):
     ("evaluador-independiente", "sha256sum research/oportunidades/O-0001_puntuacion_evaluador-2.json"),
     ("evaluador-independiente", "nutria --agente evaluador-2 --json puntuar registrar --datos "
                                 "research/oportunidades/O-0001_puntuacion_evaluador-2.json"),
+    ("director-cientifico", "for f in research/oportunidades/*.json; do nutria --agente director-cientifico "
+                            "oportunidad nueva --datos \"$f\"; done"),
+    ("fisiologia-bioquimica", "(cd research && nutria --agente fisiologia-bioquimica destino ruminal --a 0.2 --b 0.6 "
+                              "--kd 0.08 --kp 0.06)"),
+    ("investigador-bibliografico", "nutria --agente investigador-bibliografico buscar pubmed \"choline AND "
+                                   "(dairy OR cattle)\" --max 25 --desde 2010"),
 ])
 def test_el_hook_deja_a_cada_subagente_usar_su_rol(agent_type, command):
     res = _hook("guard_bash.sh", _subagente(agent_type, command))
@@ -1321,6 +1345,18 @@ def test_el_hook_web_nunca_guarda_los_secretos_de_la_url(tmp_path, modo):
     else:
         assert event["inputs"]["dominio"] == "api.example.org"
         assert event["inputs"]["sha256_url"] != provenance.sha256_text(url)
+
+
+def test_el_hook_web_en_claro_tampoco_guarda_secretos_de_la_consulta(tmp_path):
+    """En modo claro, la consulta de WebSearch también pasa por `nutria.http.redact` (pares clave=valor sensibles,
+    tokens Bearer y direcciones mailto:)."""
+    query = "choline dairy api_key=SECRETO123 Bearer T0K3N mailto:persona@example.org"
+    assert _run_web_hook(tmp_path, _web("WebSearch", {"query": query}, {"results": []}),
+                         NUTRIA_PROCEDENCIA_WEB="claro").returncode == 0
+    cfg = Config(root=tmp_path)
+    text = cfg.provenance_path.read_text("utf-8")
+    assert [s for s in ("SECRETO123", "T0K3N", "persona@example.org") if s in text] == []
+    assert provenance.read_events(cfg)[-1]["inputs"]["consulta"].startswith("choline dairy")
 
 
 def test_el_hook_web_nunca_bloquea(tmp_path):

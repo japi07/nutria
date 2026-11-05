@@ -69,13 +69,15 @@ def _firma_solo_de_personas(args) -> None:
     cadena con terminal de control (`provenance.human_terminal_problems`).
 
     Residuo: la firma es una atestación sin autenticar. Excluye a los agentes que usan la CLI desde Claude Code, pero
-    no identifica a la persona. La eluden: una orden lanzada desde Claude Code con el entorno vacío dentro de un
-    multiplexor (tmux, screen) o con una pseudoterminal propia, ya desvinculada de Claude Code (en Linux basta una
-    orden; el hook de Bash bloquea esas herramientas por su nombre, no una orden construida con variables ni un
-    programa escrito en un fichero); en Windows, vaciar el entorno (sin /proc ni ps solo se mira el del propio
-    proceso; en macOS los antecesores salen de ps, sin su entorno inicial); una copia modificada de nutria o un
-    programa que escriba en la base de datos; y una persona malintencionada. Por diseño, una persona sin terminal de
-    control (ssh sin -t, cron, CI, un servicio) no puede firmar.
+    no identifica a la persona. La eluden:
+    - en Linux, una sola orden de Bash lanzada desde Claude Code con el entorno vacío dentro de un multiplexor (tmux,
+      screen) o con una pseudoterminal propia, porque el proceso queda desvinculado de Claude Code y con terminal. El
+      hook de Bash bloquea esas herramientas y la opción de firma por su texto, pero no un nombre construido con
+      variables, concatenación o base64 (`T=tm; ${T}ux ...`) ni un programa escrito antes en un fichero;
+    - en Windows, vaciar el entorno: sin /proc ni ps solo se mira el del propio proceso (en macOS los antecesores
+      salen de ps, aunque sin su entorno inicial);
+    - una copia modificada de nutria, un programa que escriba en la base de datos y una persona malintencionada.
+    Por diseño, una persona sin terminal de control (ssh sin -t, cron, CI, un servicio) no puede firmar.
     """
     from .provenance import signature_problems
     firmas = [dest for dest, value in vars(args).items() if dest.startswith("firma") and value not in (None, False)]
@@ -87,10 +89,11 @@ def _firma_solo_de_personas(args) -> None:
                    "terminal de una persona (interactiva, fuera de Claude Code, sin --agente ni NUTRIA_AGENT). "
                    "Detectado: " + ", ".join(dict.fromkeys(motivos)) + ". Registra la acción sin firma (queda como "
                    "propuesta) y pide a la persona responsable que la firme en su propia terminal.")
-        if getattr(args, "json", False):   # mismo formato que el resto de errores con --json
-            print(json.dumps({"error": message, "codigo": 3, "tipo": "registro"}, ensure_ascii=False))
-        else:
-            print(message, file=sys.stderr)
+        # Mismo formato que el resto de errores: el texto siempre por stderr y, con --json, además el objeto JSON por
+        # stdout ({error, codigo, tipo}).
+        if getattr(args, "json", False):
+            print(json.dumps({"error": message, "codigo": 3, "tipo": "registro"}, ensure_ascii=False), flush=True)
+        print(f"Error de registro: {message}", file=sys.stderr)
         raise _FirmaRechazada(message)
 
 

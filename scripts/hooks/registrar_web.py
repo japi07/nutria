@@ -8,8 +8,11 @@ Las consultas web pueden revelar una idea confidencial (regla 11) y el fichero s
 (modo "hash") solo se guardan el dominio y el SHA-256 de la URL (WebFetch) o el SHA-256 de la consulta (WebSearch).
 Con NUTRIA_PROCEDENCIA_WEB=claro se guardan la URL y la consulta en claro; cualquier otro valor se trata como "hash"
 (falla en cerrado). La URL se redacta siempre antes de guardarla o de calcular su huella: sin credenciales
-(usuario:clave@), sin parámetros sensibles (api_key, key, token, email, mailto...) y sin los secretos configurados
-(`nutria.http.redact`). La pregunta que el agente hace sobre la página (prompt de WebFetch) se guarda como huella.
+(usuario:clave@), sin parámetros sensibles (api_key, key, token, email, mailto...), sin fragmento y sin los secretos
+configurados (`nutria.http.redact`); la consulta en claro, también (`redact_text`). La pregunta que el agente hace
+sobre la página (prompt de WebFetch) se guarda como huella. Límites: la huella de una URL o de una consulta corta se
+puede confirmar adivinándola (no es un cifrado), y el hook solo decide qué queda registrado: la consulta llega igual
+al servicio externo.
 
 Nunca bloquea: si algo falla, avisa con `systemMessage` y deja seguir la sesión. La raíz del proyecto es
 CLAUDE_PROJECT_DIR (la define Claude Code) o, en su defecto, la del repositorio que contiene este hook.
@@ -39,14 +42,20 @@ def web_mode(value: str | None) -> str:
     return "claro" if (value or "").strip().lower() == "claro" else "hash"
 
 
+def redact_text(text: str, cfg=None) -> str:
+    """Texto sin los secretos que reconoce `nutria.http.redact` (valores configurados, pares clave=valor sensibles,
+    tokens Bearer y direcciones mailto:); si no se puede importar, el texto tal cual."""
+    try:
+        from nutria.http import redact
+        return redact(text, cfg)
+    except Exception:  # noqa: BLE001 - sin requests u otra dependencia: se aplica solo la limpieza local
+        return text
+
+
 def redact_url(url: str, cfg=None) -> str:
     """URL sin credenciales, parámetros sensibles ni secretos configurados (`nutria.http.redact`, si se puede
     importar; si no, solo la limpieza de este módulo)."""
-    try:
-        from nutria.http import redact
-        url = redact(url, cfg)
-    except Exception:  # noqa: BLE001 - sin requests u otra dependencia: se aplica la limpieza local
-        pass
+    url = redact_text(url, cfg)
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -99,8 +108,8 @@ def build_event(payload: dict, mode: str, cfg=None) -> tuple[str, dict, dict]:
     query = str(tool_input.get("query") or "")
     if mode == "hash":
         inputs["sha256_consulta"] = sha256_text(query)
-    else:
-        inputs["consulta"] = query
+    else:   # en claro, sin los secretos que pudiera llevar (p. ej. un correo de contacto o una clave pegada)
+        inputs["consulta"] = redact_text(query, cfg)
     for key, name in (("allowed_domains", "dominios_permitidos"), ("blocked_domains", "dominios_excluidos")):
         if tool_input.get(key):
             inputs[name] = tool_input[key]
