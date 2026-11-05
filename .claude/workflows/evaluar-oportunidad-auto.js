@@ -431,7 +431,7 @@ const promptDescarte = (d) => `${REGLAS}\nDescarte rápido de ${ID} (nutria --ag
   (d.registrable
     ? `PROPÓN la compuerta "${d.analisis}" y regístrala como propuesta, sin --firma-humana: nutria --agente ${d.agente} puntuar compuerta ${ID} ${d.analisis} ` +
       '<superada|no_resuelta|bloqueada> --motivo "...". "bloqueada" actúa de inmediato y detiene esta evaluación; "superada" no cuenta hasta que la firme una persona. ' +
-      'Devuelve el mismo estado que registres.'
+      'Devuelve el mismo estado que registres; si la CLI rechaza la propuesta (p. ej. porque una persona ya firmó esa compuerta: una propuesta sin firma no la sustituye), no la fuerces y dilo en el motivo.'
     : 'No es una compuerta del registro: devuelve "bloqueada" solo si el beneficio neto es negativo incluso en el escenario optimista (P90) o el coste por animal y día es ' +
       `inasumible (ancla 0 de rentabilidad_ganadero), y en ese caso registra la propuesta de descarte con nutria --agente ${d.agente} decision registrar --entidad ` + ID +
       ' --decision "propuesta de descarte (modelo del ganadero)" --motivo "..." sin --firma-humana; "no_resuelta" si faltan datos; "superada" en otro caso.')

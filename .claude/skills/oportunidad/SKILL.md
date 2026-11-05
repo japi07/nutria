@@ -45,13 +45,19 @@ decisión, y nunca los leen.
 7. **Hipótesis**: actualiza su estado con motivo (`nutria hipotesis estado H-xxxx refutada --motivo "..."`).
 8. **Puntuación ciega, antes del informe**: tres `evaluador-independiente` (identificadores distintos y, si es
    posible, modelos distintos) con la skill `puntuacion`. Leen la oportunidad con `--sin-puntuaciones`, los análisis
-   de los especialistas, la crítica y la verificación de fuentes; nunca un informe, una decisión propuesta ni
-   puntuaciones ajenas. Guardan su JSON sin registrarlo y devuelven su sha256.
+   de los especialistas, la crítica y la verificación de fuentes; nunca un informe, una decisión propuesta (tampoco
+   con `nutria decision listar`, que la CLI les rechaza) ni puntuaciones ajenas. Guardan su JSON sin registrarlo y
+   devuelven su sha256: aquí el registro es diferido y esta indicación prevalece sobre el paso 5 de la skill
+   `puntuacion`. Antes y después de puntuar se leen los eventos `puntuacion` de la procedencia (`nutria procedencia
+   --accion puntuacion`, solo metadatos): un registro de esa oportunidad entre las dos lecturas se informa como
+   registro prematuro, para que lo revise una persona.
 9. **Informe**: `/informe $ARGUMENTS`, redactado por `director-cientifico` después de la puntuación, con las
    puntuaciones emitidas y sus desacuerdos y una **decisión propuesta** (continuar, reformular o descartar) pendiente
    de firma humana. El Anexo A de respaldo lo rellena `verificador-citas`.
 10. **Sello y registro**: un agente ejecuta `nutria informe comprobar <md> --online --sellar --json` y
     `nutria informe sello <md> --json`; el sello vale solo si lo dice esa salida. Si es válido, cada evaluador registra
-    su fichero sin modificarlo (`nutria --agente <id> puntuar registrar`, comprobando antes su sha256); si no, **no se
-    registran las puntuaciones ni se da el informe por bueno**, y se informa del motivo. Después, `nutria puntuar ranking`.
+    su fichero sin modificarlo con una sola orden literal, `echo '<sha256>  <fichero>' | sha256sum -c - && nutria
+    --agente <id> --json puntuar registrar --datos <fichero>`, y cuenta como registrada solo si su salida trae
+    `<fichero>: OK` y la confirmación de `puntuar registrar`; si no, **no se registran las puntuaciones ni se da el
+    informe por bueno**, y se informa del motivo. Después, `nutria puntuar ranking`.
     Informa también de los agentes que fallaron y de lo que quedó sin hacer.

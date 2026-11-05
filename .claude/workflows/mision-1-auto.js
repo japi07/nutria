@@ -734,7 +734,7 @@ if (FASE === 'oportunidades') {
           `${REGLAS}\nOportunidad ${o.id}: ${o.titulo}. Tu tarea: ${t.tarea.split('<ID>').join(o.id)}. Consulta nutria --agente ${t.agente} oportunidad ver ${o.id} --sin-puntuaciones --json. ` +
           `PROPÓN la compuerta "${t.compuerta}" (eres su rol propietario) y regístrala como propuesta, sin --firma-humana: nutria --agente ${t.agente} puntuar compuerta ${o.id} ${t.compuerta} ` +
           '<superada|no_resuelta|bloqueada> --motivo "...". "bloqueada" actúa de inmediato y la oportunidad no se puntúa; "superada" no cuenta hasta que la firme una persona. ' +
-          `Devuelve el mismo estado que registres. Guarda tu análisis en research/revisiones/${o.id}_triage_${t.compuerta}.md. ` +
+          `Devuelve el mismo estado que registres; si la CLI rechaza la propuesta (p. ej. porque una persona ya firmó esa compuerta: una propuesta sin firma no la sustituye), no la fuerces y dilo en el motivo. Guarda tu análisis en research/revisiones/${o.id}_triage_${t.compuerta}.md. ` +
           `Antes, comprueba que el título registrado de ${o.id} es "${o.titulo}": si no coincide, no registres ninguna propuesta y devuelve ` +
           '"no_resuelta" explicando el desajuste.',
           { label: `triage:${t.compuerta}:${o.id}`, phase: 'Triage y crítica', agentType: t.agente, schema: COMPUERTA },

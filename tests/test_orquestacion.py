@@ -1619,6 +1619,16 @@ def test_p8_mision1_ls_falla_en_cerrado(ficheros, project, capsys):  # D2-15: no
 
 
 @requires_node
+def test_p8_mision1_ls_reconoce_cabeceras_absolutas_por_directorio(project, capsys):  # D2-15
+    # el nombre está en research/revisiones (cabecera absoluta reconocida): no ocupa el de research/oportunidades
+    ficheros = "/home/ana/nutria/research/revisiones:\nM1_2026-11-04_oportunidad-a.json\n\n/home/ana/nutria/research/oportunidades:\nx.json\n"
+    reglas = [_regla_paso0(project, capsys, ficheros=ficheros),
+              {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}}, *_reglas_novedad(), *_registro_secuencial(1)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a.json " in call(out, "registro:1")["prompt"]
+
+
+@requires_node
 def test_p8_mision1_deduplica_contra_el_registro(project, capsys):  # D2-15
     registrada = _registrar_oportunidad(project, capsys, "Colina protegida en vacas en transición")
     gen = {"oportunidades": [_opp("COLINA  protegida en VACAS en transición."), _opp("Oportunidad nueva")]}

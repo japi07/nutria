@@ -31,10 +31,12 @@ lanzar ningún agente. El registro del workflow da una estimación del número d
 
 ## Paso 0. Preparación (en cada fase)
 
-1. `nutria doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás.
-2. `nutria estado`. No dupliques oportunidades ya registradas: compara los títulos normalizados con los de
-   `lista_oportunidades` (el workflow no genera, comprueba ni registra de nuevo una oportunidad con el mismo título
-   normalizado, y sin el registro no continúa la fase "oportunidades").
+1. `nutria doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás (el workflow acepta
+   el estado de cada fuente como texto, "OK (200)", o como objeto, `{"estado": "ok", ...}`).
+2. `nutria estado` (en texto: una línea `O-xxxx [estado] título` por oportunidad). No dupliques oportunidades ya
+   registradas: compara los títulos normalizados con los registrados (el workflow no genera, comprueba ni registra de
+   nuevo una oportunidad con el mismo título normalizado; si la salida no cuadra con el resumen por estados, o no hay
+   registro, no continúa la fase "oportunidades").
 3. Fecha de la ejecución (`"fecha"` o la del sistema) y ficheros ya existentes en `research/revisiones`,
    `research/oportunidades`, `research/hipotesis` y `research/planes`: la fecha va en los nombres de fichero, que no
    se pisan entre ejecuciones (si un nombre ya existe, se añade `-2`, `-3`...).
@@ -115,7 +117,9 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
    (`nutria decision registrar --entidad <ID> --decision "seleccionada M1" --motivo "..." --firma-humana "<nombre>"`).
 3. Antes de cada plan, lee las compuertas efectivas y las decisiones del registro: si alguna compuerta está
    `bloqueada`, no se redacta el plan; si la selección no tiene firma humana en el registro, el plan es provisional
-   (lo comprueba el workflow con la salida de `nutria`, no lo declara el agente que redacta el plan).
+   (lo comprueba el workflow con la salida de `nutria`, no lo declara el agente que redacta el plan). Manda la última
+   decisión firmada sobre la selección: las propuestas sin firma no cuentan, y "no seleccionada", "deseleccionada" o
+   una retirada posterior la anulan.
 4. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md` (si ya existe, copia antes
    la versión anterior a `research/planes/<ID>_anterior_<fecha>.md` y la cita: no se pierde): pregunta PECO; protocolo
    de revisión sistemática (PRISMA 2020); datos a extraer; análisis estadísticos; modelos y simulaciones justificados
@@ -125,7 +129,9 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
    Directiva 2010/63/UE, in situ como in vivo, guía FEEDAP, BPL, potencia, registro previo, notificación a EFSA,
    duración de los ensayos frente a la adaptación de la microbiota); `director-cientifico` incorpora las correcciones.
 6. Con el diseño experimental ya escrito (F10), `sostenibilidad-bienestar` **vuelve a proponer la compuerta `etica`**
-   sobre ese diseño, y `verificador-citas` ejecuta `nutria verificar research/planes/<ID>.md`.
+   sobre ese diseño (el workflow informa si quedó registrada según la salida literal de `nutria puntuar compuerta`:
+   una propuesta sin firma no sustituye una ética ya firmada por una persona), y `verificador-citas` ejecuta
+   `nutria verificar research/planes/<ID>.md`.
 
 ## Entregables
 
