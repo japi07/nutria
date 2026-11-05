@@ -24,7 +24,9 @@ paquete npm `@anthropic-ai/claude-code` 2.1.42 no la incluye).
 
 Topes del workflow (cada uno falla con un mensaje claro si se supera): como máximo 8 problemas aprobados
 (`"max_problemas"`, hasta 12); `"n_oportunidades"` (12 por defecto, como máximo 24) es a la vez el objetivo y el tope
-de oportunidades que se registran; como máximo 3 oportunidades por generador y 2 rondas extra.
+de oportunidades que se registran; como máximo 3 oportunidades por generador y 2 rondas extra. Nada se descarta en
+silencio: un problema sin título o con un id repetido, o una `"fecha"` que no exista, detienen la fase antes de
+lanzar ningún agente. El registro del workflow da una estimación del número de agentes y su máximo.
 
 ## Paso 0. Preparación (en cada fase)
 
@@ -32,8 +34,9 @@ de oportunidades que se registran; como máximo 3 oportunidades por generador y 
 2. `nutria estado`. No dupliques oportunidades ya registradas: compara los títulos normalizados con los de
    `lista_oportunidades` (el workflow no genera, comprueba ni registra de nuevo una oportunidad con el mismo título
    normalizado, y sin el registro no continúa la fase "oportunidades").
-3. Fecha de la ejecución (`"fecha"` o la del sistema): va en los nombres de fichero, que no se pisan entre
-   ejecuciones.
+3. Fecha de la ejecución (`"fecha"` o la del sistema) y ficheros ya existentes en `research/revisiones`,
+   `research/oportunidades`, `research/hipotesis` y `research/planes`: la fecha va en los nombres de fichero, que no
+   se pisan entre ejecuciones (si un nombre ya existe, se añade `-2`, `-3`...).
 4. Lee `docs/PROMPT_MAESTRO_v2.md` §18 (primera misión).
 
 ## Paso 1 (M1a, fase "mapa"). Mapa de problemas
@@ -110,7 +113,8 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
 2. **Punto de control humano**: la selección la decide una persona, que la firma en su terminal
    (`nutria decision registrar --entidad <ID> --decision "seleccionada M1" --motivo "..." --firma-humana "<nombre>"`).
 3. Antes de cada plan, lee las compuertas efectivas del registro: si alguna está `bloqueada`, no se redacta el plan.
-4. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md`: pregunta PECO; protocolo
+4. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md` (si ya existe, copia antes
+   la versión anterior a `research/planes/<ID>_anterior_<fecha>.md` y la cita: no se pierde): pregunta PECO; protocolo
    de revisión sistemática (PRISMA 2020); datos a extraer; análisis estadísticos; modelos y simulaciones justificados
    por la decisión que informan; evaluación regulatoria y económica; criterios de descarte; plan de validación
    in vitro → ex vivo → in vivo (solo diseño) con la lista de validación del director; cronograma y responsables.
