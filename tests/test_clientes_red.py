@@ -1145,9 +1145,18 @@ def test_doctor_checks_the_hook_interpreter(proj, router, capsys, monkeypatch):
     (venv / "python").chmod(0o755)
     code, out, _ = run(capsys, ["doctor"])
     assert code == cli.SALIDA_RESULTADO and "sin_dependencias" in out and "intérprete del hook" in out
-    (venv / "python").write_text("#!/bin/sh\necho /ruta/nutria/__init__.py\n", "utf-8")
+    seen = proj / "argumentos.txt"
+    (venv / "python").write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{seen}"\necho /ruta/nutria/__init__.py\n', "utf-8")
     code, out, _ = run(capsys, ["--json", "doctor"])
     assert code == 0 and json.loads(out)["hook"]["estado"] == "ok"
+    # como check_research_file.py, la comprobación antepone <raíz>/src a sys.path e importa lo que usa el hook
+    args = seen.read_text("utf-8").splitlines()
+    assert args[0] == "-c" and args[-1] == str(proj / "src")
+    assert "sys.path.insert(0, sys.argv[1])" in args[1] and "nutria.reports.check" in args[1] and "jsonschema" in args[1]
+    (venv / "python").unlink()                                               # sin .venv: python3 del sistema
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    code, out, _ = run(capsys, ["--json", "doctor"])
+    assert code == cli.SALIDA_RESULTADO and json.loads(out)["hook"]["estado"] == "no_encontrado"
 
 
 def test_doctor_fails_without_project(tmp_path, router, capsys, monkeypatch):
@@ -1158,10 +1167,33 @@ def test_doctor_fails_without_project(tmp_path, router, capsys, monkeypatch):
     assert code == cli.SALIDA_RESULTADO and json.loads(out)["fallos_esenciales"] == ["nutria.toml", "base de datos"]
 
 
-def test_doctor_webfetch_domains_match_docs_fuentes():
+def test_doctor_reads_the_webfetch_domains_from_docs_fuentes(tmp_path):
+    # doctor comprueba los dominios que declara docs/FUENTES.md (no una copia que pueda desfasarse)
     text = re.sub(r"\s+", " ", (ROOT / "docs" / "FUENTES.md").read_text("utf-8"))
     listed = text[text.index("Para lectura con WebFetch:"):text.index("Comprueba con")]
-    assert set(re.findall(r"`([a-z0-9.-]+\.[a-z]{2,})`", listed)) == set(cli.WEBFETCH_DOMINIOS)
+    assert cli._webfetch_dominios(ROOT) == (re.findall(r"`([a-z0-9.-]+\.[a-z]{2,})`", listed), "docs/FUENTES.md")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "FUENTES.md").write_text(
+        "Para lectura con WebFetch: `eur-lex.europa.eu`,\n`joint-research-centre.ec.europa.eu`. Comprueba con algo.",
+        "utf-8")
+    assert cli._webfetch_dominios(tmp_path) == (["eur-lex.europa.eu", "joint-research-centre.ec.europa.eu"],
+                                                 "docs/FUENTES.md")
+    (tmp_path / "docs" / "FUENTES.md").write_text("Sin la frase esperada.", "utf-8")
+    assert cli._webfetch_dominios(tmp_path) == (list(cli.WEBFETCH_DOMINIOS), "lista interna")
+    assert cli._webfetch_dominios(tmp_path / "no_existe") == (list(cli.WEBFETCH_DOMINIOS), "lista interna")
+
+
+def test_doctor_probes_the_domains_listed_in_the_project_docs(proj, router, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
+    _doctor_ok_routes(router)
+    (proj / "docs").mkdir()
+    (proj / "docs" / "FUENTES.md").write_text("Para lectura con WebFetch: `www.boe.es`. Comprueba con doctor.", "utf-8")
+    code, out, _ = run(capsys, ["--json", "doctor"])
+    report = json.loads(out)
+    assert code == 0 and list(report["webfetch"]) == ["www.boe.es"] and report["webfetch_origen"] == "docs/FUENTES.md"
+    assert any(c["url"].startswith("https://www.boe.es/") for c in router.calls)
+    code, out, _ = run(capsys, ["--offline", "doctor"])
+    assert code == 0 and "WebFetch www.boe.es" in out and "la red NO se ha comprobado" in out
 
 
 # ============================================================================ errores, códigos y recursos (D10-8, D9-4, D9-16)
@@ -1288,6 +1320,29 @@ def test_verification_exit_codes_match_the_table(proj, capsys, monkeypatch, stat
     if status != "verificada":
         got, out, err = run(capsys, ["--json", "fuente", "agregar", "--doi", "10.1/x"])
         assert got == code and json.loads(out)["codigo"] == code
+
+
+@pytest.mark.parametrize("statuses, code", [
+    (["verificada", "verificada"], cli.SALIDA_OK),
+    (["verificada", "no_encontrada"], cli.SALIDA_RESULTADO),
+    (["no_encontrada", "error_red"], cli.SALIDA_RED),
+    (["offline", "verificada"], cli.SALIDA_RED),
+])
+def test_pending_verification_batch_never_exits_zero_on_failures(proj, capsys, monkeypatch, statuses, code):
+    # D10-8: `verificar --pendientes` salía con 0 aunque la red fallara o alguna fuente no se verificase
+    from nutria import db
+    from nutria.verify import citations
+    conn = db.connect(proj / "research" / "nutria.sqlite")
+    try:
+        for i in range(2):
+            db.upsert_source(conn, {"doi": f"10.1000/p{i}", "title": f"T{i}", "verified": False}, "prueba")
+    finally:
+        conn.close()
+    answers = dict(zip(["10.1000/p0", "10.1000/p1"], statuses))
+    monkeypatch.setattr(citations, "verify_doi",
+                        lambda client, doi, cita=None: _Verification(answers[doi], answers[doi] == "verificada", False))
+    got, out, _ = run(capsys, ["--json", "verificar", "--pendientes"])
+    assert got == code and [o["estado"] for o in json.loads(out)] == statuses
 
 
 def test_main_closes_http_sessions_and_database_connections(proj, router, capsys, monkeypatch):

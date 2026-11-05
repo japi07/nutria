@@ -150,7 +150,9 @@ FUENTES_DOCTOR = (
     ("DataCite", "https://api.datacite.org/dois?query=rumen&page%5Bsize%5D=1", False),
     ("EUR-Lex", "https://eur-lex.europa.eu/legal-content/ES/ALL/?uri=CELEX:32009R0767", False),
 )
-# Dominios de lectura con WebFetch que declara docs/FUENTES.md (los usan los agentes de Claude Code, no `nutria`).
+# Dominios de lectura con WebFetch (los usan los agentes de Claude Code, no `nutria`). `doctor` los lee de
+# docs/FUENTES.md (frase «Para lectura con WebFetch: ...»); esta lista solo se usa si el proyecto no tiene ese
+# documento o no se reconoce la frase.
 WEBFETCH_DOMINIOS = ("eur-lex.europa.eu", "efsa.onlinelibrary.wiley.com", "food.ec.europa.eu", "europepmc.org",
                      "pubmed.ncbi.nlm.nih.gov", "www.feedipedia.org", "doi.org")
 _ESTADOS_DOCTOR = {"ok": "OK", "http": "HTTP", "bloqueado": "BLOQUEADO por proxy/política de red",
@@ -184,8 +186,27 @@ def _doctor_versiones(res: dict) -> dict:
     return {}
 
 
+def _webfetch_dominios(root: Path) -> tuple[list[str], str]:
+    """Dominios de lectura con WebFetch que declara docs/FUENTES.md y de dónde salen ("docs/FUENTES.md" o, si el
+    proyecto no tiene el documento o no se reconoce la frase «Para lectura con WebFetch:», "lista interna")."""
+    import re
+    try:
+        text = re.sub(r"\s+", " ", (root / "docs" / "FUENTES.md").read_text("utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return list(WEBFETCH_DOMINIOS), "lista interna"
+    start = text.find("lectura con WebFetch:")
+    if start < 0:
+        return list(WEBFETCH_DOMINIOS), "lista interna"
+    segment = text[start:]
+    end = segment.find("Comprueba con")
+    segment = segment[:end] if end > 0 else segment[:800]
+    found = list(dict.fromkeys(re.findall(r"`([a-z0-9][a-z0-9.-]*\.[a-z]{2,})`", segment.lower())))
+    return (found, "docs/FUENTES.md") if found else (list(WEBFETCH_DOMINIOS), "lista interna")
+
+
 def _doctor_hook(root: Path) -> dict:
-    """Intérprete que usaría scripts/hooks/run_hook.sh (mismo orden de búsqueda) y si importa nutria y jsonschema."""
+    """Intérprete con el que scripts/hooks/run_hook.sh ejecutaría los hooks (mismo orden de búsqueda: .venv, python3,
+    python) y si, como check_research_file.py (que antepone <raíz>/src a sys.path), importa nutria y jsonschema."""
     import os
     import shutil
     import subprocess
@@ -206,9 +227,11 @@ def _doctor_hook(root: Path) -> dict:
     if not interpreter:
         return {"estado": "no_encontrado", "esencial": True,
                 "detalle": "run_hook.sh no encuentra Python: bloqueará las escrituras en research/ (falla cerrado)"}
+    probe = ("import sys; sys.path.insert(0, sys.argv[1]); import jsonschema, nutria, nutria.reports.check; "
+             "print(nutria.__file__)")
     try:
-        proc = subprocess.run([interpreter, "-c", "import nutria, jsonschema; print(nutria.__file__)"],
-                              capture_output=True, text=True, timeout=60)
+        proc = subprocess.run([interpreter, "-c", probe, str(root / "src")], capture_output=True, text=True,
+                              timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"estado": "error", "esencial": True, "interprete": interpreter, "detalle": str(exc)[:300]}
     if proc.returncode != 0:
@@ -249,6 +272,8 @@ def cmd_doctor(args, cfg) -> int:
               "base_datos": cfg.db_path.is_file(), "entorno": environment_snapshot(cfg.root), "offline": cfg.offline,
               "claves": {k: bool(cfg.secret(k)) for k in ("NCBI_API_KEY", "OPENALEX_API_KEY", "LENS_API_TOKEN")},
               "red": {}, "versiones": {}, "webfetch": {}}
+    dominios, origen_dominios = _webfetch_dominios(cfg.root)
+    report["webfetch_origen"] = origen_dominios
     for nombre, url, esencial in FUENTES_DOCTOR:
         url = url or f"{stringdb.api_url(cfg)}/json/version"
         params = None
@@ -278,7 +303,7 @@ def cmd_doctor(args, cfg) -> int:
             allowed = set(json.loads(settings.read_text("utf-8")).get("permissions", {}).get("allow", []))
         except (OSError, ValueError, AttributeError):
             allowed = None
-    for domain in WEBFETCH_DOMINIOS:
+    for domain in dominios:
         res = client.probe(f"https://{domain}/", headers={"Accept": "*/*"})
         res.pop("texto", None)
         res["permitido_en_settings"] = None if allowed is None else f"WebFetch(domain:{domain})" in allowed
@@ -307,13 +332,15 @@ def cmd_doctor(args, cfg) -> int:
     if cfg.offline:
         lines.append("  MODO OFFLINE: no se ha hecho ninguna petición de red. Con red se comprobaría:")
         lines += [f"    {n:<28} {r['url']}" for n, r in report["red"].items()]
-        lines += [f"    WebFetch {d:<19} https://{d}/" for d in WEBFETCH_DOMINIOS]
+        lines += [f"    WebFetch {d:<19} https://{d}/" for d in dominios]
+        lines.append(f"    (dominios de WebFetch tomados de {origen_dominios})")
     else:
         lines.append("  fuentes de nutria (esenciales marcadas con *):")
         lines += [f"  {'*' if r.get('esencial') else ' '} {n:<28} {_doctor_estado(r)}" for n, r in report["red"].items()]
         if report["versiones"]:
             lines.append("  versiones: " + " | ".join(f"{k} {v}" for k, v in report["versiones"].items()))
-        lines.append("  dominios de WebFetch (agentes de Claude Code), accesibilidad desde esta máquina:")
+        lines.append(f"  dominios de WebFetch (agentes de Claude Code; lista de {origen_dominios}), accesibilidad desde "
+                     "esta máquina:")
         for domain, res in report["webfetch"].items():
             allowed_text = {None: "sin .claude/settings.json", True: "preautorizado", False: "NO preautorizado"}[
                 res["permitido_en_settings"]]
@@ -332,7 +359,12 @@ def cmd_doctor(args, cfg) -> int:
                                if r["estado"] not in ("sin_clave", "sin_token")):
         lines.append("  Algunas fuentes no son accesibles: permite esos dominios en la red. Sin red, la verificación "
                      "de referencias queda incompleta y los sellos no son válidos.")
-    lines.append("  Resultado: " + ("OK" if not fallos else "FALLAN comprobaciones esenciales: " + ", ".join(fallos)))
+    if fallos:
+        lines.append("  Resultado: FALLAN comprobaciones esenciales: " + ", ".join(fallos))
+    elif cfg.offline:
+        lines.append("  Resultado: OK en lo comprobado; la red NO se ha comprobado (modo offline)")
+    else:
+        lines.append("  Resultado: OK")
     _emit(args, report, "\n".join(lines))
     return SALIDA_RESULTADO if fallos else SALIDA_OK
 
@@ -565,7 +597,7 @@ def cmd_verificar(args, cfg) -> int:
         conn = _conn(cfg)
         rows = registry.list_sources(conn, unverified_only=False)
         rows = [r for r in rows if not r.get("verified") or r.get("retracted") is None]
-        out = []
+        out, codes = [], []
         for r in rows:
             res = verify_doi(client, r["doi"]) if r.get("doi") else (verify_pmid(client, r["pmid"]) if r.get("pmid") else None)
             if res is None:
@@ -576,10 +608,12 @@ def cmd_verificar(args, cfg) -> int:
             log_event(cfg, "verificacion_fuente", inputs={"id": r["id"]},
                       outputs={"estado": res.status, "retractado": res.retracted}, actor=args.agente)
             out.append({"id": r["id"], "estado": res.status, "retractado": res.retracted})
+            codes.append(_salida_verificacion(res))
         _emit(args, out, "\n".join(f"{o['id']}: {o['estado']} | retractación "
                                    f"{ {True: 'SÍ', False: 'no', None: 'desconocida'}[o['retractado']] }" for o in out)
               or "No hay fuentes pendientes de verificar")
-        return 0
+        # Lote: red caída o sin red (4) antes que un resultado negativo o incompleto (1); 0 solo si todo es válido.
+        return SALIDA_RED if SALIDA_RED in codes else (SALIDA_RESULTADO if any(codes) else SALIDA_OK)
     if not targets:
         raise SystemExit("Indica --doi, --pmid, --pendientes, un fichero .md o 'manual <URL>'")
     args.sin_secciones = True  # verificar comprueba referencias; la estructura de informe la exige `informe comprobar`
@@ -1760,12 +1794,14 @@ SALIDA_INTERRUMPIDA = 130
 CODIGOS_SALIDA = {
     SALIDA_OK: ("ok", "la orden terminó y el resultado es el esperado"),
     SALIDA_RESULTADO: ("resultado", "la orden terminó, pero el resultado es negativo o incompleto: discrepancias en "
-                                    "`extraccion comparar`, sello no válido, referencia o informe que no supera la "
-                                    "verificación, búsqueda o consulta incompleta, caché con copias no válidas, "
+                                    "`extraccion comparar`, sello no válido, referencia, lote de referencias o informe "
+                                    "que no supera la verificación, búsqueda o consulta incompleta (alguna página o "
+                                    "parte falló), caché con copias no válidas o importación con entradas rechazadas, "
                                     "comprobaciones esenciales de `doctor` fallidas"),
-    SALIDA_ENTRADA: ("entrada", "entrada no válida: argumentos, fichero inexistente o inaccesible (directorio, "
-                                "permisos), JSON o CSV fuera de formato, identificador inexistente en el registro, "
-                                "configuración no válida"),
+    SALIDA_ENTRADA: ("entrada", "entrada no válida o condición previa no cumplida: argumentos, fichero inexistente o "
+                                "inaccesible (directorio, permisos), JSON o CSV fuera de formato, identificador "
+                                "inexistente en el registro, configuración no válida, proyecto sin inicializar, orden "
+                                "no permitida para el rol del agente"),
     SALIDA_REGISTRO: ("registro", "regla del registro o error de la base de datos (transición o compuerta no "
                                   "permitida, fuente sin verificar...)"),
     SALIDA_RED: ("red", "fallo de red, host bloqueado, error o respuesta no válida del servicio, credencial rechazada, "
