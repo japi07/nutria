@@ -1,37 +1,72 @@
 # ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato.
-# Sustituye cada valor por uno con fuente registrada ([PUB]/[DER]) o márcalo como [SUP] en supuestos.
+# Sustituye cada valor por uno con fuente registrada ([PUB]/[DER]) o márcalo como [SUP] en su "fuente".
+#
+# Entradas: un número, una distribución o una tabla con "fuente" (el informe la muestra; `nutria econ ganadero
+# <fichero> --exigir-fuentes` rechaza las entradas declaradas sin fuente etiquetada):
+#   precio_eur_kg = { dist = "pert", min = <...>, moda = <...>, max = <...>, fuente = "[PUB] R3" }
+#   dias = { valor = <...>, fuente = "[SUP] ..." }
 #
 # Periodos: el coste usa [coste].dias (si falta, [escenario].dias); cada [[beneficio]] por día usa su propio
 # "dias" (número o distribución; si falta, [escenario].dias). Un beneficio por ciclo (por_dia = false) no
 # lleva "dias".
+#
+# Dosis: en UNA base de [coste]: dosis_g_dia (g/animal/día), dosis_mg_kg_ms (mg/kg de MS de la ración; exige
+# [racion].ingestion_ms_kg_dia) o dosis_g_t (g/t del pienso portador; exige [racion].portador, base e ingestión).
+# Con [racion] completo el informe da la dosis en las tres bases y el coste del producto por tonelada de pienso.
+# Para convertir a mano: `nutria dosis convertir <valor> --desde <base> ...`.
 
 [escenario]
 nombre = "ILUSTRATIVO - producto X en vacas en transición"
 especie = "vacuno lechero"
 unidad = "vaca"
-dias = 42            # ILUSTRATIVO: periodo por defecto para coste y beneficios sin "dias" propio
+dias = { valor = 42, fuente = "[SUP] ILUSTRATIVO: periodo por defecto para coste y beneficios sin días propios" }
 
 [coste]
-dias = 42            # ILUSTRATIVO: días de administración del producto de transición (preparto + posparto)
-dosis_g_dia = 50
-precio_eur_kg = { dist = "pert", min = 4.0, moda = 5.0, max = 7.0 }
-otros_eur_dia = 0.0
-fijo_eur_ciclo = 0.0
+dias = { valor = 42, fuente = "[SUP] ILUSTRATIVO: días de administración del producto (preparto + posparto)" }
+dosis_g_dia = { valor = 50, fuente = "[SUP] ILUSTRATIVO" }
+precio_eur_kg = { dist = "pert", min = 4.0, moda = 5.0, max = 7.0, fuente = "[SUP] ILUSTRATIVO: precio al ganadero" }
+otros_eur_dia = { valor = 0.0, fuente = "[SUP] ILUSTRATIVO: sin otros costes" }
+fijo_eur_ciclo = { valor = 0.0, fuente = "[SUP] ILUSTRATIVO: sin costes fijos" }
+
+[racion]
+# Pienso que lleva el producto y su ingestión (el modelo no predice la ingestión: declárala con fuente o [SUP]).
+ingestion_ms_kg_dia = { dist = "pert", min = 11.0, moda = 13.0, max = 15.0, fuente = "[SUP] ILUSTRATIVO" }
+portador = "concentrado"     # "racion_completa" o "concentrado"
+base = "tal_cual"            # base del g/t: "tal_cual" o "ms"
+ingestion_pienso_kg_dia = { dist = "pert", min = 3.0, moda = 4.0, max = 5.0, fuente = "[SUP] ILUSTRATIVO" }
 
 [[beneficio]]
 nombre = "leche corregida por energía (kg/vaca/día)"
-respuesta = { dist = "pert", min = -0.5, moda = 0.5, max = 1.5 }
-valor_unitario = { dist = "pert", min = 0.35, moda = 0.42, max = 0.50 }
+respuesta = { dist = "pert", min = -0.5, moda = 0.5, max = 1.5, fuente = "[SUP] ILUSTRATIVO" }
+valor_unitario = { dist = "pert", min = 0.35, moda = 0.42, max = 0.50, fuente = "[SUP] ILUSTRATIVO: €/kg de leche" }
 por_dia = true
-dias = 21            # ILUSTRATIVO: la respuesta en leche solo se cuenta en los días posparto del periodo
+dias = { valor = 21, fuente = "[SUP] ILUSTRATIVO: la respuesta en leche solo se cuenta en los días posparto" }
 # También admite una distribución: dias = { dist = "triangular", min = <...>, moda = <...>, max = <...> }.
 # Si se espera un efecto que dure más allá de la administración, declara esos días con fuente o como [SUP].
 
 [[beneficio]]
 nombre = "casos de cetosis clínica evitados por vaca"
-respuesta = { dist = "pert", min = 0.0, moda = 0.01, max = 0.03 }
-valor_unitario = { dist = "pert", min = 150, moda = 250, max = 400 }
+respuesta = { dist = "pert", min = 0.0, moda = 0.01, max = 0.03, fuente = "[SUP] ILUSTRATIVO" }
+valor_unitario = { dist = "pert", min = 150, moda = 250, max = 400, fuente = "[SUP] ILUSTRATIVO: € por caso" }
 por_dia = false      # por ciclo: sin "dias"
+
+# Correlaciones (opcional; cópula gaussiana con la matriz comprobada como definida positiva). Nombres de entrada:
+# los de la lista "Entradas y fuentes" del informe (p. ej. coste.precio_eur_kg, beneficio[1].respuesta).
+# [[correlacion]]
+# entre = ["beneficio[1].respuesta", "beneficio[2].respuesta"]
+# rho = <...>
+# fuente = "[SUP] ..."
+
+# Alternativa (opcional): otro producto evaluado en las mismas simulaciones, o no_hacer_nada = true.
+# [alternativa]
+# nombre = "producto comercial Y"
+# fuente = "[SUP] ..."
+# [alternativa.coste]
+# dosis_g_dia = <...>
+# precio_eur_kg = <...>
+# [alternativa.respuesta]
+# "leche corregida por energía (kg/vaca/día)" = <...>
+# "casos de cetosis clínica evitados por vaca" = <...>
 
 [supuestos]
 lista = [

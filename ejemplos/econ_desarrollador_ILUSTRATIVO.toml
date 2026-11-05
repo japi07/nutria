@@ -1,36 +1,59 @@
 # ILUSTRATIVO: los números de este fichero NO son datos. Solo muestran el formato del modelo rNPV.
 # prob_exito de cada [[fase]]: probabilidad de éxito condicionada a haber llegado a esa fase (no acumulada).
-# `nutria econ desarrollador` da el rNPV (valor esperado) y la simulación de resultados (VPN realizado,
-# con el éxito o fracaso de cada fase muestreado en secuencia).
+# `nutria econ desarrollador` da el rNPV (valor esperado), la simulación de resultados (VPN realizado, con el éxito o
+# fracaso de cada fase muestreado en secuencia), P(pérdida > umbral) y la sensibilidad (tornado).
+# Cada entrada admite un número, una distribución o una tabla con "fuente" (`--exigir-fuentes` las exige).
+#
+# Ventas: construidas (censo × adopción × ciclos × días × dosis × precio × (1 − margen de la distribución)), con el
+# precio, la dosis y los días del modelo del ganadero; `nutria econ coherencia <ganadero.toml> <este fichero>`
+# comprueba que coinciden. Alternativa no recomendada: ventas_pico_eur_anio como dato (no comprobable).
 
 [proyecto]
 nombre = "ILUSTRATIVO - desarrollo de aditivo zootécnico"
-tasa_descuento = 0.10
+tasa_descuento = { valor = 0.10, fuente = "[SUP] ILUSTRATIVO: tasa de descuento de la empresa" }
+umbral_perdida_eur = 1000000   # ILUSTRATIVO: P(pérdida > 1 M€) en el informe (por defecto, 50 % del coste de desarrollo)
 
 [[fase]]
 nombre = "Fase computacional y validación in vitro"
-coste_eur = { dist = "pert", min = 80000, moda = 150000, max = 300000 }
-duracion_anios = 1.0
-prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7 }
+coste_eur = { dist = "pert", min = 80000, moda = 150000, max = 300000, fuente = "[SUP] ILUSTRATIVO" }
+duracion_anios = { valor = 1.0, fuente = "[SUP] ILUSTRATIVO" }
+prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7, fuente = "[SUP] ILUSTRATIVO" }
 
 [[fase]]
 nombre = "Ensayos in vivo de tolerancia y eficacia"
-coste_eur = { dist = "pert", min = 500000, moda = 1000000, max = 2000000 }
-duracion_anios = 2.0
-prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7 }
+coste_eur = { dist = "pert", min = 500000, moda = 1000000, max = 2000000, fuente = "[SUP] ILUSTRATIVO" }
+duracion_anios = { valor = 2.0, fuente = "[SUP] ILUSTRATIVO" }
+prob_exito = { dist = "pert", min = 0.3, moda = 0.5, max = 0.7, fuente = "[SUP] ILUSTRATIVO" }
 
 [[fase]]
 nombre = "Dossier, evaluación y autorización"
-coste_eur = { dist = "pert", min = 300000, moda = 600000, max = 1200000 }
-duracion_anios = { dist = "pert", min = 1.5, moda = 2.5, max = 4.0 }
-prob_exito = { dist = "pert", min = 0.5, moda = 0.7, max = 0.9 }
+coste_eur = { dist = "pert", min = 300000, moda = 600000, max = 1200000, fuente = "[SUP] ILUSTRATIVO" }
+duracion_anios = { dist = "pert", min = 1.5, moda = 2.5, max = 4.0, fuente = "[SUP] ILUSTRATIVO" }
+prob_exito = { dist = "pert", min = 0.5, moda = 0.7, max = 0.9, fuente = "[SUP] ILUSTRATIVO" }
 
 [mercado]
-ventas_pico_eur_anio = { dist = "pert", min = 1000000, moda = 4000000, max = 10000000 }
-anios_hasta_pico = 4
-anios_comercializacion = 10
-margen_bruto = { dist = "pert", min = 0.35, moda = 0.45, max = 0.55 }
-costes_comerciales_pct = 0.15
+especie = "vacuno lechero"
+# Ventas pico = censo × adopción × ciclos × días × dosis (g/animal/día) / 1000 × precio (€/kg) × (1 − margen distrib.)
+censo_direccionable = { dist = "pert", min = 4000000, moda = 8000000, max = 10000000, fuente = "[SUP] ILUSTRATIVO: vacas en los mercados objetivo" }
+adopcion_pico = { dist = "pert", min = 0.03, moda = 0.08, max = 0.15, fuente = "[SUP] ILUSTRATIVO" }
+ciclos_por_animal_anio = { valor = 1.0, fuente = "[SUP] ILUSTRATIVO: un periodo de transición por vaca y año" }
+dias_por_ciclo = { valor = 42, fuente = "[SUP] ILUSTRATIVO: los mismos días que el modelo del ganadero" }
+dosis_g_dia = { valor = 50, fuente = "[SUP] ILUSTRATIVO: la misma dosis que el modelo del ganadero" }
+precio_eur_kg = { dist = "pert", min = 4.0, moda = 5.0, max = 7.0, fuente = "[SUP] ILUSTRATIVO: el mismo precio que el modelo del ganadero" }
+margen_distribucion = { valor = 0.20, fuente = "[SUP] ILUSTRATIVO" }
+# Años hasta el pico y de comercialización: también admiten distribuciones.
+anios_hasta_pico = { dist = "triangular", min = 3, moda = 4, max = 6, fuente = "[SUP] ILUSTRATIVO" }
+anios_comercializacion = { dist = "triangular", min = 8, moda = 10, max = 12, fuente = "[SUP] ILUSTRATIVO" }
+margen_bruto = { dist = "pert", min = 0.35, moda = 0.45, max = 0.55, fuente = "[SUP] ILUSTRATIVO" }
+costes_comerciales_pct = { valor = 0.15, fuente = "[SUP] ILUSTRATIVO" }
+# Opcionales (por defecto 0): inversion_lanzamiento_eur, impuesto_beneficios, erosion_precio_anual,
+# coste_renovacion_eur con anio_renovacion (renovación de la autorización, años desde la llegada al mercado) y
+# multiplo_valor_terminal (valor terminal = múltiplo × beneficio del último año; sin él, no hay valor terminal).
+inversion_lanzamiento_eur = { valor = 200000, fuente = "[SUP] ILUSTRATIVO" }
+impuesto_beneficios = { valor = 0.25, fuente = "[SUP] ILUSTRATIVO" }
+erosion_precio_anual = { valor = 0.02, fuente = "[SUP] ILUSTRATIVO" }
+coste_renovacion_eur = { valor = 300000, fuente = "[SUP] ILUSTRATIVO" }
+anio_renovacion = { valor = 10, fuente = "[SUP] ILUSTRATIVO: renovación en el año 10 desde la llegada al mercado" }
 
 [supuestos]
 lista = ["ILUSTRATIVO: ningún valor de este fichero procede de una fuente."]

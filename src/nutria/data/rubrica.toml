@@ -3,14 +3,18 @@
 # [min, max] que expresa la incertidumbre del evaluador. La puntuación es orientativa:
 # no demuestra eficacia. Las compuertas bloquean con independencia de la puntuación;
 # una compuerta solo cuenta como superada con firma humana.
+# Las claves de [criterio.anclas] son los únicos valores admitidos sin justificación: un valor
+# intermedio exige "justificacion_entre_anclas" (nutria.scoring.engine.validate_anchors).
+# Las compuertas con critica = true ordenan detrás, dentro de CONDICIONAL, a las candidatas que
+# las tienen sin resolver. [[madurez]] es la escala de madurez del candidato (EMC).
 
-version = "2.1"
+version = "2.2"
 
 [[criterio]]
 id = "evidencia"
 nombre = "Solidez de la evidencia en la especie y etapa diana"
 eje = "viabilidad"
-descripcion = "Calidad, cantidad y coherencia de la evidencia publicada sobre el efecto productivo o fisiológico en la especie y etapa objetivo, ponderada por riesgo de sesgo."
+descripcion = "Calidad, cantidad y coherencia de la evidencia publicada sobre el efecto productivo o fisiológico en la especie y etapa objetivo, ponderada por riesgo de sesgo. Un ensayo con un análogo (otra forma química o sin la misma protección ruminal) solo cuenta como evidencia del candidato si comparte forma química y protección o si se ha evaluado el destino digestivo del candidato a la dosis prevista; si no, es evidencia indirecta."
 [criterio.anclas]
 "0" = "Sin estudios en la especie diana; solo razonamiento, in silico o analogía."
 "0.25" = "Solo in vitro/ex vivo o estudios en otra especie; o un único estudio in vivo con alto riesgo de sesgo."
@@ -116,11 +120,13 @@ descripcion = "Mercado direccionable, margen, coste y plazo del desarrollo y de 
 
 [[compuerta]]
 id = "seguridad"
+critica = true
 nombre = "Seguridad"
 bloquea_si = "Señal de toxicidad relevante a dosis previsibles; residuos preocupantes en alimentos; riesgo inaceptable para usuario o medio ambiente."
 
 [[compuerta]]
 id = "regulatoria"
+critica = true
 nombre = "Clasificación y vía regulatoria"
 bloquea_si = "El efecto buscado o la alegación implican medicamento veterinario; sustancia prohibida en piensos; ninguna vía legal en los mercados objetivo."
 
@@ -136,6 +142,7 @@ bloquea_si = "Patente vigente que bloquea la explotación en mercados clave sin 
 
 [[compuerta]]
 id = "destino_digestivo"
+critica = true
 nombre = "Destino digestivo"
 bloquea_si = "El activo no llega a la diana en cantidad relevante a una dosis viable (degradación o transformación ruminal, digestión o absorción), según datos publicados o el cálculo de `nutria destino ruminal`."
 
@@ -143,6 +150,38 @@ bloquea_si = "El activo no llega a la diana en cantidad relevante a una dosis vi
 id = "etica"
 nombre = "Ética y bienestar animal"
 bloquea_si = "La validación exige procedimientos no autorizables o el producto compromete el bienestar animal."
+
+# Escala de madurez del candidato (EMC). EMC-2 exige el efecto in vivo del propio candidato (misma forma química y
+# protección); el de un análogo solo cuenta si comparte forma química y protección o si se ha evaluado el destino
+# digestivo del candidato (`nutria destino ruminal` o datos publicados, compuerta destino_digestivo propuesta).
+[[madurez]]
+nivel = "EMC-0"
+significado = "Idea"
+
+[[madurez]]
+nivel = "EMC-1"
+significado = "Mecanismo plausible apoyado en literatura"
+
+[[madurez]]
+nivel = "EMC-2"
+significado = "Efecto in vivo en la especie diana en al menos un estudio del candidato (misma forma química y protección); el de un análogo solo cuenta si comparte forma química y protección o si se ha evaluado el destino digestivo del candidato a la dosis prevista"
+nota = "El efecto in vivo de un análogo con otra forma química o sin la misma protección no basta por sí solo: en rumiantes, la forma y la protección cambian la degradación ruminal y la llegada al intestino. Con solo esa evidencia y sin destino digestivo evaluado, el candidato se queda en EMC-1."
+
+[[madurez]]
+nivel = "EMC-3"
+significado = "Evidencia cuantitativa sintetizada y compuertas sin bloqueo (máximo alcanzable en la fase computacional)"
+
+[[madurez]]
+nivel = "EMC-4"
+significado = "Validación in vitro o ex vivo propia"
+
+[[madurez]]
+nivel = "EMC-5"
+significado = "Ensayos in vivo de tolerancia y eficacia"
+
+[[madurez]]
+nivel = "EMC-6"
+significado = "Dossier regulatorio"
 
 [perfiles.recomendado]
 descripcion = "Perfil v2: más peso a la vía regulatoria y a la economía; originalidad fusionada con diferenciación y PI; economía separada en ganadero y empresa."

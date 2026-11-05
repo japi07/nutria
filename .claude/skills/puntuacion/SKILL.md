@@ -25,8 +25,13 @@ esperada.
    compuertas, `nutria econ ganadero` y `nutria econ desarrollador` (los ejecuta antes `economia-mercado-pi`).
 3. Para cada uno de los 9 criterios (`evidencia`, `plausibilidad`, `mejora_productiva`, `originalidad`, `seguridad`,
    `viabilidad_tecnologica`, `viabilidad_regulatoria`, `rentabilidad_ganadero`, `atractivo_empresa`):
-   - `valor` en el ancla más cercana (0, 0.25, 0.5, 0.75 o 1);
-   - `min` y `max`: el rango en el que crees que está el valor real (amplio si la evidencia es escasa);
+   - `valor` en el ancla más cercana (0, 0.25, 0.5, 0.75 o 1). La rúbrica está anclada también en los datos: un
+     valor intermedio (p. ej. 0.6) solo se admite con `justificacion_entre_anclas` (texto concreto de al menos 10
+     caracteres que explique por qué ninguna ancla describe el caso); sin ella, `nutria puntuar registrar` rechaza el
+     fichero entero y no registra nada. Con ella, avisa, añade la justificación a la del criterio y el ranking señala
+     el valor como "entre anclas". La incertidumbre no se expresa con valores intermedios, sino con `min` y `max`;
+   - `min` y `max`: el rango en el que crees que está el valor real (amplio si la evidencia es escasa; pueden tomar
+     cualquier valor entre 0 y 1);
    - `justificacion` concreta (no genérica) y `evidencia` con IDs de fuentes, afirmaciones o ficheros.
    `rentabilidad_ganadero` se ancla en el beneficio neto P10/P50/P90 y la respuesta umbral; `atractivo_empresa`, en
    el rNPV. ROI = beneficio/coste: "ROI > 1" equivale a beneficio neto positivo.
@@ -42,3 +47,11 @@ esperada.
 superadas y firmadas por una persona), CONDICIONAL (alguna compuerta sin resolver o sin firmar; se ordena después de
 las APTA), BLOQUEADA, INCOMPLETA (criterios sin puntuar) e INSUFICIENTE (menos de 3 evaluadores distintos por
 criterio). La puntuación es orientativa: las compuertas bloquean con independencia de ella.
+
+Dentro de CONDICIONAL hay tres subgrupos que se ordenan siempre así, sea cual sea la puntuación: solo pendientes de
+firma humana (todas las compuertas propuestas como `superada`), con alguna compuerta sin resolver y con alguna
+compuerta **crítica** (`seguridad`, `regulatoria`, `destino_digestivo`) sin resolver. El bloque "AVISOS" de la salida
+(en `--json`, por la salida de error y en las `flags` de cada fila) señala si el top-k para planes incluye compuertas
+críticas sin resolver y si el orden o el conjunto del top-k cambian entre perfiles de pesos: transcríbelos en la
+propuesta; un orden que cambia con los pesos no es robusto. Cada ranking queda en la procedencia con la semilla, las
+simulaciones, el alfa, el perfil, las huellas de la rúbrica y de las puntuaciones y el orden resultante.

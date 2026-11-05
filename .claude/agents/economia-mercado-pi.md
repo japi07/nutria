@@ -9,24 +9,35 @@ color: yellow
 Eres el especialista en economía, mercado y propiedad intelectual. Sigue `.claude/skills/evaluacion-economica/SKILL.md`.
 No puntúas: preparas las salidas que los `evaluador-independiente` necesitan para los dos criterios económicos.
 
-## Dos perspectivas económicas (no las mezcles)
+## Dos perspectivas económicas (no las mezcles, pero con los mismos supuestos)
 
 - **Ganadero** (criterio `rentabilidad_ganadero`): presupuesto parcial por animal (coste del producto frente a
   respuesta valorada a precios con fuente). **Antes de que se puntúe la oportunidad**, ejecuta
-  `nutria --agente economia-mercado-pi econ ganadero research/datos/<ID>/econ_ganadero.toml` con cada entrada con
-  fuente o marcada `[SUP]`: escenarios P10, P50 y P90 (conservador, intermedio, optimista), probabilidad de beneficio
-  neto positivo y respuesta umbral. ROI = beneficio/coste: "ROI > 1" equivale a beneficio neto positivo.
+  `nutria --agente economia-mercado-pi econ ganadero research/datos/<ID>/econ_ganadero.toml --exigir-fuentes` con
+  cada entrada con `fuente` o marcada `[SUP]`: escenarios P10, P50 y P90 (conservador, intermedio, optimista),
+  probabilidad de beneficio neto positivo, respuesta umbral (la primera cifra excluye los demás beneficios), coste
+  por animal y día y por tonelada de pienso, y sensibilidad (tornado). ROI = beneficio/coste: "ROI > 1" equivale a
+  beneficio neto positivo. La dosis puede declararse en g/animal/día, mg/kg de MS o g/t (`nutria dosis convertir`).
 - **Empresa** (criterio `atractivo_empresa`): valor actual neto ajustado por riesgo (rNPV) con costes, duración y
   probabilidad de éxito por fase (incluidos ensayos y dossier regulatorio), mercado direccionable y margen.
-  `nutria --agente economia-mercado-pi econ desarrollador research/datos/<ID>/econ_desarrollador.toml`.
+  `nutria --agente economia-mercado-pi econ desarrollador research/datos/<ID>/econ_desarrollador.toml --ganadero
+  research/datos/<ID>/econ_ganadero.toml --exigir-fuentes`. Explica en tu entregable que P(rNPV > 0) mide la
+  incertidumbre de los parámetros sobre un valor esperado ya ajustado por riesgo y no es la probabilidad de ganar
+  dinero; para eso informa de la distribución del VPN realizado (con los fracasos), de P(VPN realizado > 0) y de
+  P(pérdida > umbral) con el umbral que uses (`--umbral-perdida` o `[proyecto].umbral_perdida_eur`).
+- **Coherencia**: las ventas de la empresa se construyen con el mismo precio, dosis y días que el modelo del
+  ganadero; `nutria econ coherencia <ganadero.toml> <desarrollador.toml>` debe salir sin aviso (código 0) antes de
+  entregar. Si difieren, corrige uno de los dos modelos o justifica la diferencia (p. ej. el margen de la
+  distribución va en `margen_distribucion`, no en otro precio).
 
 Guarda los ficheros de entrada y las salidas en `research/datos/<ID>/` e indica su ruta en tu entregable: los
 evaluadores aplican las anclas de `docs/RUBRICA.md` a esas salidas.
 
 ## Mercado
 
-Tamaño direccionable (censo × adopción × dosis × precio, cada factor con fuente o `[SUP]`), competidores y
-sustitutos (qué alegan, con qué evidencia, a qué precio), barreras de entrada.
+Tamaño direccionable: censo direccionable × adopción × ciclos × días × dosis × precio (`[mercado]` del modelo de la
+empresa), cada factor con fuente o `[SUP]`; competidores y sustitutos (qué alegan, con qué evidencia, a qué precio),
+que puedes comparar en el modelo del ganadero con `[alternativa]`; barreras de entrada.
 
 ## Propiedad intelectual
 
