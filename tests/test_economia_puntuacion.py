@@ -1195,3 +1195,26 @@ def test_rubrica_propia_no_puede_quitar_compuertas_ni_usar_pesos_negativos(tmp_p
     negative = text.replace("pesos = { evidencia = 20,", "pesos = { evidencia = -20,", 1)
     with pytest.raises(ValueError, match="números finitos >= 0"):
         load_rubric(_write(tmp_path, "negativo.toml", negative)).weights("recomendado")
+
+
+# ============================================================================ D8-13: [PUB] con el registro real
+def test_exigir_fuentes_resuelve_la_fuente_por_doi_o_pmid(tmp_path, project, capsys):
+    """Fuente registrada primero por su PMID (id pmid:...) y verificada; después se le añade el DOI. Citarla por el
+    DOI en el modelo económico vale; una fuente retractada o sin verificar, no (registro real, sin simular)."""
+    conn = db.connect(load_config().db_path)
+    base = {"title": "Ensayo de prueba", "year": 2020, "verified": True, "retracted": False,
+            "verified_via": "prueba"}
+    sid = db.upsert_source(conn, {**base, "pmid": "12345"})
+    assert sid == "pmid:12345"
+    assert db.upsert_source(conn, {**base, "pmid": "12345", "doi": "10.1000/Alias"}) == "pmid:12345"
+    db.upsert_source(conn, {**base, "doi": "10.1000/retirada", "retracted": True})
+    db.upsert_source(conn, {"title": "Sin verificar", "doi": "10.1000/sin-verificar"})
+    for source, code, message in (("[PUB] doi:10.1000/alias (tabla 2)", 0, None),
+                                  ("[PUB] pmid:12345", 0, None),
+                                  ("[PUB] doi:10.1000/retirada", 2, "RETRACTADA"),
+                                  ("[PUB] doi:10.1000/sin-verificar", 2, "no está verificada"),
+                                  ("[PUB] doi:10.1000/otra", 2, "no está registrada")):
+        path = _farm_with_sources(tmp_path, source)
+        assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == code, source
+        err = capsys.readouterr().err
+        assert message is None or message in err, (source, err)

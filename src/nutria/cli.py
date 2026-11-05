@@ -907,6 +907,14 @@ def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
         return problems + ["hay fuentes [PUB] y no existe el registro del proyecto para comprobarlas (`nutria init`)"]
     conn = registry.connect(cfg.db_path)
     claims = {c["id"]: c for c in registry.list_claims(conn)}
+    # Una fuente registrada por su PMID puede citarse por su DOI (y al revés): se resuelve por cualquiera de los dos.
+    aliases: dict[str, str] = {}
+    if any(not sid.startswith("A-") for _where, ids in pub for sid in ids):
+        for src in registry.list_sources(conn):
+            for column, prefix, norm in (("doi", "doi:", str.lower), ("pmid", "pmid:", str),
+                                         ("openalex_id", "openalex:", str.upper)):
+                if src.get(column):
+                    aliases.setdefault(prefix + norm(str(src[column])), src["id"])
     for where, ids in pub:
         for sid in ids:
             try:
@@ -919,7 +927,7 @@ def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
                     for src in claim.get("source_ids") or []:
                         registry._require_usable_source(conn, src, f"respaldar {where}")
                 else:
-                    registry._require_usable_source(conn, sid, f"respaldar {where}")
+                    registry._require_usable_source(conn, aliases.get(sid, sid), f"respaldar {where}")
             except registry.RegistryError as exc:
                 problems.append(f"{where}: {exc}")
     return problems
