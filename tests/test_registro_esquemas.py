@@ -631,7 +631,8 @@ def test_comparar_sin_registrar_no_muestra_discrepancias(project, capsys, monkey
     assert sorted(p.name for p in fuera.iterdir()) == ["a.json", "b.json"]     # ni research/ ni procedencia
     # y con --registrar, fuera de un proyecto no hay registro: tampoco se ven las discrepancias
     capsys.readouterr()
-    assert _code(["extraccion", "comparar", copia_a, copia_b, "--registrar"]) not in (0, 1)
+    with pytest.raises(SystemExit, match="No existe la base de datos"):
+        main(["extraccion", "comparar", copia_a, copia_b, "--registrar"])
     assert "39.9" not in "".join(capsys.readouterr())
     assert sorted(p.name for p in fuera.iterdir()) == ["a.json", "b.json"]
 
