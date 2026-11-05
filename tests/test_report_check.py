@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ CLAIM = "La respuesta fue de 1,2 kg/d en vacas lecheras [PUB] [R1]."
 ANEXO_OK = ("| Ref | Afirmación | Respaldo | Motivo |\n|---|---|---|---|\n"
             "| R1 | La respuesta fue de 1,2 kg/d en vacas lecheras | respalda | Tabla 2 |\n")
 BIB = "[R1] Autor. 2020. Título. DOI: 10.1234/x\n"
+EXAMPLES = Path(__file__).resolve().parents[1] / "ejemplos"
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +29,8 @@ def stamp_key(tmp_path, monkeypatch):
 
 
 def make(body: str, bib: str, estado: str = "borrador", humano: str = "null", anexo: str = "") -> str:
-    return (f"---\nestado: {estado}\nespecie: vacuno lechero\nrevisado_por_humano: {humano}\n---\n# Informe\n"
+    return (f"---\noportunidad: O-0001\nestado: {estado}\nespecie: vacuno lechero\nrevisado_por_humano: {humano}\n"
+            "---\n# Informe\n"
             f"{SECTIONS}\n{body}\n## 20. Bibliografía científica verificable\n{bib}\n## Anexo A. Tabla\n{anexo}\n")
 
 
@@ -65,6 +68,8 @@ def test_strict_mode_requires_support_and_human_review(tmp_path):
     assert any("revisión humana" in e for e in errors)
     conn = db.connect(tmp_path / "registro.sqlite")
     db.upsert_source(conn, {"doi": "10.1234/x", "title": "t", "verified": True, "retracted": False})
+    opportunity = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
+    assert db.add_opportunity(conn, opportunity) == "O-0001"       # sus compuertas, sin evaluar: no_resuelta
     ok = make(CLAIM, BIB, estado="final", humano="Ana Pérez", anexo=ANEXO_OK)
     assert any("no corresponde a ninguna revisión registrada" in e for e in _errors(ok, conn=conn))
     db.add_report_review(conn, "inf.md", review_digest(ok), "Ana Pérez", "final")

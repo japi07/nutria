@@ -58,6 +58,7 @@ import sqlite3
 import tomllib
 import unicodedata
 from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 from .. import __version__
@@ -513,11 +514,26 @@ def _path_variants(path: Path) -> list[Path]:
     return out
 
 
+def _root_of(variant: Path) -> Path | None:
+    for candidate in variant.parents:
+        if (candidate / "nutria.toml").is_file():
+            return candidate
+    return None
+
+
 def is_report_path(path: Path | str) -> bool:
-    """Un informe es cualquier documento bajo una carpeta `informes` (research/informes y sus subcarpetas). Se
-    comprueba con la ruta absoluta y con la resuelta, así que no depende de cómo se escriba la ruta."""
+    """Un informe es un documento bajo research/informes del proyecto, también en subcarpetas. Dentro de un proyecto
+    (carpeta con nutria.toml) se mira la ruta relativa a su raíz, así que una carpeta `informes` por encima del
+    proyecto no convierte los planes en informes; fuera de un proyecto cuenta cualquier carpeta `informes` de la ruta
+    (falla en cerrado). Se prueba con la ruta absoluta y con la resuelta (enlaces simbólicos), sin distinguir
+    mayúsculas: no depende de cómo se escriba la ruta."""
     for variant in _path_variants(Path(path)):
-        if any(part.lower() == "informes" for part in variant.parts[:-1]):
+        root = _root_of(variant)
+        if root is not None:
+            parts = [p.lower() for p in variant.relative_to(root).parts[:-1]]
+            if parts[:2] == ["research", "informes"]:
+                return True
+        elif any(part.lower() == "informes" for part in variant.parts[:-1]):
             return True
     return False
 
@@ -525,10 +541,22 @@ def is_report_path(path: Path | str) -> bool:
 def project_root(path: Path | str) -> Path | None:
     """Carpeta del proyecto (la que contiene nutria.toml) que contiene `path`, sin mirar NUTRIA_HOME."""
     for variant in _path_variants(Path(path)):
-        for candidate in variant.parents:
-            if (candidate / "nutria.toml").is_file():
-                return candidate
+        root = _root_of(variant)
+        if root is not None:
+            return root
     return None
+
+
+def gate_ids_for(path: Path | str | None) -> list[str]:
+    """Compuertas de la rúbrica del proyecto del documento (config/rubrica.toml o la rúbrica del paquete), las mismas
+    que usa la CLI; si no se puede leer, las seis compuertas por defecto (falla en cerrado)."""
+    try:
+        from ..scoring.engine import load_rubric
+        root = project_root(path) if path is not None else None
+        ids = [g.id for g in load_rubric(root / "config" / "rubrica.toml" if root else None).gates]
+    except Exception:  # noqa: BLE001 - rúbrica ilegible: se exigen todas las compuertas por defecto
+        return list(DEFAULT_GATES)
+    return ids or list(DEFAULT_GATES)
 
 
 def registry_path_for(path: Path | str) -> Path | None:
@@ -770,23 +798,39 @@ def _support_value(raw: str) -> str:
     return re.sub(r"[\s\-]+", "_", value)
 
 
-def _annex_ranges(doc: _Doc, pattern: str) -> list[tuple[int, int]]:
-    return [(i, doc.section_end(i, lvl)) for i, lvl, title in doc.headings if re.match(pattern, _plain(title))]
+def _annex_ranges(doc: _Doc, pattern: str, after: int | None = None) -> list[tuple[int, int]]:
+    """Secciones de anexo: encabezados de nivel 2 cuyo título empieza por el patrón (después de la línea `after`, si
+    se indica). Un «#### Anexo A...» o un «### Anexo C» en mitad del informe no es un anexo."""
+    return [(i, doc.section_end(i, 2)) for i, lvl, title in doc.headings
+            if lvl == 2 and re.match(pattern, _plain(title)) and (after is None or i > after)]
 
 
-def _support_rows(doc: _Doc) -> tuple[list[SupportRow], list[Issue], bool, bool]:
-    """(filas, incidencias, hay cabecera con Respaldo, hay columna Afirmación)."""
+@dataclass
+class _Support:
+    rows: list[SupportRow]
+    issues: list[Issue]
+    header: bool              # hay alguna cabecera con la columna Respaldo
+    claim_col: bool           # ... y con la columna Afirmación
+    lines: set[int]           # índices de las líneas de las tablas de respaldo (cabecera, separador y filas)
+
+
+def _support_rows(doc: _Doc) -> _Support:
+    """Filas de las tablas de respaldo del Anexo A (las que siguen a una cabecera con la columna Respaldo)."""
     rows: list[SupportRow] = []
     issues: list[Issue] = []
+    lines: set[int] = set()
     header = claim_col = False
     for start, end in _annex_ranges(doc, r"anexo\s+a\b"):
         cols = None
         for i in range(start + 1, end):
             stripped = doc.lines[i].strip()
             if doc.fence[i] or not stripped.startswith("|"):
+                cols = None          # una línea en blanco, texto o código cierra la tabla (como al renderizar)
                 continue
             cells = _cells(stripped)
             if all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
+                if cols is not None:
+                    lines.add(i)
                 continue
             low = [_plain(c) for c in cells]
             if "respaldo" in low:
@@ -797,11 +841,14 @@ def _support_rows(doc: _Doc) -> tuple[list[SupportRow], list[Issue], bool, bool]
                         "reason": next((k for k, c in enumerate(low) if c.startswith("motivo")), None)}
                 header = True
                 claim_col = claim_col or cols["claim"] is not None
+                lines.add(i)
                 continue
             if cols is None:
-                issues.append(Issue("aviso", "Fila del Anexo A antes de la cabecera | Ref | Afirmación | Respaldo | "
-                                             "Motivo |: no se tiene en cuenta", i + 1))
+                issues.append(Issue("aviso", "Fila del Anexo A fuera de una tabla con la cabecera | Ref | Afirmación | "
+                                             "Respaldo | Motivo |: no cuenta como respaldo y se comprueba como texto",
+                                    i + 1))
                 continue
+            lines.add(i)
 
             def cell(key: str) -> str:
                 k = cols.get(key)
@@ -812,7 +859,7 @@ def _support_rows(doc: _Doc) -> tuple[list[SupportRow], list[Issue], bool, bool]
                 continue
             rows.append(SupportRow(i + 1, refs, cell("claim"), _support_value(cell("value")), cell("value"),
                                    cell("reason")))
-    return rows, issues, header, claim_col
+    return _Support(rows, issues, header, claim_col, lines)
 
 
 def _fragments(claim: str) -> list[list[str]] | None:
@@ -842,13 +889,28 @@ class _Claim:
         n = len(self.span)
         return min(n, max(MIN_ROW_WORDS, math.ceil(MIN_ROW_COVERAGE * n)))
 
+    @property
+    def key(self) -> tuple[str, ...]:
+        """Texto normalizado de la afirmación (dos afirmaciones con el mismo texto son la misma)."""
+        return tuple(self.words[k] for k in sorted(self.span))
+
+    @property
+    def excerpt(self) -> str:
+        text = " ".join(self.key)
+        return text if len(text) <= 90 else text[:87] + "..."
+
+
+# Conectores que abren el tramo de la segunda afirmación de una frase («... [PUB] [R1] y redujo la cetosis [PUB]»):
+# no forman parte de lo que la fila debe reproducir.
+_LEADING_CONNECTORS = {"y", "e", "o", "u", "ni", "pero", "and", "or", "but"}
+
 
 def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, list[list[str] | None]]
             ) -> list[_Claim]:
     """Afirmaciones [PUB] de un párrafo. La afirmación de una [PUB] son las palabras de su frase que van antes de la
-    etiqueta, desde el inicio de la frase o desde la etiqueta o [Rn] anterior; si son menos de MIN_ROW_WORDS se
-    añaden las que siguen hasta el final de la frase (o hasta su [Rn]); si la etiqueta abre la frase, son las que
-    siguen. Sin palabras, la frase entera y, si tampoco las hay, el párrafo."""
+    etiqueta, desde el inicio de la frase o desde la etiqueta o [Rn] anterior (sin un conector inicial como «y»); si
+    son menos de MIN_ROW_WORDS se añaden las que siguen hasta el final de la frase (o hasta su [Rn]); si la etiqueta
+    abre la frase, son las que siguen. Sin palabras, la frase entera y, si tampoco las hay, el párrafo."""
     words: list[str] = []
     events: list[tuple[str, str, int, int]] = []        # (tipo, valor, línea, posición en `words` o índice)
     for j in paragraph:
@@ -884,6 +946,8 @@ def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, l
             while b >= 0 and sent[b][0] == "word":
                 back.append(sent[b][3])
                 b -= 1
+            while len(back) > 1 and words[back[-1]] in _LEADING_CONNECTORS:
+                back.pop()
             f = k + 1
             while f < len(sent) and sent[f][0] in ("label", "ref"):
                 f += 1
@@ -936,27 +1000,51 @@ def _lookup_source(conn, kind: str, value: str):
 
 
 def _registry_issues(conn, ref: str, entries: list[BibEntry], line: int, strict: bool) -> list[Issue]:
+    """La fuente de una referencia [PUB] (por su DOI o su PMID; basta uno si el registro no guarda el otro) debe estar
+    registrada, verificada y con la retractación comprobada; los identificadores de la entrada no pueden apuntar a
+    fuentes distintas del registro ni contradecir los que este guarda."""
     out = []
     sev = "error" if strict else "aviso"
     for entry in entries:
         ids = extract_identifiers(entry.text)
-        for kind, values in (("doi", ids["doi"]), ("pmid", ids["pmid"])):
-            for value in values:
-                row = _lookup_source(conn, kind, value)
-                label = f"{ref}: {kind.upper()} {value}"
-                if row == "error":
-                    out.append(Issue(sev, f"{label}: no se pudo consultar el registro de fuentes", line))
-                elif row is None:
-                    out.append(Issue(sev, f"{label} se usa en una afirmación [PUB] pero no está registrado como fuente "
-                                          f"verificada (`nutria fuente agregar --{kind} {value}`)", line))
-                elif row["retracted"] == 1:
-                    out.append(Issue("error", f"{label} está RETRACTADO según el registro de fuentes", line))
-                elif not row["verified"]:
-                    out.append(Issue(sev, f"{label} está registrado pero sin verificar (`nutria verificar --pendientes`)",
-                                     line))
-                elif row["retracted"] is None:
-                    out.append(Issue(sev, f"{label}: el registro no tiene comprobada la retractación "
-                                          "(`nutria verificar --pendientes`)", line))
+        idents = [("doi", d.lower()) for d in ids["doi"]] + [("pmid", str(p)) for p in ids["pmid"]]
+        if not idents:
+            continue                     # referencia de solo URL: la cubre la verificación manual firmada
+        label = f"{ref} ({', '.join(f'{k.upper()} {v}' for k, v in idents)})"
+        found: dict[str, sqlite3.Row] = {}
+        failed = False
+        for kind, value in idents:
+            row = _lookup_source(conn, kind, value)
+            if isinstance(row, str):
+                failed = True
+            elif row is not None:
+                found[row["id"]] = row
+        if failed:
+            out.append(Issue(sev, f"{label}: no se pudo consultar el registro de fuentes", line))
+            continue
+        if not found:
+            kind, value = idents[0]
+            out.append(Issue(sev, f"{label} se usa en una afirmación [PUB] pero no está registrada como fuente "
+                                  f"verificada (`nutria fuente agregar --{kind} {value}`)", line))
+            continue
+        if len(found) > 1:
+            out.append(Issue(sev, f"{label}: sus identificadores corresponden a fuentes distintas del registro "
+                                  f"({', '.join(sorted(found))}): corrige la entrada", line))
+        for row in found.values():
+            for kind in ("doi", "pmid"):
+                cited = {v for k, v in idents if k == kind}
+                stored = str(row[kind]).lower() if row[kind] else None
+                if cited and stored and stored not in cited:
+                    out.append(Issue(sev, f"{label}: el registro guarda {kind.upper()} {row[kind]} para esa fuente "
+                                          f"({row['id']}), no {', '.join(sorted(cited))}: corrige la entrada", line))
+            if row["retracted"] == 1:
+                out.append(Issue("error", f"{label} está RETRACTADA según el registro de fuentes ({row['id']})", line))
+            elif not row["verified"]:
+                out.append(Issue(sev, f"{label} está registrada ({row['id']}) pero sin verificar "
+                                      "(`nutria verificar --pendientes`)", line))
+            elif row["retracted"] is None:
+                out.append(Issue(sev, f"{label}: el registro no tiene comprobada la retractación de {row['id']} "
+                                      "(`nutria verificar --pendientes`)", line))
     return out
 
 
@@ -1045,7 +1133,9 @@ def _gate_registry_issues(conn, doc: _Doc, lines: list[tuple[int, str]], gate_id
     fields, _ = _fm_fields(doc)
     opp_id = next((v for _, v, p in fields.get("oportunidad", []) if v and not p), None)
     if not opp_id:
-        return []
+        return [Issue(sev, "El front matter no declara la oportunidad del informe (oportunidad: O-xxxx): no se puede "
+                           "contrastar el estado de las compuertas de la sección 14 con el registro",
+                      (doc.fm_start + 1) if doc.fm_start is not None else None)]
     from .. import db
     try:
         if db.get_opportunity(conn, opp_id) is None:
@@ -1113,7 +1203,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     if strict is None:
         strict = st.strict or (is_report and st.value is None)
     sev_strict = "error" if strict else "aviso"
-    gate_ids = list(gate_ids) if gate_ids else list(DEFAULT_GATES)
+    gate_ids = list(gate_ids) if gate_ids else gate_ids_for(path)
 
     # ---- secciones numeradas
     numbered = _numbered_sections(doc)
@@ -1132,11 +1222,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         issues.append(Issue("error", "No hay sección de bibliografía (sección 20, o «## Bibliografía» o "
                                      "«## Referencias»)"))
     entries = bib.entries if bib else []
-    annex_a = _annex_ranges(doc, r"anexo\s+a\b")
-    records = _annex_ranges(doc, r"anexo\s+[bc]\b")
-    # Fuera del cuerpo solo quedan el front matter, las entradas de la bibliografía y las filas de la tabla del
+    support = _support_rows(doc)
+    # Anexos de registro (B: decisiones; C: procedencia y versiones), que se generan a partir del registro: solo los
+    # encabezados de nivel 2 después de la bibliografía. Sus cifras y referencias no necesitan etiqueta.
+    records = _annex_ranges(doc, r"anexo\s+[bc]\b", after=bib.start if bib else len(doc.lines))
+    # Fuera del cuerpo solo quedan el front matter, las entradas de la bibliografía y las tablas de respaldo del
     # Anexo A: cualquier otro texto de esas secciones se comprueba como el resto del informe.
-    excluded: set[int] = set()
+    excluded: set[int] = {i for i, _end in _annex_ranges(doc, r"anexo\s+a\b")} | support.lines
     if doc.fm_start is not None:
         fm_range = range(doc.fm_start, (doc.fm_end if doc.fm_end is not None else doc.fm_start) + 1)
         excluded |= set(fm_range)
@@ -1151,15 +1243,17 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 issues.append(Issue("error", f"Etiqueta de evidencia dentro de la entrada {entry.ref} de la bibliografía: "
                                              "las afirmaciones van en el cuerpo, separadas de las referencias",
                                     entry.line))
-    for start, end in annex_a:
-        excluded |= {start} | {j for j in range(start + 1, end)
-                               if not doc.fence[j] and doc.lines[j].strip().startswith("|")}
     body = {i for i in range(len(doc.lines)) if i not in excluded}
-    no_numbers = {i for i, lvl, _ in doc.headings if lvl == 1}
+    record_lines: set[int] = set()
     for start, end in records:
-        no_numbers |= set(range(start, end))
+        record_lines |= set(range(start, end))
+    no_numbers = {i for i, lvl, _ in doc.headings if lvl == 1} | record_lines
+    # En la sección 1 solo queda exenta de la comprobación de cifras la línea que repite el título del informe.
+    titles = {tuple(_norm_words(title)) for _i, lvl, title in doc.headings if lvl == 1}
     for i in numbered.get(1, [])[:1]:
-        no_numbers |= set(range(i, doc.section_end(i, 2)))
+        for j in range(i + 1, doc.section_end(i, 2)):
+            if doc.lines[j].strip() and tuple(_norm_words(doc.lines[j])) in titles:
+                no_numbers.add(j)
 
     # ---- cuerpo: etiquetas, referencias, cifras
     used: dict[str, int] = {}
@@ -1167,6 +1261,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     pub_refs_by_label: dict[int, list[list[str] | None]] = {}   # línea -> refs de cada etiqueta (None si no es PUB)
     scans: dict[int, _Line] = {}
     unlabeled: list[int] = []
+    unlabeled_refs: list[int] = []
     for i in sorted(body):
         line = doc.lines[i]
         if not line.strip():
@@ -1215,11 +1310,21 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         if m and ID_HINT_RE.search(m.group(2)):
             issues.append(Issue(sev_strict, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no se "
                                             "verifica; muévela a la sección 20", i + 1))
+        elif scan.refs and not scan.labels and i not in record_lines:
+            unlabeled_refs.append(i + 1)
     for n, line_no in enumerate(unlabeled):
         if n < 10:
             issues.append(Issue(sev_strict, "Cifra con unidades sin etiqueta de evidencia ni referencia", line_no))
     if len(unlabeled) > 10:
         issues.append(Issue(sev_strict, f"{len(unlabeled)} cifras con unidades sin etiqueta en total"))
+    # Una afirmación atribuida a una fuente sin etiqueta eludiría el Anexo A y el registro de fuentes: si es un
+    # resultado publicado, va con [PUB] (y su fila de respaldo); si no, con su etiqueta ([DER], [HIP], [SUP]...).
+    for n, line_no in enumerate(unlabeled_refs):
+        if n < 10:
+            issues.append(Issue(sev_strict, "Referencia [Rn] sin etiqueta de evidencia: marca la afirmación con [PUB] "
+                                            "(y su fila del Anexo A) o con la etiqueta que le corresponda", line_no))
+    if len(unlabeled_refs) > 10:
+        issues.append(Issue(sev_strict, f"{len(unlabeled_refs)} líneas con referencias sin etiqueta en total"))
 
     # ---- bibliografía: referencias, duplicados, identificadores
     by_ref: dict[str, list[BibEntry]] = {}
@@ -1253,12 +1358,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                             line_no))
 
     # ---- Anexo A: respaldo por afirmación
-    rows, row_issues, header, claim_col = _support_rows(doc)
-    issues += row_issues
-    if rows and not header:
-        issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la cabecera | Ref | Afirmación | Respaldo | "
-                                        "Motivo |"))
-    if header and not claim_col:
+    rows = support.rows
+    issues += support.issues
+    if support.header and not support.claim_col:
         issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la columna Afirmación: el respaldo se "
                                         "comprueba por afirmación, no por referencia"))
     for row in rows:
@@ -1268,44 +1370,80 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     frags_of = {r.line: _fragments(r.claim) for r in rows}
     for r in rows:
         if r.value in SUPPORT_VALUES and frags_of[r.line] is None:
-            issues.append(Issue("aviso", f"Fila del Anexo A ({', '.join(r.refs)}): la columna Afirmación está vacía o "
-                                         f"tiene fragmentos de menos de {MIN_FRAGMENT_WORDS} palabras entre «...»: no "
-                                         "reproduce ninguna afirmación", r.line))
-    used_rows: set[int] = set()
+            issues.append(Issue(sev_strict, f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}): la columna Afirmación "
+                                            f"está vacía o tiene fragmentos de menos de {MIN_FRAGMENT_WORDS} palabras "
+                                            "entre «...»: no reproduce ninguna afirmación", r.line))
+    claims: list[_Claim] = []
     for para in _paragraphs(doc, body):
-        if not any(pub_refs_by_label.get(j) for j in para):
-            continue
-        for claim in _claims(para, scans, pub_refs_by_label):
-            i = claim.line
-            for ref in claim.refs:
-                matching = [r for r in rows if ref in r.refs and frags_of[r.line]
-                            and _row_coverage(frags_of[r.line], claim) >= max(1, claim.needed)]
-                for r in matching:
-                    used_rows.add(r.line)
-                values = {r.value for r in matching if r.value in SUPPORT_VALUES}
-                where = ", ".join(str(r.line) for r in matching)
-                if "no_respalda" in values:
-                    issues.append(Issue("error", f"{ref} NO respalda la afirmación de la línea {i + 1} (Anexo A, fila "
-                                                 f"{where})", i + 1))
-                elif len(values) > 1:
-                    issues.append(Issue("error", f"Filas contradictorias del Anexo A ({where}) para {ref} y la "
-                                                 f"afirmación de la línea {i + 1}: {', '.join(sorted(values))}", i + 1))
-                elif values == {"no_verificable"}:
-                    issues.append(Issue(sev_strict, f"Respaldo de {ref} no verificable: no puede sostener la "
-                                                    f"afirmación [PUB] de la línea {i + 1}", i + 1))
-                elif not values:
-                    issues.append(Issue(sev_strict, f"Sin comprobación de respaldo de {ref} para la afirmación de la "
-                                                    f"línea {i + 1}: el Anexo A necesita una fila de {ref} cuya columna "
-                                                    "Afirmación reproduzca esa afirmación (al menos "
-                                                    f"{max(1, claim.needed)} de sus {len(claim.span)} palabras, en "
-                                                    "orden)", i + 1))
+        if any(pub_refs_by_label.get(j) for j in para):
+            claims += _claims(para, scans, pub_refs_by_label)
+    # Cada fila cuenta para la afirmación de su referencia que mejor reproduce (mayor fracción de sus palabras). Una
+    # fila respalda o parcial que reproduce por igual afirmaciones distintas no cuenta para ninguna (una fila por
+    # afirmación); una fila no_respalda o no_verificable cuenta para todas las que reproduce (nada se enmascara).
+    assigned: dict[tuple[int, str], list[SupportRow]] = {}
+    ambiguous: dict[tuple[int, str], list[int]] = {}
+    handled: set[int] = set()
     for r in rows:
-        if r.line in used_rows or r.value not in SUPPORT_VALUES:
+        frags = frags_of[r.line]
+        if not frags or r.value not in SUPPORT_VALUES:
             continue
-        sev = sev_strict if r.value in ("no_respalda", "no_verificable") else "aviso"
-        issues.append(Issue(sev, f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}) que no corresponde a ninguna "
-                                 "afirmación [PUB] actual con esa referencia: si la afirmación se reformuló, comprueba "
-                                 "la nueva versión", r.line))
+        for ref in r.refs:
+            scored = []
+            for idx, claim in enumerate(claims):
+                if ref in claim.refs:
+                    covered = _row_coverage(frags, claim)
+                    if covered >= max(1, claim.needed):
+                        scored.append((Fraction(covered, max(1, len(claim.span))), idx))
+            if not scored:
+                continue
+            handled.add(r.line)
+            if r.value in SUPPORT_OK:
+                best = max(score for score, _idx in scored)
+                targets = [idx for score, idx in scored if score == best]
+                if len({claims[idx].key for idx in targets}) > 1:
+                    for idx in targets:
+                        ambiguous.setdefault((idx, ref), []).append(r.line)
+                    issues.append(Issue(sev_strict, f"Fila del Anexo A ({ref}, {r.value}) que reproduce por igual "
+                                                    "varias afirmaciones distintas (líneas "
+                                                    f"{', '.join(str(claims[idx].line + 1) for idx in targets)}): no "
+                                                    "cuenta para ninguna; escribe una fila por afirmación, con su "
+                                                    "texto", r.line))
+                    continue
+            else:
+                targets = [idx for _score, idx in scored]
+            for idx in targets:
+                assigned.setdefault((idx, ref), []).append(r)
+    for idx, claim in enumerate(claims):
+        i = claim.line
+        for ref in claim.refs:
+            matching = assigned.get((idx, ref), [])
+            values = {r.value for r in matching}
+            where = ", ".join(str(r.line) for r in matching)
+            if "no_respalda" in values:
+                issues.append(Issue("error", f"{ref} NO respalda la afirmación de la línea {i + 1} (Anexo A, fila "
+                                             f"{where})", i + 1))
+            elif len(values) > 1:
+                issues.append(Issue("error", f"Filas contradictorias del Anexo A ({where}) para {ref} y la "
+                                             f"afirmación de la línea {i + 1}: {', '.join(sorted(values))}", i + 1))
+            elif values == {"no_verificable"}:
+                issues.append(Issue(sev_strict, f"Respaldo de {ref} no verificable: no puede sostener la "
+                                                f"afirmación [PUB] de la línea {i + 1}", i + 1))
+            elif not values:
+                extra = ""
+                if ambiguous.get((idx, ref)):
+                    extra = (f"; la(s) fila(s) {', '.join(str(n) for n in ambiguous[(idx, ref)])} la reproducen por "
+                             "igual que a otra afirmación")
+                issues.append(Issue(sev_strict, f"Sin comprobación de respaldo de {ref} para la afirmación de la "
+                                                f"línea {i + 1} («{claim.excerpt}»): el Anexo A necesita una fila de "
+                                                f"{ref} cuya columna Afirmación reproduzca esa afirmación (al menos "
+                                                f"{max(1, claim.needed)} de sus {len(claim.span)} palabras, en orden; "
+                                                f"«...» separa fragmentos){extra}", i + 1))
+    for r in rows:
+        if r.line in handled or r.value not in SUPPORT_VALUES or frags_of[r.line] is None:
+            continue
+        issues.append(Issue(sev_strict, f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}) que no corresponde a "
+                                        "ninguna afirmación [PUB] actual con esa referencia: si la afirmación se "
+                                        "reformuló, actualiza la fila y comprueba la nueva versión", r.line))
 
     # ---- registro de fuentes
     if conn is not None:
@@ -1499,7 +1637,7 @@ def check_support_quotes(client, text: str) -> tuple[list[Issue], list[dict]]:
     """Compara las citas literales entre comillas de la columna Motivo del Anexo A con el resumen de la fuente.
     Solo el resumen: el texto completo no se comprueba."""
     doc = _parse(text)
-    rows, _issues, _h, _c = _support_rows(doc)
+    rows = _support_rows(doc).rows
     entries: dict[str, list[BibEntry]] = {}
     for entry in bibliography_entries(text):
         entries.setdefault(entry.ref, []).append(entry)

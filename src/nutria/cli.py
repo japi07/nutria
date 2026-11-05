@@ -899,8 +899,10 @@ def _check_report_file(args, cfg, path: Path, online: bool) -> int:
     from .reports.check import StampError, is_report_path, stamp_status, verify_report, write_stamp
     structure = not getattr(args, "sin_secciones", False)
     conn = _report_registry(cfg, path)
+    # Las compuertas exigidas en la sección 14 son las de la rúbrica del proyecto del documento (las mismas que
+    # usan `informe sello` y el hook).
     result = verify_report(path, client=_client(cfg, fresh=True) if online else None, conn=conn,
-                           require_sections=structure, gate_ids=[g.id for g in _rubric(cfg).gates])
+                           require_sections=structure)
     issues, details, summary = result.issues, result.details, result.summary
     errors = result.errors
     seal = None
@@ -951,7 +953,8 @@ def _review_report(args, cfg) -> int:
     if not signer:
         raise SystemExit("La revisión humana exige --firma-humana NOMBRE: solo la registra la persona que revisó el "
                          "informe, en su propia terminal")
-    if getattr(args, "agente", None) or os.environ.get("NUTRIA_AGENT") or os.environ.get("CLAUDECODE"):
+    if getattr(args, "agente", None) or any(os.environ.get(name) for name in ("NUTRIA_AGENT", "CLAUDECODE",
+                                                                                  "CLAUDE_CODE_ENTRYPOINT")):
         raise SystemExit("La revisión humana no la registra un agente: la persona que revisó el informe ejecuta la orden "
                          "en su propia terminal (fuera de Claude Code), sin --agente ni NUTRIA_AGENT")
     path = Path(args.archivo)
@@ -968,8 +971,7 @@ def _review_report(args, cfg) -> int:
         new_text = set_front_matter_fields(text, updates)
     except ValueError as exc:
         raise SystemExit(str(exc))
-    problems = [i for i in check_report(new_text, require_sections=is_report_path(path), conn=conn, path=path,
-                                        gate_ids=[g.id for g in _rubric(cfg).gates])
+    problems = [i for i in check_report(new_text, require_sections=is_report_path(path), conn=conn, path=path)
                 if i.severity == "error" and i.code != REVIEW_CODE]
     if problems:
         raise SystemExit(f"No se registra la revisión: el informe tiene {len(problems)} error(es); corrígelos antes:\n"
@@ -1339,7 +1341,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="no exige las 20 secciones (planes, notas); el sello no valdrá para informes")
     x = ins.add_parser("sello", parents=[common])
     x.add_argument("archivo")
-    x = ins.add_parser("revisar", parents=[common],
+    x = ins.add_parser("revisar", parents=[common], allow_abbrev=False,
                        help="registra la revisión humana del contenido exacto del informe (solo personas)")
     x.add_argument("archivo")
     x.add_argument("--firma-humana", dest="firma_humana", help="persona que revisó el informe (solo personas)")

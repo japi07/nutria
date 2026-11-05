@@ -49,7 +49,7 @@ def stamp_key(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def human_terminal(monkeypatch):
     """Las pruebas simulan a la persona en su terminal: sin variables de contexto de agente."""
-    for name in ("NUTRIA_AGENT", "CLAUDECODE"):
+    for name in ("NUTRIA_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -199,7 +199,7 @@ def test_review_command_rejects_agents_missing_signature_and_errors(project, mon
         main(["informe", "revisar", str(path)])
     with pytest.raises(SystemExit, match="no la registra un agente"):
         main(["--agente", "director-cientifico", "informe", "revisar", str(path), SIGN, "Ana"])
-    for name, value in (("NUTRIA_AGENT", "verificador-citas"), ("CLAUDECODE", "1")):
+    for name, value in (("NUTRIA_AGENT", "verificador-citas"), ("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", "cli")):
         with monkeypatch.context() as m:
             m.setenv(name, value)
             with pytest.raises(SystemExit, match="no la registra un agente"):
@@ -440,16 +440,16 @@ def test_pub_references_must_be_registered_verified_sources(project):
     conn = _conn()
     conn.execute("DELETE FROM sources")
     draft = chk.check_report(path.read_text("utf-8"), conn=conn, path=path)
-    assert any("no está registrado como fuente" in str(i) and i.severity == "aviso" for i in draft)
+    assert any("no está registrada como fuente" in str(i) and i.severity == "aviso" for i in draft)
     final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
-    assert any("no está registrado como fuente" in e for e in _errors(final, conn=conn, path=path))
+    assert any("no está registrada como fuente" in e for e in _errors(final, conn=conn, path=path))
     conn.close()
     _register(GOOD, verified=False)
     _register(GOOD2, retracted=True)
     conn = _conn()
     messages = [str(i) for i in chk.check_report(path.read_text("utf-8"), conn=conn, path=path)]
     assert any("sin verificar" in m for m in messages)
-    assert any("RETRACTADO" in m and m.startswith("[ERROR]") for m in messages)
+    assert any("RETRACTADA" in m and m.startswith("[ERROR]") for m in messages)
 
 
 # ============================================================================ D10-1: esqueleto y mensajes

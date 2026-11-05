@@ -166,6 +166,9 @@ def _context(opp: dict, data: dict) -> tuple[str, str]:
         if value:
             fm.append(f"{key}: {_yaml(value)}")
             visible.append(f"{label}: {_oneline(value)}.")
+    # Es el ámbito que fija la oportunidad (supuesto de trabajo hasta contrastarlo con la evidencia): con su etiqueta,
+    # una cifra de la etapa (p. ej. un peso vivo) no queda como cifra sin etiquetar.
+    visible.append("[SUP] (contexto biológico de la oportunidad en el registro)")
     return "\n".join(fm), " ".join(visible)
 
 

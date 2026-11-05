@@ -34,8 +34,10 @@ for py in "$root/.venv/bin/python" "$root/.venv/Scripts/python.exe" python3 pyth
 done
 target=$(printf '%s' "$payload" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1)
 [ -n "$target" ] || target=$payload
+# Sin distinguir mayúsculas (Research/ en sistemas de ficheros que no las distinguen), con / o con \ (que en el
+# JSON de la entrada va escapado como \\).
 case "$target" in
-  *research/*|*research\\*)
+  *[Rr][Ee][Ss][Ee][Aa][Rr][Cc][Hh]/*|*[Rr][Ee][Ss][Ee][Aa][Rr][Cc][Hh]\\*)
     if [ -n "$last_block" ]; then
       printf '%s\n' "$last_block"
     else
