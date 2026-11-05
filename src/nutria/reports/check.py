@@ -729,12 +729,24 @@ def _bibliography_ids(text: str) -> list[str]:
 
 # ============================================================================ líneas, etiquetas y párrafos
 def _drop_term_spans(line: str) -> str:
-    """Quita las marcas de código; el código que solo contiene una etiqueta o un [Rn] (mención del término) se
-    ignora, el resto se comprueba como texto."""
+    """Quita las marcas de código; el código que solo contiene una etiqueta o un [Rn] (mención del término:
+    «las etiquetas `[PUB]` y `[HIP]`») se ignora, el resto se comprueba como texto. El código pegado a un corchete o
+    a una letra forma parte de lo que se ve («[`PUB`]» o «[P`UB`]» se leen como [PUB]); una cifra no se pega a la
+    palabra anterior («valor`15 g/d`» sigue siendo una cifra con unidades)."""
     def repl(m: re.Match) -> str:
         inner = m.group(2).strip()
-        return " " if TERM_SPAN_RE.match(inner) else f" {inner} "
+        before = line[m.start() - 1] if m.start() > 0 else ""
+        after = line[m.end()] if m.end() < len(line) else ""
+        glued_left = bool(inner) and (before == "[" or (before.isalpha() and not inner[0].isdigit()))
+        glued_right = bool(inner) and (after == "]" or (after.isalpha() and not inner[-1].isdigit()))
+        if TERM_SPAN_RE.match(inner) and not (glued_left or glued_right):
+            return " "
+        return ("" if glued_left else " ") + inner + ("" if glued_right else " ")
     return re.sub(r"(`+)(.+?)\1", repl, line)
+
+
+def _strip_marks(span: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFKD", span) if unicodedata.category(ch) != "Mn")
 
 
 @dataclass
@@ -768,6 +780,9 @@ def _scan(line: str) -> _Line:
     # El énfasis y las etiquetas HTML no deben partir una etiqueta: «[P**UB**]» o «[P<b>UB</b>]» se ven como [PUB].
     text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
     text = re.sub(r"[*_~]", "", text)
+    # Un acento o signo combinado dentro de un corchete corto (una P seguida de un acento combinado) no oculta una
+    # etiqueta ni una referencia.
+    text = re.sub(r"\[[^\[\]\n]{1,12}\]", lambda m: _strip_marks(m.group(0)), text)
     # Un enlace cuenta por su texto («[texto](url)» -> «texto»); el de una referencia sigue siendo la referencia.
     text = _LINK_RE.sub(lambda m: (f"[{m.group(1)}]" if REF_RE.fullmatch(f"[{m.group(1)}]")
                                    or LABEL_RE.fullmatch(f"[{m.group(1)}]") else m.group(1)), text)

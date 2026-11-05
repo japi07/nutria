@@ -110,7 +110,18 @@ def _route_text(opp: dict, data: dict) -> str:
             f"triage regulatorio{note}).")
 
 
-def _destino_text(data: dict, gate_line: str) -> str:
+def _destino_text(data: dict, gate_line: str, ruminant: bool = True) -> str:
+    if not ruminant:
+        # La regla 5 se formula para rumiantes; en otras especies el apartado recoge el destino digestivo propio.
+        return "\n".join([
+            "- Estabilidad y transformación del compuesto en el tracto digestivo de la especie diana (pH gástrico, "
+            "enzimas, microbiota): [DESC] sin datos en el registro; obtenlos de la literatura en esa especie o de "
+            "ensayos de digestión in vitro.",
+            "- Digestibilidad y absorción intestinal a la dosis prevista: [DESC] sin datos en el registro; obtenlas de "
+            "estudios de digestibilidad o biodisponibilidad en la especie diana.",
+            f"- Lo que no se sabe todavía: {MARK} indica qué falta y cómo obtenerlo, con su etiqueta.",
+            gate_line,
+        ])
     dd = data.get("destino_digestivo") or {}
     esc, di = dd.get("fraccion_escape_ruminal"), dd.get("digestibilidad_intestinal")
     source = _oneline(dd.get("fuente_o_calculo") or "")
@@ -198,12 +209,14 @@ def new_report(conn, opp_id: str, gate_ids=None) -> str:
         for d in decisions
     ) or "- Sin decisiones registradas."
     contexto_fm, contexto = _context(opp, data)
+    from .check import is_ruminant      # sin especie, o si no es claramente otra, se trata como rumiante
+    ruminant = is_ruminant(data.get("especie") or opp.get("species"))
     template = resources.files("nutria.reports").joinpath("plantilla_informe.md").read_text("utf-8")
     return template.format(
         opp_id=opp_id, fecha=date.today().isoformat(), titulo=_oneline(opp["title"]), contexto_fm=contexto_fm,
         contexto=contexto,
         problema=data.get("problema") or opp.get("problem") or f"{MARK} describe el problema productivo o fisiológico.",
         hipotesis=hyp_text, candidatos=_bullets(data.get("candidatos"), "sin candidatos registrados."),
-        destino=_destino_text(data, gate_line), ruta=_route_text(opp, data), compuertas=table,
+        destino=_destino_text(data, gate_line, ruminant), ruta=_route_text(opp, data), compuertas=table,
         decisiones=dec_text, alegacion=_claim_text(data.get("alegacion_prevista")),
     )

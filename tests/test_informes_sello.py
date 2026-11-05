@@ -411,6 +411,10 @@ def _draft(body: str, bib: str = "[R1] Autor A. 2020. Título del trabajo. DOI: 
     "> La colina reduce la cetosis [PUB].",                    # cita
     "`La colina reduce la cetosis [PUB]`",                     # código con contenido
     "La colina reduce la cetosis (PUB).",
+    "La colina reduce la cetosis [`PUB`].",                    # código dentro de los corchetes
+    "La colina reduce la cetosis [P`UB`].",                    # código pegado a una letra
+    "La colina reduce la cetosis [ṔUB].",                # acento combinado
+    "La colina reduce la cetosis [Ṕ​UB].",               # letra con acento y anchura cero
 ])
 def test_pub_without_reference_is_detected_everywhere(body):
     assert any("[PUB] sin referencia" in e for e in _errors(_draft(body), require_sections=False))
@@ -419,6 +423,9 @@ def test_pub_without_reference_is_detected_everywhere(body):
 def test_label_only_code_span_is_a_term_mention():
     assert not _errors(_draft("Las etiquetas válidas son `[PUB]`, `[DER]` y `[Rn]`. Dato [HIP] citado [R1]."),
                        require_sections=False)
+    # una cifra en código pegada a una palabra sigue siendo una cifra
+    assert any("Cifra con unidades" in e for e in _errors(_draft("La dosis fue valor`15 g/d` en todas."),
+                                                         require_sections=False, strict=True))
 
 
 def test_lowercase_label_warns_about_format():
@@ -878,6 +885,14 @@ def test_skeleton_records_biological_context_and_digestive_fate(project):
     assert "Fracción que escapa a la degradación ruminal: 0,35 [SUP]" in section7
     assert "Fracción absorbible (escape ruminal × digestibilidad intestinal): 0,28 [DER]" in section7
     assert "Dosis absorbible: [DESC]" in section7
+
+
+def test_skeleton_digestive_fate_of_non_ruminants_is_not_ruminal(project):
+    _opportunity(project, especie="porcino", etapa="cebo (30 a 110 kg de peso vivo)")
+    text = _skeleton(project).read_text("utf-8")
+    section7 = text.split("### 7.1")[1].split("## 8.")[0].split("-->")[1]       # lo visible, sin el comentario
+    assert "ruminal" not in section7 and "absorción intestinal a la dosis prevista: [DESC]" in section7
+    assert "Compuerta `destino_digestivo`" in section7
 
 
 def test_skeleton_includes_breed_and_physiological_state_when_present(project):
