@@ -335,6 +335,51 @@ def test_especies_y_etapas_concretas_se_aceptan(kind):
         _validate(kind, dict(base, especie=especie, etapa=etapa))
 
 
+@pytest.mark.parametrize("valor", [
+    "anim​ales", "ani­males", "ㅤ", "ｔｏｄａｓ", "𝐚𝐧𝐢𝐦𝐚𝐥𝐞𝐬", "аnimales",      # invisibles, anchos, homoglifos
+    "a n i m a l e s", "t o d a s", "anim ales", "todaslasetapas", "Todas-las-etapas", "animales_de_granja",
+    "universal", "indefinida", "sin restricción", "independiente de la etapa", "multietapa", "multi-especie",
+    "todo el ciclo productivo", "ciclo completo", "cualquier fase del ciclo", "animales de producción", "livestock",
+    "food-producing animals", "whole cycle", "especie diana", "n/a, desconocido", "No Consta."])
+@pytest.mark.parametrize("campo", ["especie", "etapa"])
+def test_variantes_de_valores_genericos_rechazadas(campo, valor):
+    with pytest.raises(SystemExit, match="JSON no válido"):
+        _validate("oportunidad", dict(_example("oportunidad_ejemplo"), **{campo: valor}))
+
+
+def test_valores_concretos_no_se_confunden_con_genericos():
+    base = _example("oportunidad_ejemplo")
+    for etapa in ("fase de producción", "fase de crecimiento", "en ayunas", "cría", "adultos", "toda la lactación",
+                  "periodo seco", "inicio de lactación (0 a 21 DEL)"):
+        _validate("oportunidad", dict(base, etapa=etapa))
+    for especie in ("ganado lechero", "líquido ruminal bovino", "Oncorhynchus mykiss", "salmón atlántico", "ocas",
+                    "toros", "monogástricos", "ratas de laboratorio"):
+        _validate("oportunidad", dict(base, especie=especie))
+    _validate("oportunidad", dict(base, raza="La Mancha"))
+    for especie in ("animales adultos", "hembras reproductoras", "crías", "modelo animal", "healthy adults"):
+        with pytest.raises(SystemExit, match="no nombra la especie"):   # describen a los animales, no la especie
+            _validate("oportunidad", dict(base, especie=especie))
+
+
+def test_validacion_de_textos_en_tiempo_lineal():
+    """Los textos se comprueban sin expresiones regulares con retroceso: un valor hostil no bloquea la CLI."""
+    import time
+    base = _example("oportunidad_ejemplo")
+    inicio = time.perf_counter()
+    for valor in ("s/d " * 2000 + "q", "n/a " * 2000 + "q", "de " * 3000 + "zzz", "animales de producción " * 500 + "q",
+                  "todaslasetapas" * 700 + "q", "x" * 50000 + "y", "a " * 20000):
+        for campo in ("especie", "etapa", "raza"):
+            try:
+                _validate("oportunidad", dict(base, **{campo: valor}))
+            except SystemExit:
+                pass
+        try:
+            _validate("extraccion", dict(_example("extraccion_ejemplo")[0], intervencion=valor))
+        except SystemExit:
+            pass
+    assert time.perf_counter() - inicio < 5
+
+
 def test_oportunidad_raza_y_estado_fisiologico_con_no_consta_explicito():
     base = _example("oportunidad_ejemplo")
     _validate("oportunidad", dict(base, raza="no_consta", estado_fisiologico="no_consta"))
@@ -399,11 +444,18 @@ def test_afirmacion_pub_exige_contexto_biologico(project, capsys):
 
 
 @pytest.mark.parametrize("campo", ["especie", "estado_fisiologico", "dieta_basal", "forma_producto", "dosis_base",
-                                   "dosis_unidad", "intervencion", "variable", "unidad", "ubicacion"])
-@pytest.mark.parametrize("valor", ["", "  ", "-", "n/a", "xxx"])
+                                   "dosis_unidad", "intervencion", "variable", "unidad", "ubicacion", "raza", "sexo",
+                                   "paridad", "comparador", "experimento"])
+@pytest.mark.parametrize("valor", ["", "  ", "-", "n/a", "xxx", "No consta", "​"])
 def test_extraccion_rechaza_vacios_y_relleno_en_campos_obligatorios(campo, valor):
     with pytest.raises(SystemExit):
         _validate("extraccion", dict(_example("extraccion_ejemplo")[0], **{campo: valor}))
+
+
+def test_extraccion_acepta_unidades_con_signos():
+    base = _example("extraccion_ejemplo")[0]
+    for unidad in ("%", "% de la MS", "‰", "µg/kg MS", "μmol/L", "kg/d"):
+        _validate("extraccion", dict(base, unidad=unidad))
 
 
 def test_extraccion_no_consta_coherente_y_sin_campos_desconocidos():

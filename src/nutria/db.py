@@ -411,9 +411,231 @@ def load_schema(kind: str) -> dict:
     return json.loads(resources.files("nutria.data").joinpath(f"schemas/{kind}.schema.json").read_text("utf-8"))
 
 
+# ---------------------------------------------------------------------------- textos informados y específicos
+# Los esquemas marcan con la palabra clave "x-texto" los campos de texto que deben decir algo ("informado"), además
+# nombrar una especie, una etapa o un estado concretos ("especifico") o, en los campos de especie, nombrar la especie
+# ("especie"). La comprueba `text_problem` sobre palabras normalizadas (sin mayúsculas, tildes ni signos), en tiempo
+# lineal: nada de expresiones regulares con retroceso. La aplican la CLI y el registro (`schema_errors`); un validador
+# JSON Schema genérico ignora "x-texto" y solo comprueba el tipo, la longitud y que haya letras o cifras.
+#
+# Vocabulario en plantillas: una por línea; las palabras de una línea se suceden; 'a|b' son alternativas, '?a' es
+# opcional y 'pal{o,a,os,as}' da las variantes de la palabra. Todo en minúsculas y sin tildes.
+_FILLER_TEMPLATES = """
+x|xx|xxx|xyz|abc|asdf|foo|bar|test|prueba|placeholder|0|00|000|blank|tbd|tbc|tba
+lorem ipsum
+n a|d|c|p|r|s|k
+na|nd|nc|np|nr|ns|nk|sd|sn
+ns nc
+s d|n
+null|none|nil|nan|undefined|unknown|unk|missing|pending|ditto|idem|id|unspecified|unreported|unavailable
+pendiente{,s}|desconocid{o,a,os,as}|ignorad{o,a,os,as}|nada|vaci{o,a,os,as}|ningun{,o,a,os,as}
+no consta{,n}
+no se sabe|conoce|indica|informa|especifica|describe|reporta|publica|detalla|menciona|precisa|aplica
+no indicad{o,a,os,as}|informad{o,a,os,as}|reportad{o,a,os,as}|publicad{o,a,os,as}|descrit{o,a,os,as}|especificad{o,a,os,as}|definid{o,a,os,as}|determinad{o,a,os,as}|conocid{o,a,os,as}|declarad{o,a,os,as}|detallad{o,a,os,as}|registrad{o,a,os,as}|mencionad{o,a,os,as}|facilitad{o,a,os,as}|proporcionad{o,a,os,as}|precisad{o,a,os,as}|identificad{o,a,os,as}|evaluad{o,a,os,as}|medid{o,a,os,as}|disponible{,s}|aplicable{,s}
+no aplica|procede|corresponde|relevante|disponible
+sin dato{,s}|informacion|especificar|definir|determinar|indicar|informar|precisar|detallar|concretar|identificar|describir|clasificar|valor{,es}
+a|por definir|determinar|concretar|especificar|confirmar|precisar|completar|rellenar
+ver arriba|abajo|texto|articulo|fuente|nota{,s}
+not reported|stated|given|available|applicable|specified|described|known|determined|defined|recorded|measured
+to be determined|defined|confirmed
+"""
+# Palabras que, solas o juntas, no identifican una especie, una etapa ni un estado (español e inglés).
+_GENERIC_TEMPLATES = """
+tod{o,a,os,as}|vari{os,as}|divers{o,a,os,as}|distint{o,a,os,as}|diferente{,s}|multiple{,s}|cualquier{,a}|cualesquiera
+ambos|ambas|otr{o,a,os,as}|demas|resto|general{,es,mente}|generic{o,a,os,as}|mixt{o,a,os,as}|indistint{o,a,os,as}
+indistintamente|indiferente{,s}|global{,es}|comun{,es}|habitual{,es}|tipic{o,a,os,as}|estandar|normal{,es}
+complet{o,a,os,as}|enter{o,a,os,as}|total{,es}|multiespecie{,s}|pluriespecie{,s}|polivalente{,s}|particular{,es}
+cada|ciert{o,a,os,as}|algun{,o,a,os,as}|much{o,a,os,as}|numeros{o,a,os,as}|principal{,es}|relevante{,s}|posible{,s}
+aplicable{,s}|diana{,s}|objetivo{,s}|interes|indeterminad{o,a,os,as}|indefinid{o,a,os,as}|inespecific{o,a,os,as}
+seleccionad{o,a,os,as}|etc|universal{,es,mente}|transversal{,es}|variable{,s}|independiente{,s,mente}|multi
+amplio|amplia|amplios|amplias|rango{,s}|espectro|sin|restriccion{,es}|distincion{,es}|limitacion{,es}|fisiologic{o,a,os,as}
+especie{,s}|etapa{,s}|fase{,s}|estado{,s}|estadio{,s}|raza{,s}|animal{,es}|ganado{,s}|ganaderia{,s}|edad{,es}
+categoria{,s}|tipo{,s}|sexo{,s}|clase{,s}|grupo{,s}|individuo{,s}|ejemplar{,es}|cabeza{,s}|poblacion{,es}|momento{,s}
+periodo{,s}|ciclo{,s}|condicion{,es}|situacion{,es}|caso{,s}|explotacion{,es}|sistema{,s}|organismo{,s}|ser{,es}|vivo{,s}
+mamifero{,s}|vertebrado{,s}|invertebrado{,s}|vida|ano{,s}
+ganader{o,a,os,as}|domestic{o,a,os,as}|pecuari{o,a,os,as}|zootecnic{o,a,os,as}|productiv{o,a,os,as}
+el|la|los|las|lo|un|una|unos|unas|de|del|y|e|o|u|ni|en|a|al|con|para|por|su|sus|segun
+all|any|every|each|various|several|many|mixed|different|other{,s}|generic|common|typical|standard|whole|entire|complete
+species|stage{,s}|phase{,s}|animal{,s}|livestock|farm{,s}|production|productive|producing|domestic|age{,s}|category
+categories|type{,s}|target|of|the|and|or|in|for|an|to|with|overall|broad|range|spectrum|unspecific|nonspecific|non
+specific|universal|mammal{,s}|vertebrate{,s}|organism{,s}|life|lifetime|year{,s}|cycle{,s}|period{,s}|state{,s}
+condition{,s}|group{,s}|class{,es}|sex{,es}|breed{,s}|kind{,s}|individual{,s}|population{,s}|system{,s}|case{,s}
+"""
+# Combinaciones genéricas de palabras que, solas, pueden ser concretas ('fase de producción' en ponedoras, 'cría').
+_GENERIC_PHRASE_TEMPLATES = """
+especie{,s}|animal{,es}|ganado{,s}|fases|etapas|estados de|en produccion|granja|abasto|renta|cria
+cualquier|toda|todas|varias|distintas|diferentes ?la|las fase{,s}|etapa{,s} de|del ?la produccion|ciclo|crecimiento|cria|vida
+produccion animal
+food producing
+foodproducing
+farm animal{,s}
+"""
+# Solo en los campos de especie: palabras que describen a los animales sin nombrar la especie ('animales adultos').
+_DESCRIPTOR_TEMPLATES = """
+adult{o,a,os,as}|joven{,es}|san{o,a,os,as}|enferm{o,a,os,as}|mach{o,os}|hembra{,s}|reproductor{,es,a,as}|cri{a,as}
+recien|nacid{o,a,os,as}|gestante{,s}|lactante{,s}|experimental{,es}|laboratorio|modelo{,s}|sujeto{,s}|cohorte{,s}
+adult{,s}|young|healthy|sick|male{,s}|female{,s}|breeding|newborn{,s}|laboratory|lab|model{,s}|subject{,s}
+"""
+# Caracteres que no se ven y no tienen categoría de formato o de control (rellenos del hangul, braille en blanco...).
+_INVISIBLE_CHARS = frozenset("͏ᅟᅠ឴឵᠎⠀ㅤﾠ")
+_HIDDEN_CATEGORIES = frozenset({"Cf", "Cc", "Co", "Cs", "Cn"})
+_WORD_RE = re.compile(r"[^\W_]+")
+
+
+def _word_variants(word: str) -> list[str]:
+    if "{" not in word:
+        return [word]
+    head, rest = word.split("{", 1)
+    options, tail = rest.split("}", 1)
+    return [head + option + end for option in options.split(",") for end in _word_variants(tail)]
+
+
+def _expand(templates: str) -> frozenset[tuple[str, ...]]:
+    out: set[tuple[str, ...]] = set()
+    for line in templates.splitlines():
+        sequences: list[tuple[str, ...]] = [()]
+        for slot in line.split():
+            words = [w for alternative in slot.lstrip("?").split("|") for w in _word_variants(alternative)]
+            grown = [seq + (w,) for seq in sequences for w in words]
+            sequences = grown + sequences if slot.startswith("?") else grown
+        out.update(seq for seq in sequences if seq)
+    return frozenset(out)
+
+
+@lru_cache(maxsize=None)
+def _vocabulary() -> dict[str, Any]:
+    fillers = _expand(_FILLER_TEMPLATES)
+    generic = fillers | _expand(_GENERIC_TEMPLATES) | _expand(_GENERIC_PHRASE_TEMPLATES)
+    descriptors = generic | _expand(_DESCRIPTOR_TEMPLATES)
+    generic_compact = frozenset(c for c in ("".join(t) for t in generic) if len(c) >= 3)
+    return {"filler": fillers, "generic": generic, "descriptor": descriptors,
+            "filler_compact": frozenset("".join(t) for t in fillers), "generic_compact": generic_compact,
+            "max_len": max(len(t) for t in descriptors), "compact_max": max(map(len, generic_compact))}
+
+
+def _fold(text: str) -> str:
+    """Forma de comparación: NFKC (anchos completos, ligaduras...), sin tildes ni marcas y en minúsculas."""
+    decomposed = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", text))
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) not in ("Mn", "Me")).casefold()
+
+
+def text_words(value: Any) -> list[str]:
+    """Palabras de un texto en minúsculas, sin tildes ni signos ('Vacuno-Lechero' -> ['vacuno', 'lechero'])."""
+    return _WORD_RE.findall(_fold(str(value))) if value is not None else []
+
+
+def _covered(words: list[str], entries: frozenset[tuple[str, ...]], max_len: int) -> bool:
+    """¿Se puede partir la secuencia de palabras en entradas del vocabulario? (programación dinámica, lineal)."""
+    reach = [True] + [False] * len(words)
+    for i in range(len(words)):
+        if reach[i]:
+            for size in range(1, min(max_len, len(words) - i) + 1):
+                if tuple(words[i:i + size]) in entries:
+                    reach[i + size] = True
+    return reach[-1]
+
+
+def _compact_covered(compact: str, entries: frozenset[str], max_len: int) -> bool:
+    """Lo mismo con el texto sin separadores ('a n i m a l e s', 'todaslasetapas'), con piezas de 3 letras o más."""
+    reach = [True] + [False] * len(compact)
+    for i in range(len(compact)):
+        if reach[i]:
+            for size in range(3, min(max_len, len(compact) - i) + 1):
+                if compact[i:i + size] in entries:
+                    reach[i + size] = True
+    return reach[-1]
+
+
+def _scripts(word: str) -> set[str]:
+    """Alfabetos de las letras de una palabra (la micra 'μ' y las letras modificadoras no cuentan)."""
+    out = set()
+    for ch in word:
+        if ch.isalpha() and ch != "μ":
+            script = unicodedata.name(ch, "?").split(" ")[0]
+            if script != "MODIFIER":
+                out.add(script)
+    return out
+
+
+def _is_filler(words: list[str], vocab: dict) -> bool:
+    if _covered(words, vocab["filler"], vocab["max_len"]):
+        return True
+    compact = "".join(words)
+    period = compact[:(compact + compact).find(compact, 1)]  # 'nana' -> 'na'
+    return period in vocab["filler_compact"] or (len(compact) > 1 and len(set(compact)) == 1 and compact.isalpha())
+
+
+def text_problem(value: Any, mode: str = "informado") -> str | None:
+    """Problema de un texto para la palabra clave "x-texto" de los esquemas, o None si vale.
+
+    - informado: no vacío, no solo signos (salvo '%' o '‰'), sin caracteres invisibles ni alfabetos mezclados en una
+      palabra y sin valores de relleno ('n/a', 'xxx', 'desconocido', 'no consta', 'not reported'...);
+    - especifico: además, no formado solo por palabras genéricas ('todas las etapas', 'varias especies', 'animales de
+      producción', 'all species'...), tampoco escritas sin espacios o letra a letra;
+    - especie: además, no formado solo por palabras genéricas y descripciones de los animales ('animales adultos').
+    """
+    if not isinstance(value, str):
+        return None
+    text = unicodedata.normalize("NFKC", value)
+    hidden = sorted({f"U+{ord(ch):04X}" for ch in text if ch in _INVISIBLE_CHARS
+                     or (unicodedata.category(ch) in _HIDDEN_CATEGORIES and ch not in "\t\n\r")})
+    if hidden:
+        return f"contiene caracteres invisibles o de control ({', '.join(hidden[:5])}): escríbelo sin ellos"
+    words = text_words(text)
+    if not words:
+        if mode == "informado" and any(ch in "%‰‱" for ch in text):
+            return None
+        return "está vacío o solo tiene signos"
+    mixed = [w for w in words if len(_scripts(w)) > 1]
+    if mixed:
+        return f"mezcla alfabetos distintos en una palabra ({mixed[0]!r}): escríbela con un solo alfabeto"
+    vocab = _vocabulary()
+    if _is_filler(words, vocab):
+        return "es un valor de relleno, no un dato"
+    if mode in ("especifico", "especie"):
+        if (_covered(words, vocab["generic"], vocab["max_len"])
+                or _compact_covered("".join(words), vocab["generic_compact"], vocab["compact_max"])):
+            return "es genérico: no nombra una especie, una etapa ni un estado concretos"
+        if mode == "especie" and _covered(words, vocab["descriptor"], vocab["max_len"]):
+            return "no nombra la especie: solo describe a los animales"
+    return None
+
+
+@lru_cache(maxsize=None)
+def _validator_class():
+    import jsonschema
+    from jsonschema.exceptions import ValidationError
+
+    def x_texto(validator, mode, instance, schema):
+        if validator.is_type(instance, "string"):
+            problem = text_problem(instance, mode)
+            if problem:
+                yield ValidationError(problem)
+
+    return jsonschema.validators.extend(jsonschema.Draft202012Validator, {"x-texto": x_texto})
+
+
+@lru_cache(maxsize=None)
+def _schema_validator(kind: str):
+    return _validator_class()(load_schema(kind))
+
+
+def _error_tree(err) -> list:
+    out = [err]
+    for child in sorted(err.context or [], key=lambda c: len(c.path)):
+        out.extend(_error_tree(child))
+    return out
+
+
 def schema_error_text(err) -> str:
-    """Mensaje legible de un error de jsonschema: usa 'x-mensaje' del subesquema (o de una alternativa) si lo hay."""
-    for e in (err, *sorted(err.context or [], key=lambda c: len(c.path))):
+    """Mensaje legible de un error de jsonschema: el problema concreto de un texto ("x-texto") o el 'x-mensaje' del
+    subesquema (o de una de sus alternativas) si lo hay."""
+    tree = _error_tree(err)
+    for e in tree:
+        if e.validator == "x-texto":
+            hint = e.schema.get("x-mensaje") if isinstance(e.schema, dict) else None
+            return f"{e.instance!r} {e.message}" + (f" ({hint})" if hint else "")
+    for e in tree:
         msg = e.schema.get("x-mensaje") if isinstance(e.schema, dict) else None
         if msg:
             if isinstance(e.instance, (dict, list)):
@@ -423,9 +645,9 @@ def schema_error_text(err) -> str:
 
 
 def schema_errors(kind: str, data: Any, schema: dict | None = None) -> list[str]:
-    """Errores de validación de `data` contra el esquema `kind` (o contra `schema`), legibles y ordenados."""
-    import jsonschema
-    validator = jsonschema.Draft202012Validator(schema if schema is not None else load_schema(kind))
+    """Errores de validación de `data` contra el esquema `kind` (o contra `schema`), legibles y ordenados. Aplica
+    también la palabra clave "x-texto" (textos informados y específicos)."""
+    validator = _validator_class()(schema) if schema is not None else _schema_validator(kind)
     return [f"{'/'.join(map(str, e.path)) or '(raíz)'}: {schema_error_text(e)}"
             for e in sorted(validator.iter_errors(data), key=lambda e: list(e.path))]
 

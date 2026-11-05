@@ -57,13 +57,9 @@ def _schema(kind: str) -> dict:
 
 
 def _validate(kind: str, data: dict) -> None:
-    import jsonschema
-    validator = jsonschema.Draft202012Validator(_schema(kind))
-    errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+    errors = registry.schema_errors(kind, data)  # esquema JSON + textos informados y específicos ("x-texto")
     if errors:
-        detail = "; ".join(f"{'/'.join(map(str, e.path)) or '(raíz)'}: {registry.schema_error_text(e)}"
-                           for e in errors[:8])
-        raise SystemExit(f"JSON no válido para '{kind}': {detail}")
+        raise SystemExit(f"JSON no válido para '{kind}': {'; '.join(errors[:8])}")
     if kind == "extraccion":
         problems = registry.extraction_problems(data)
         if problems:
