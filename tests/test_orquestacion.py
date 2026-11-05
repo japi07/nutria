@@ -1240,7 +1240,7 @@ def test_p8_evaluar_no_registra_un_fichero_de_puntuacion_modificado(project, cap
     assert [p["evaluador"] for p in res["puntuaciones_pendientes"]] == ["evaluador-1"]
 
 
-ORDEN_PROCEDENCIA = ("--agente", "orquestador", "--json", "procedencia", "--accion", "puntuacion", "--ultimas", "50")
+ORDEN_PROCEDENCIA = ("--agente", "orquestador", "procedencia", "--accion", "puntuacion", "--ultimas", "20")
 
 
 @requires_node
@@ -1261,14 +1261,15 @@ def test_p8_evaluar_detecta_registros_prematuros(sello_valido, project, capsys):
     ls = labels(out)
     assert ls.index("procedencia:antes-de-puntuar") < min(ls.index(f"puntuacion:evaluador-{n}") for n in (1, 2, 3))
     assert ls.index("procedencia:tras-puntuar") > ls.index("verificacion-informe:O-0003")
-    assert "nutria --agente orquestador --json procedencia --accion puntuacion --ultimas 50" in call(out, "procedencia:tras-puntuar")["prompt"]
+    assert "nutria --agente orquestador procedencia --accion puntuacion --ultimas 20" in call(out, "procedencia:tras-puntuar")["prompt"]
+    assert len(despues["salida"]) < 1000  # en texto: una línea corta por evento, sin valores
     assert call(out, "procedencia:tras-puntuar").get("agentType") is None  # agente mecánico, no un evaluador ni el director
     res = out["resultado"]
     assert res["registros_prematuros"]["comprobado"] is True and res["registros_prematuros"]["evaluadores"] == ["evaluador-2"]
     por_id = {e["id"]: e for e in res["evaluadores"]}
     assert "antes de comprobar el sello" in por_id["evaluador-2"]["alerta"] and por_id["evaluador-1"]["alerta"] is None
     assert ("una persona decide si se mantiene" in por_id["evaluador-2"]["alerta"]) is not sello_valido
-    assert "evaluador-2 registró(aron) su puntuación antes de comprobar el sello" in res["siguiente"]
+    assert "Atención: evaluador-2 registró su puntuación antes de comprobar el sello" in res["siguiente"]
     assert any("registro diferido incumplido" in m for m in out["logs"])
     # sin registros nuevos no hay alerta; sin lecturas interpretables, consta que no se pudo comprobar
     limpio = run_workflow("evaluar-oportunidad-auto", "O-0003", [*base, {"labelPrefix": "procedencia:", "respuesta": despues}])
@@ -2204,7 +2205,11 @@ def _decision(n: int, texto: str, firma: str | None) -> dict:
     ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana"), _decision(3, "seleccionada de nuevo", "Luis")], True),
     ([_decision(2, "selección retirada", "Ana"), _decision(1, "seleccionada M1", "Ana")], False),  # por orden de registro (id)
     ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "no seleccionada (propuesta)", None)], True),  # sin firma no anula
-], ids=["sin-firma", "firmada", "negada", "deseleccionada", "retirada", "reseleccionada", "orden-por-id", "retirada-sin-firma"])
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "Retirada de la selección", "Ana")], False),  # negación en cualquier parte
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "revisada la dosis tras la selección", "Ana")], True),  # no es sobre la selección
+    ([_decision(1, "propuesta: seleccionar O-0001 para planes", "Ana")], False),  # ambigua: no empieza por "seleccionada"
+], ids=["sin-firma", "firmada", "negada", "deseleccionada", "retirada", "reseleccionada", "orden-por-id", "retirada-sin-firma",
+        "retirada-de-la-seleccion", "otra-decision", "ambigua"])
 def test_p8_mision1_firma_de_la_seleccion_orden_y_negacion(decisiones, firmada, project, capsys):  # D3-3 (selección firmada)
     _registrar_oportunidades(project, capsys, 1)
     salida = _ver(capsys, "O-0001")

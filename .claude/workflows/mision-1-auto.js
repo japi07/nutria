@@ -389,16 +389,19 @@ const leerRegistro = async (id, etiqueta, fase) => {
     seleccion_firmada: seleccionFirmada(decisiones) }
 }
 // La selección está firmada si la ÚLTIMA decisión firmada por una persona sobre la selección la confirma: las
-// propuestas sin firma no cuentan, y "no seleccionada", "deseleccionada" o una retirada posterior la anulan.
+// propuestas sin firma no cuentan; "no seleccionada", "deseleccionada" o una retirada posterior la anulan (una negación
+// cuenta en cualquier parte del texto), y solo confirma un texto que empieza por "seleccionada" o "selección".
 const SOBRE_SELECCION_RE = /selecci/i
 const SELECCION_NEGADA_RE = /\b(no|sin)\s+(fue\s+|es\s+|queda\s+)?selecci|deselecci|\b(retir|anul|revoc|rechaz|descart|exclu|desestim)/i
+const SELECCION_CONFIRMADA_RE = /^\s*(seleccionad[ao]s?|selecci[oó]n)\b/i
 const seleccionFirmada = (decisiones) => {
   const ordenadas = decisiones.every((x) => Number.isInteger(x.id)) ? [...decisiones].sort((a, b) => a.id - b.id) : decisiones
   let firmada = false
   for (const x of ordenadas) {
     const texto = String(x.decision || '')
     if (!SOBRE_SELECCION_RE.test(texto) || String(x.human_signoff || '').trim() === '') continue
-    firmada = !SELECCION_NEGADA_RE.test(texto)
+    if (SELECCION_NEGADA_RE.test(texto)) firmada = false
+    else if (SELECCION_CONFIRMADA_RE.test(texto)) firmada = true
   }
   return firmada
 }

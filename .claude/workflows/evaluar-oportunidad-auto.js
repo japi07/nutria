@@ -175,7 +175,6 @@ const VERIF_INFORME = S({
   problemas: { type: 'array', items: S({ ref: STR, estado: STR, motivo: STR }, ['ref', 'estado', 'motivo']) },
 }, ['problemas'])
 const SELLO = S({ comprobar: SALIDA_ORDEN, sello: SALIDA_ORDEN }, ['comprobar', 'sello'])
-const REGISTRO_Y_PROCEDENCIA = S({ registro: SALIDA_ORDEN, procedencia: SALIDA_ORDEN }, ['registro', 'procedencia'])
 
 // ---------------------------------------------------------------- utilidades de interpretación
 const parsear = (texto) => {
@@ -285,20 +284,28 @@ const interpretarRegistroPuntuacion = (r, p) => {
 }
 
 // Registros prematuros: con el registro diferido nadie registra puntuaciones de esta oportunidad mientras puntúan
-// los evaluadores. Se comparan los eventos "puntuacion" de la procedencia (solo metadatos: evaluador, oportunidad y
-// sha256, sin valores) antes y después de la puntuación, con la misma ventana de 50. La procedencia es de solo añadir:
-// al desplazarse la ventana un evento antiguo puede salir, nunca entrar, así que si un evento aparece más veces en la
-// segunda lectura que en la primera, es nuevo (no hay falsos positivos; se escaparía solo si se añadieran más de 50
-// eventos de puntuación entre las dos lecturas).
-const ordenProcedencia = 'nutria --agente orquestador --json procedencia --accion puntuacion --ultimas 50'
+// los evaluadores. Se comparan los eventos "puntuacion" de la procedencia (en texto, una línea por evento con la fecha,
+// el actor y las entradas: oportunidad y evaluador, sin valores) antes y después de la puntuación, con la misma
+// ventana de 20. La procedencia es de solo añadir: al desplazarse la ventana un evento antiguo puede salir, nunca
+// entrar, así que si una línea aparece más veces en la segunda lectura que en la primera, hay un evento nuevo (no hay
+// falsos positivos; se escaparía solo si se añadieran más de 20 eventos de puntuación entre las dos lecturas).
+const ordenProcedencia = 'nutria --agente orquestador procedencia --accion puntuacion --ultimas 20'
 const eventosPuntuacion = (r) => {
   if (!r) return { ok: false, motivo: 'el agente no devolvió la salida de la procedencia (fallo de agente)' }
   if (r.codigo_salida !== 0) return { ok: false, motivo: `la orden terminó con código ${r.codigo_salida}: ${recorte(r.salida)}` }
-  const p = parsear(r.salida)
-  if (!p.ok || !Array.isArray(p.valor)) return { ok: false, motivo: 'la salida no es el JSON de nutria procedencia' }
-  const eventos = p.valor.filter((e) => esObjeto(e) && e.action === 'puntuacion' && esObjeto(e.inputs) && e.inputs.oportunidad === ID)
-    .map((e) => ({ clave: JSON.stringify([e.ts, e.actor, e.inputs.evaluador, esObjeto(e.outputs) ? e.outputs.sha256_puntuaciones : null,
-      e.hash || null]), evaluador: String(e.inputs.evaluador || e.actor || '?'), ts: e.ts || null }))
+  const lineas = String(r.salida === undefined || r.salida === null ? '' : r.salida).split('\n').map((l) => l.trim()).filter(Boolean)
+  if (!lineas.length) return { ok: false, motivo: 'salida vacía: nutria procedencia escribe "(sin eventos)" si no hay ninguno' }
+  if (lineas.length === 1 && lineas[0] === '(sin eventos)') return { ok: true, eventos: [] }
+  const eventos = []
+  for (const linea of lineas) {
+    const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(\{.*)$/.exec(linea)
+    if (!m || m[3] !== 'puntuacion') return { ok: false, motivo: `línea que no es de nutria procedencia --accion puntuacion: "${recorte(linea)}"` }
+    const oportunidad = /"oportunidad":\s*"([^"]*)"/.exec(m[4])
+    const evaluador = /"evaluador":\s*"([^"]*)"/.exec(m[4])
+    if (!oportunidad || oportunidad[1] !== ID) continue
+    eventos.push({ clave: JSON.stringify([m[1], m[2], oportunidad[1], evaluador ? evaluador[1] : null]),
+      evaluador: evaluador ? evaluador[1] : m[2], ts: m[1] })
+  }
   return { ok: true, eventos }
 }
 const registrosPrematuros = (antes, despues) => {
@@ -769,7 +776,8 @@ const pendientes = pendientesDe(resultadoPuntuaciones.filter((p) => p.emitida))
 const alertas = resultadoPuntuaciones.filter((p) => p.alerta).map((p) => `${p.evaluador}: ${p.alerta}`)
 alertas.forEach((a) => log(`Alerta: ${a}`))
 const extraPrematuros = prematuros.comprobado && prematuros.evaluadores.length
-  ? ` Atención: ${prematuros.evaluadores.join(', ')} registró(aron) su puntuación antes de comprobar el sello (consta en la procedencia): ` +
+  ? ` Atención: ${prematuros.evaluadores.length === 1 ? `${prematuros.evaluadores[0]} registró su puntuación`
+    : `${prematuros.evaluadores.join(', ')} registraron sus puntuaciones`} antes de comprobar el sello (consta en la procedencia): ` +
     'una persona revisa ese incumplimiento antes de usar el ranking.'
   : ''
 
