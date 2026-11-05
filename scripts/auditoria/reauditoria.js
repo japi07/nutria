@@ -12,7 +12,8 @@ const IDS = A.ids && typeof A.ids === 'object' ? A.ids : {}
 const ARCHIVO = A.archivo || ''
 const TOTAL = Object.values(IDS).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0)
 if (!TOTAL || !ARCHIVO) return { error: 'Pasa args.archivo (JSON con la lista de hallazgos) y args.ids = {D1: [ids], ...}' }
-const RAIZ = A.raiz || '/home/user/nutria'
+// Raíz del repositorio auditado: ruta absoluta en args.raiz, o '.' (la carpeta del proyecto abierto en Claude Code).
+const RAIZ = A.raiz || '.'
 const PREVIO = A.previo || ''
 
 const BLOQUES = [
