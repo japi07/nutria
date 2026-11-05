@@ -281,3 +281,24 @@ def test_aviso_de_integridad_de_la_procedencia_solo_por_stderr(project, capsys):
     assert code == 0 and isinstance(json.loads(out), list) and "no es íntegra" in err
     code, out, _ = _sin_stderr(capsys, argv)
     assert code == 0 and isinstance(json.loads(out), list)
+
+
+# ============================================================================ P1 + P7: clasificación regulatoria
+def test_clasificar_con_firma_desde_un_agente_se_rechaza_tambien_por_la_api(project, monkeypatch):
+    """P7 clasifica con firma humana llamando a `require_human_signature` de P1 si existe (globals().get): con las dos
+    ramas fusionadas la comprobación está activa, y una firma con señales de agente no cambia la clasificación."""
+    from nutria import db
+    from nutria.config import load_config
+    _oportunidad(project)
+    conn = db.connect(load_config().db_path)
+    try:
+        antes = db.get_opportunity(conn, "O-0001")["regulatory_route"]
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+        with pytest.raises(db.RegistryError, match="Firma humana rechazada"):
+            db.classify_opportunity(conn, "O-0001", "pienso_dietetico", "triage", human_signoff="Ana")
+        assert db.get_opportunity(conn, "O-0001")["regulatory_route"] == antes
+        # Sin firma, el rol propietario del triage sigue pudiendo clasificar (la comprobación no le afecta)
+        db.classify_opportunity(conn, "O-0001", "materia_prima", "triage", actor=db.CLASSIFICATION_OWNER)
+        assert db.get_opportunity(conn, "O-0001")["regulatory_route"] == "materia_prima"
+    finally:
+        conn.close()
