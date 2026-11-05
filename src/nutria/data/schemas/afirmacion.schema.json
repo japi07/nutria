@@ -235,12 +235,14 @@
               "dosis_unidad": {
                 "not": {
                   "const": "no_consta"
-                }
+                },
+                "x-mensaje": "una dosis numérica exige su unidad (la fuente la da junto a la cifra; si no, escribe la dosis como texto o 'no_consta')"
               },
               "dosis_base": {
                 "not": {
                   "const": "no_consta"
-                }
+                },
+                "x-mensaje": "una dosis numérica exige su base de expresión (por animal y día, por kg de MS, % de la MS...)"
               }
             },
             "x-mensaje": "una dosis numérica exige su unidad y su base de expresión"

@@ -686,11 +686,16 @@ def schema_error_text(err) -> str:
         if e.validator == "x-texto":
             hint = e.schema.get("x-mensaje") if isinstance(e.schema, dict) else None
             return f"{e.instance!r} {e.message}" + (f" ({hint})" if hint else "")
-    for e in tree:
+    for k, e in enumerate(tree):
         msg = e.schema.get("x-mensaje") if isinstance(e.schema, dict) else None
         if msg:
             if isinstance(e.instance, (dict, list)):
-                return f"{msg} ({err.message})" if err.validator == "required" else msg
+                if err.validator == "required":
+                    return f"{msg} ({err.message})"
+                # una alternativa (anyOf) puede concretar qué falta: 'falta la etapa o el estado fisiológico'
+                detail = next((d.schema.get("x-mensaje") for d in tree[k + 1:]
+                               if isinstance(d.schema, dict) and d.schema.get("x-mensaje")), None)
+                return f"{msg}: {detail}" if detail and detail != msg else msg
             return f"{e.instance!r}: {msg}"
     return err.message
 
@@ -1483,6 +1488,12 @@ def classification_errors(candidate: dict) -> list[str]:
 
 
 def add_opportunity(conn: sqlite3.Connection, data: dict, actor: str | None = None) -> str:
+    """Registra una oportunidad válida según su esquema (especie y etapa concretas, ruta, grupo funcional y
+    situación coherentes), también si no entra por la CLI. Una ruta fuera_de_alcance_* bloquea la compuerta
+    regulatoria."""
+    errors = schema_errors("oportunidad", data)
+    if errors:
+        raise RegistryError("Oportunidad no válida: " + "; ".join(errors[:8]))
     with transaction(conn):
         opp_id = _next_id(conn, "opportunities", "O")
         now = utc_now()

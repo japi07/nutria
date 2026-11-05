@@ -601,6 +601,12 @@ def test_oportunidad_generica_rechazada_por_la_cli(project):
     with pytest.raises(SystemExit, match="genérico"):
         main(["oportunidad", "nueva", "--datos", path])
     assert db.list_opportunities(_conn()) == []
+    # tampoco por la API del registro (sin pasar por la CLI)
+    for changes in ({"especie": "animales"}, {"etapa": "todas"}, {"especie": ""}, {"raza": "No consta"}):
+        with pytest.raises(db.RegistryError, match="Oportunidad no válida"):
+            db.add_opportunity(_conn(), dict(_example("oportunidad_ejemplo"), **changes))
+    assert db.list_opportunities(_conn()) == []
+    assert db.add_opportunity(_conn(), _example("oportunidad_ejemplo")) == "O-0001"
 
 
 def _claim(source: str) -> dict:
