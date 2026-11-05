@@ -12,9 +12,9 @@ Reglas que el registro hace cumplir (no solo recomienda):
 - una extracción exige que su fuente esté verificada; su estado de doble extracción ('doble_concordante',
   'resuelta') solo lo fija el sistema a partir de una comparación registrada de dos copias depositadas por
   extractores distintos y, si hubo discrepancias, de una conciliación registrada;
+- una ruta regulatoria fuera_de_alcance_* bloquea la compuerta regulatoria (al registrar o al clasificar);
 - una compuerta "superada" solo cuenta si la firma una persona; salir de "bloqueada" exige firma;
-- pasar una oportunidad a "priorizada" o "en_validacion" exige firma y compuertas en regla;
-- una ruta regulatoria fuera_de_alcance_* bloquea la compuerta regulatoria (al registrar o al clasificar).
+- pasar una oportunidad a "priorizada" o "en_validacion" exige firma y compuertas en regla.
 """
 
 from __future__ import annotations
@@ -59,6 +59,50 @@ CREATE TABLE IF NOT EXISTS extractions (
   extractor TEXT, extracted_at TEXT,
   check_status TEXT NOT NULL DEFAULT 'simple', checked_by TEXT, notes TEXT
 );
+
+-- Doble extracción (D2-12): copias depositadas por cada extractor y comparaciones registradas. El estado
+-- 'doble_concordante' o 'resuelta' de una extracción solo lo fija el registro a partir de una comparación; las copias
+-- y las comparaciones no se modifican ni se borran (una comparación solo admite su conciliación, una vez).
+CREATE TABLE IF NOT EXISTS extraction_copies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sha256 TEXT NOT NULL, path TEXT, records TEXT NOT NULL, n_records INTEGER NOT NULL, source_ids TEXT,
+  deposited_by TEXT NOT NULL, deposited_at TEXT NOT NULL,
+  UNIQUE (sha256, deposited_by)
+);
+
+CREATE TABLE IF NOT EXISTS extraction_comparisons (
+  id TEXT PRIMARY KEY,
+  copy_a INTEGER NOT NULL REFERENCES extraction_copies(id),
+  copy_b INTEGER NOT NULL REFERENCES extraction_copies(id),
+  file_a TEXT, sha256_a TEXT NOT NULL, actor_a TEXT NOT NULL,
+  file_b TEXT, sha256_b TEXT NOT NULL, actor_b TEXT NOT NULL,
+  discrepancies TEXT NOT NULL,
+  result TEXT NOT NULL CHECK (result IN ('concordante', 'con_discrepancias')),
+  compared_by TEXT, compared_at TEXT NOT NULL,
+  conciliation TEXT, conciliation_sha256 TEXT, conciliated_by TEXT, conciliated_at TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS extractions_estado_doble_alta BEFORE INSERT ON extractions
+WHEN NEW.check_status <> 'simple'
+  AND NOT EXISTS (SELECT 1 FROM extraction_comparisons c WHERE c.id = NEW.comparison_id)
+BEGIN SELECT RAISE(ABORT, 'el estado de doble extraccion solo lo fija nutria a partir de una comparacion registrada'); END;
+CREATE TRIGGER IF NOT EXISTS extractions_estado_doble_cambio
+BEFORE UPDATE OF check_status, checked_by, comparison_id, pair_a, pair_b ON extractions
+BEGIN SELECT RAISE(ABORT, 'el estado de doble extraccion de una extraccion registrada no se modifica'); END;
+CREATE TRIGGER IF NOT EXISTS extraction_copies_sin_cambios BEFORE UPDATE ON extraction_copies
+BEGIN SELECT RAISE(ABORT, 'una copia depositada no se modifica'); END;
+CREATE TRIGGER IF NOT EXISTS extraction_copies_sin_borrado BEFORE DELETE ON extraction_copies
+BEGIN SELECT RAISE(ABORT, 'una copia depositada no se borra'); END;
+CREATE TRIGGER IF NOT EXISTS extraction_comparisons_sin_borrado BEFORE DELETE ON extraction_comparisons
+BEGIN SELECT RAISE(ABORT, 'una comparacion registrada no se borra'); END;
+CREATE TRIGGER IF NOT EXISTS extraction_comparisons_una_conciliacion BEFORE UPDATE ON extraction_comparisons
+WHEN OLD.result <> 'con_discrepancias' OR OLD.conciliation IS NOT NULL OR NEW.conciliation IS NULL
+  OR NEW.id IS NOT OLD.id OR NEW.copy_a IS NOT OLD.copy_a
+  OR NEW.copy_b IS NOT OLD.copy_b OR NEW.file_a IS NOT OLD.file_a OR NEW.sha256_a IS NOT OLD.sha256_a
+  OR NEW.actor_a IS NOT OLD.actor_a OR NEW.file_b IS NOT OLD.file_b OR NEW.sha256_b IS NOT OLD.sha256_b
+  OR NEW.actor_b IS NOT OLD.actor_b OR NEW.discrepancies IS NOT OLD.discrepancies OR NEW.result IS NOT OLD.result
+  OR NEW.compared_by IS NOT OLD.compared_by OR NEW.compared_at IS NOT OLD.compared_at
+BEGIN SELECT RAISE(ABORT, 'una comparacion registrada solo admite su conciliacion, una vez'); END;
 
 CREATE TABLE IF NOT EXISTS claims (
   id TEXT PRIMARY KEY,
@@ -120,24 +164,6 @@ CREATE TABLE IF NOT EXISTS decisions (
   decided_by TEXT, human_signoff TEXT
 );
 
-CREATE TABLE IF NOT EXISTS extraction_copies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sha256 TEXT NOT NULL, path TEXT, records TEXT NOT NULL, n_records INTEGER NOT NULL, source_ids TEXT,
-  deposited_by TEXT NOT NULL, deposited_at TEXT NOT NULL,
-  UNIQUE (sha256, deposited_by)
-);
-
-CREATE TABLE IF NOT EXISTS extraction_comparisons (
-  id TEXT PRIMARY KEY,
-  copy_a INTEGER NOT NULL REFERENCES extraction_copies(id),
-  copy_b INTEGER NOT NULL REFERENCES extraction_copies(id),
-  file_a TEXT, sha256_a TEXT NOT NULL, actor_a TEXT NOT NULL,
-  file_b TEXT, sha256_b TEXT NOT NULL, actor_b TEXT NOT NULL,
-  discrepancies TEXT NOT NULL,
-  result TEXT NOT NULL CHECK (result IN ('concordante', 'con_discrepancias')),
-  compared_by TEXT, compared_at TEXT NOT NULL,
-  conciliation TEXT, conciliation_sha256 TEXT, conciliated_by TEXT, conciliated_at TEXT
-);
 """
 
 # Columnas añadidas después de la versión 1 del esquema (migración aditiva).

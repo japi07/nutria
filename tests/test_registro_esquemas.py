@@ -106,9 +106,10 @@ def test_agregar_no_puede_declarar_el_estado_de_doble_extraccion(project, capsys
 def test_doble_concordante_declarada_sin_comparacion_no_llega_al_metaanalisis(project, capsys):
     """Reauditoría de D2-12: extracciones nunca comparadas con el estado 'doble_concordante' (de un registro anterior o
     escritas en la base de datos) ya no pasan a la exportación de análisis ni cuentan como verificadas."""
+    sources = [_source(i) for i in range(1, 6)]
     conn = _conn()
-    for i in range(1, 6):
-        source = _source(i)
+    conn.execute("DROP TRIGGER extractions_estado_doble_alta")   # registro creado antes de esta protección
+    for i, source in enumerate(sources, 1):
         conn.execute("INSERT INTO extractions (source_id, species, physiological_stage, intervention, outcome, "
                      "outcome_unit, n_ctrl, n_trt, mean_ctrl, mean_trt, dispersion_type, disp_ctrl, disp_trt, location, "
                      "check_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -126,6 +127,32 @@ def test_doble_concordante_declarada_sin_comparacion_no_llega_al_metaanalisis(pr
     out = _export_json(capsys, "--variable", LECHE, "--csv", str(csv_path), "--incluir-sin-conciliar")
     assert out["filas"] == 5 and any("sin doble extracción verificada" in a for a in out["avisos"])
     assert {r["doble_extraccion_verificada"] for r in _csv_rows(csv_path)} == {"no"}
+
+
+def test_el_estado_de_doble_extraccion_no_se_escribe_en_la_base_de_datos(project, capsys):
+    """Ni un INSERT ni un UPDATE directos fijan el estado; las copias y las comparaciones no se modifican."""
+    import sqlite3
+    comp = _double(project, "x", _records(_source()))
+    conn = _conn()
+    simple = _records(_source(2))[0]
+    assert main(["extraccion", "agregar", "--datos", _write(project / "s.json", simple)]) == 0
+    (sid,) = [r["id"] for r in db.list_extractions(_conn()) if r["check_status"] == "simple"]
+    ataques = [
+        ("INSERT INTO extractions (source_id, species, intervention, outcome, location, check_status) "
+         "VALUES ('doi:10.1234/p7.2', 'vacuno lechero', 'X', 'leche', 'Tabla 1', 'doble_concordante')", ()),
+        ("UPDATE extractions SET check_status = 'doble_concordante', comparison_id = ? WHERE id = ?", (comp, sid)),
+        ("UPDATE extractions SET comparison_id = ? WHERE id = ?", (comp, sid)),
+        ("UPDATE extraction_copies SET records = '[]'", ()),
+        ("DELETE FROM extraction_copies", ()),
+        ("DELETE FROM extraction_comparisons", ()),
+        ("UPDATE extraction_comparisons SET result = 'concordante'", ()),
+        ("UPDATE extraction_comparisons SET conciliation = '{}'", ()),     # concordante: nada que conciliar
+    ]
+    for sql, params in ataques:
+        with pytest.raises(sqlite3.DatabaseError):
+            conn.execute(sql, params)
+    assert len(db.verified_extraction_ids(_conn())) == 2
+    conn.execute("UPDATE extractions SET notes = 'nota' WHERE id = ?", (sid,))   # lo demás sí se puede anotar
 
 
 def test_doble_extraccion_concordante_la_registra_el_sistema(project, capsys):
