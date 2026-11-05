@@ -2,6 +2,11 @@
 con PDR y exportación por especie y etapa (D4-6), periodo de transición e incidencias (D4-7) y clasificación
 regulatoria (D5-12).
 
+En D2-12 se prueban también las vías de elusión conocidas: estado declarado, escritura directa en la base de datos,
+copias corregidas tras ver las discrepancias (también cerrando la comparación con 'no_resueltos'), otra grafía o un
+homoglifo del mismo extractor, autoconciliación, conciliación anónima y vistazo a una copia depositada antes de
+depositar la propia.
+
 Los registros se construyen a partir de las plantillas de `ejemplos/` (si otro cambio endurece los esquemas, se
 actualizan las plantillas y estas pruebas siguen valiendo).
 """
