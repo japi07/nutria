@@ -12,8 +12,21 @@ GATES = ["seguridad", "regulatoria", "analitica", "propiedad_intelectual", "dest
 SIGN = "--firma-humana"
 
 
+_ABIERTAS: list = []
+
+
 def _conn():
-    return db.connect(load_config().db_path)
+    """Conexión al registro del proyecto de la prueba; se cierra al terminar la prueba (sin ResourceWarning)."""
+    conn = db.connect(load_config().db_path)
+    _ABIERTAS.append(conn)
+    return conn
+
+
+@pytest.fixture(autouse=True)
+def _cerrar_conexiones():
+    yield
+    while _ABIERTAS:
+        _ABIERTAS.pop().close()
 
 
 def _verified_source(doi="10.1234/prueba.registro", retracted=False):

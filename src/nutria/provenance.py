@@ -374,7 +374,8 @@ def runtime_versions() -> dict:
     if "entorno" not in _PROCESS_CACHE:
         from importlib import metadata
         versions = {"python": sys.version.split()[0]}
-        for dist in ("numpy", "scipy", "statsmodels", "jsonschema", "requests"):
+        # pandas: lo usa statsmodels en St-Pierre (stats.mixed); los resultados dependen de su versión
+        for dist in ("numpy", "scipy", "statsmodels", "pandas", "jsonschema", "requests"):
             try:
                 versions[dist] = metadata.version(dist)
             except metadata.PackageNotFoundError:  # dependencia opcional ausente
@@ -386,7 +387,7 @@ def runtime_versions() -> dict:
 def environment_snapshot(root: Path) -> dict:
     versions = {"nutria": __version__, "python": sys.version.split()[0], "platform": platform.platform()}
     from importlib import metadata
-    for dist in ("numpy", "scipy", "requests", "jsonschema", "statsmodels"):
+    for dist in ("numpy", "scipy", "requests", "jsonschema", "statsmodels", "pandas"):
         try:
             versions[dist] = metadata.version(dist)
         except metadata.PackageNotFoundError:  # dependencia opcional ausente

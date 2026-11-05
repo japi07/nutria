@@ -371,3 +371,56 @@ def test_coord_status_reason_no_llega_a_los_evaluadores(project, capsys, monkeyp
                  ["--json", "hipotesis", "listar"]):
         code, out, _ = _run(capsys, [*quien, *argv])
         assert code == 0 and "MOTIVO-ESTADO-3" not in out and "status_reason" not in out, argv
+
+
+# ============================================================================ fase de coordinación (2): P1 y P2
+def _proc_con_claude(root: Path) -> Path:
+    """/proc simulado: este proceso desciende de Claude Code (sin ninguna variable de entorno de Claude Code)."""
+    proc = root / "proc"
+    for pid, ppid, comm, cmdline in ((os.getpid(), 200, "python3", ["python3", "-m", "nutria"]),
+                                      (200, 100, "bash", ["/bin/bash", "-c", "x"]),
+                                      (100, 1, "claude", ["/opt/claude-code/bin/claude"])):
+        d = proc / str(pid)
+        d.mkdir(parents=True)
+        (d / "stat").write_text(f"{pid} ({comm}) S {ppid} {pid} {pid} 34816 -1 4194560", "utf-8")
+        (d / "comm").write_text(comm + "\n", "utf-8")
+        (d / "cmdline").write_bytes(b"\0".join(a.encode() for a in cmdline) + b"\0")
+        (d / "environ").write_bytes(b"PATH=/bin\0")
+    return proc
+
+
+def test_coord_revision_de_informe_por_la_api_exige_la_terminal_de_una_persona(project, monkeypatch):
+    """Petición de P1 a P2 (e) y de P2 a P1 (1): `db.add_report_review` guarda una firma humana y aplica la comprobación
+    central (`require_human_signature`): antecesores y terminal de control, no solo las variables de este proceso. Un
+    programa lanzado desde Claude Code que llame a la API sin esas variables no registra la revisión."""
+    from nutria import db, provenance
+    from nutria.config import load_config
+    conn = db.connect(load_config().db_path)
+    try:
+        monkeypatch.setattr(provenance, "PROC_ROOT", str(_proc_con_claude(project)))
+        monkeypatch.setattr(provenance, "_PROCESS_CACHE", {})
+        with pytest.raises(db.RegistryError, match="Firma humana rechazada"):
+            db.add_report_review(conn, "research/informes/O-0001.md", "a" * 64, "Ana Pérez", status="revisado")
+        assert db.report_reviews(conn) == []
+        # control: desde la terminal de una persona (sin /proc con Claude Code) sí se registra
+        monkeypatch.setattr(provenance, "PROC_ROOT", str(project / "sin_proc"))
+        monkeypatch.setattr(provenance, "_PROCESS_CACHE", {})
+        db.add_report_review(conn, "research/informes/O-0001.md", "a" * 64, "Ana Pérez", status="revisado")
+        assert [r["reviewer"] for r in db.report_reviews(conn)] == ["Ana Pérez"]
+    finally:
+        conn.close()
+
+
+def test_coord_eventos_con_las_versiones_de_las_bibliotecas_de_calculo(project):
+    """Petición de P5 a P1: cada evento lleva las versiones de numpy, scipy, statsmodels y pandas (St-Pierre usa el
+    optimizador de statsmodels con pandas), si están instaladas."""
+    from importlib import metadata
+
+    from nutria import provenance
+    from nutria.config import load_config
+    ev = provenance.log_event(load_config(), "prueba", inputs={"x": 1})
+    for dist in ("numpy", "scipy", "statsmodels", "pandas"):
+        try:
+            assert ev["entorno"][dist] == metadata.version(dist), dist
+        except metadata.PackageNotFoundError:
+            assert dist not in ev["entorno"]
