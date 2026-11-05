@@ -509,14 +509,17 @@ def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
     items = []
     if not project.built_sales:
         per_animal = farm_price.central(stat) * dose["g_animal_dia"] / 1000.0 * farm_days.central(stat)
-        implied = project.peak_sales.central(stat) / per_animal if per_animal > 0 else float("nan")
+        implied = project.peak_sales.central(stat) / per_animal if per_animal > 0 else None
         items.append({"magnitud": "ventas", "estado": "no_comprobable", "ganadero": None, "empresa": None,
                       "detalle": "ventas_pico_eur_anio es un dato de entrada: no puede comprobarse que use el precio, "
                                  "la dosis y los días del ganadero. Constrúyelas con censo_direccionable × "
                                  "adopcion_pico × ciclos_por_animal_anio × dias_por_ciclo × dosis_g_dia × "
-                                 f"precio_eur_kg. Con los valores centrales del ganadero ({per_animal:.4g} € por "
-                                 f"animal y ciclo) equivalen a {implied:,.0f} animales-ciclo tratados al año, a "
-                                 "precio de ganadero y sin margen de la distribución.",
+                                 "precio_eur_kg."
+                                 + (f" Con los valores centrales del ganadero ({per_animal:.4g} € por animal y ciclo) "
+                                    f"equivalen a {implied:,.0f} animales-ciclo tratados al año, a precio de ganadero "
+                                    "y sin margen de la distribución." if implied is not None else
+                                    " El coste del producto por animal y ciclo del ganadero no es positivo: no se "
+                                    "pueden deducir los animales tratados."),
                       "animales_ciclo_implicitos": implied})
     else:
         m = project.market

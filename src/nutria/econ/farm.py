@@ -618,7 +618,9 @@ def scenarios(model: FarmModel, n: int = 10000, seed: int = 42) -> dict:
         out[name] = {"percentil": q, "neto": net[f"p{q:02d}"],
                      "definicion": f"P{q} del beneficio neto simulado ({n} simulaciones, semilla {seed})"}
     res = _evaluate(model, _central_values(model))
-    central = {k: (None if x is None else float(x)) for k, x in res.items() if k != "componentes"}
+    # null (no NaN) en el JSON: un ROI sin coste central positivo no es calculable.
+    central = {k: (None if x is None or not math.isfinite(float(x)) else float(x)) for k, x in res.items()
+               if k != "componentes"}
     central["componentes"] = {name: float(y) for name, y in res["componentes"].items()}
     central["estadistico_central"] = model.central
     central["definicion"] = (f"Evaluación determinista con la {central_text(model)}; no es un percentil del neto")
@@ -638,8 +640,8 @@ def breakeven(model: FarmModel) -> list[dict]:
         unit = base[f"beneficio[{i}].valor_unitario"] * (
             base.get(f"beneficio[{i}].dias", base["escenario.dias"]) if b.per_day else 1.0)
         others = sum(float(x) for name, x in res["componentes"].items() if name != b.name)
-        alone = cost / unit if unit > 0 else float("nan")
-        with_others = (cost - others) / unit if unit > 0 else float("nan")
+        alone = cost / unit if unit > 0 else None                 # None (null en JSON): no calculable
+        with_others = (cost - others) / unit if unit > 0 else None
         out.append({"beneficio": b.name, "por_dia": b.per_day, "valor": alone,
                     "valor_con_otros_centrales": with_others,
                     "respuesta_central": base[f"beneficio[{i}].respuesta"], "coste_central": cost,
@@ -763,7 +765,7 @@ def _breakeven_lines(model: FarmModel, mc: dict) -> list[str]:
              f"{central_text(model)}; cambia el estadístico con --valor-central):"]
     for t in mc["respuestas_umbral"]:
         per = "unidades/animal/día" if t["por_dia"] else "unidades/animal/ciclo"
-        if not math.isfinite(t["valor"]):
+        if t["valor"] is None:
             lines.append(f"- '{t['beneficio']}': no calculable (valor unitario × días central <= 0)")
             continue
         with_others = t["valor_con_otros_centrales"]
@@ -839,7 +841,8 @@ def report(model: FarmModel, n: int = 10000, seed: int = 42) -> str:
     c = sc["valores_centrales"]
     lines += ["", f"Valores centrales con la {central_text(model)}: "
                   f"beneficio {c['beneficio']:.2f} €; coste {c['coste']:.2f} €; neto {c['neto']:.2f} €; "
-                  f"ROI (beneficio/coste) {c['roi']:.2f}"]
+                  "ROI (beneficio/coste) " + (f"{c['roi']:.2f}" if c["roi"] is not None
+                                              else "no calculable (coste central <= 0)")]
     neto, roi = mc["neto_por_animal"], mc["roi"]
     corr = ("entradas independientes salvo las correlaciones declaradas, con cópula gaussiana: "
             + ", ".join(model.corr_names)) if model.corr_matrix is not None else \

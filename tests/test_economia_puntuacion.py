@@ -1218,3 +1218,28 @@ def test_exigir_fuentes_resuelve_la_fuente_por_doi_o_pmid(tmp_path, project, cap
         assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == code, source
         err = capsys.readouterr().err
         assert message is None or message in err, (source, err)
+
+
+# ============================================================================ D8-12: JSON estricto (sin NaN)
+def _strict_json(text: str):
+    def reject(constant):
+        raise AssertionError(f"JSON no estricto: {constant}")
+    return json.loads(text, parse_constant=reject)
+
+
+def test_salidas_economicas_sin_nan_en_json(tmp_path, project, capsys):
+    """Valor unitario 0 (respuesta umbral no calculable) y coste central 0 (ROI no calculable): null, no NaN."""
+    path = _write(tmp_path, "degenerado.toml", _FARM_BASE.format(dosis="dosis_g_dia = 0", racion="").replace(
+        "valor_unitario = 0.4", "valor_unitario = 0.0"))
+    assert main(["--json", "econ", "ganadero", str(path), "--sim", "100"]) == 0
+    out = _strict_json(capsys.readouterr().out)
+    assert out["monte_carlo"]["respuesta_umbral"]["valor"] is None
+    assert out["escenarios"]["valores_centrales"]["roi"] is None
+    assert main(["econ", "ganadero", str(path), "--sim", "100"]) == 0
+    text = capsys.readouterr().out
+    assert "no calculable (valor unitario × días central <= 0)" in text and "no calculable (coste central <= 0)" in text
+    as_data = _write(tmp_path, "empresa_dato.toml", _COMPANY.format(mercado="ventas_pico_eur_anio = 1000\n"
+                                                                            "anios_comercializacion = 2"))
+    assert main(["--json", "econ", "coherencia", str(path), str(as_data)]) == 1
+    res = _strict_json(capsys.readouterr().out)
+    assert res["comparaciones"][0]["animales_ciclo_implicitos"] is None
