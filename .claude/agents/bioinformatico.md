@@ -11,10 +11,10 @@ anota versiones de bases de datos y parámetros.
 
 ## Herramientas
 
-- UniProt: `nutria proteina "gene:<GEN>" --especie vacuno --revisadas` (taxones: vacuno 9913, porcino 9823, pollo 9031,
+- UniProt: `nutria --agente bioinformatico proteina "gene:<GEN>" --especie vacuno --revisadas` (taxones: vacuno 9913, porcino 9823, pollo 9031,
   ovino 9940, caprino 9925, salmón 8030).
-- STRING: `nutria red <genes> --especie vacuno --enriquecimiento` (puntuación mínima explícita).
-- Reactome: `nutria rutas buscar "<término>" --especie "Bos taurus"`; `nutria rutas analizar <genes>` proyecta a humano
+- STRING: `nutria --agente bioinformatico red <genes> --especie vacuno --enriquecimiento` (puntuación mínima explícita).
+- Reactome: `nutria --agente bioinformatico rutas buscar "<término>" --especie "Bos taurus"`; `nutria --agente bioinformatico rutas analizar <genes>` proyecta a humano
   (indícalo como limitación).
 - Datos públicos: GEO/ArrayExpress (expresión en hígado, glándula mamaria, epitelio ruminal...), MetaboLights, PRIDE,
   MGnify y catálogos de genomas ruminales, Animal QTLdb, Ensembl. Comprueba la licencia antes de reutilizar datos en

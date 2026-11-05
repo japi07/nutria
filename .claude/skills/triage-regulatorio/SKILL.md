@@ -107,6 +107,11 @@ Requisitos de seguridad para compuestos-toxicologia: ...
 Incertidumbres que requieren revisión profesional: ...
 ```
 
+Registra después la clasificación (situación, ruta y grupo funcional) con
+`nutria --agente regulacion-seguridad oportunidad clasificar <ID> --ruta <ruta> [--grupo-funcional <categoria.grupo>] [--situacion <situación>] --motivo "..."`
+(sin `--firma-humana`; `--grupo-funcional` es obligatorio con una ruta `aditivo_*`; una ruta `fuera_de_alcance_*` bloquea la compuerta regulatoria; sin clasificación, la ruta del registro queda en
+`indeterminada` y el workflow lo señala). Comprueba cada acto citado con `nutria --agente regulacion-seguridad normativa eurlex <CELEX>` (título, fecha, ELI y versión consolidada; sin red, la base legal queda pendiente de verificación).
+
 Registra la propuesta, sin `--firma-humana`:
 `nutria --agente regulacion-seguridad puntuar compuerta <ID> regulatoria <estado> --motivo "..."`. Una propuesta
 `bloqueada` actúa de inmediato; `superada` no cuenta hasta que la firme una persona; salir de `bloqueada` exige firma

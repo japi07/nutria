@@ -26,6 +26,14 @@ estrategia documentada (consultas exactas, fuentes y fechas) que permite repetir
 
 ## Reglas
 
+- Las búsquedas de novedad que revelan la combinación inventiva van con `--sensibilidad confidencial` (la
+  procedencia guarda solo la huella de la consulta, que viaja igualmente al servicio externo); también en
+  `molecula`, `diana`, `proteina`, `red` y `rutas` cuando la consulta la revela. En WebSearch y WebFetch no escribas
+  la combinación completa; el hook web guarda por defecto solo el dominio y la huella, y `NUTRIA_PROCEDENCIA_WEB=claro` se usa
+  solo con temas no confidenciales.
+- Códigos de salida: `buscar` o `diana` con 1 = resultados incompletos (repite o divide la búsqueda y dilo);
+  `doctor` con 1 = fallan comprobaciones esenciales (dilo y continúa con lo que no dependa de ellas).
+
 - Solo citas lo que aparece en resultados de búsqueda o en la página de la fuente. Nunca de memoria.
 - Distingue el tipo de estudio (in vitro, ex vivo, in vivo, ensayo controlado, observacional, revisión narrativa,
   revisión sistemática, metaanálisis, mecanístico, computacional) y la especie.
@@ -34,4 +42,4 @@ estrategia documentada (consultas exactas, fuentes y fechas) que permite repetir
 - Si una base no es accesible (red bloqueada, suscripción), dilo y continúa con las demás; no la sustituyas por
   suposiciones. Web of Science, Scopus y CAB Abstracts requieren suscripción; Google Scholar no tiene API.
   OpenAlex exige clave de API en todas las peticiones desde el 13-02-2026 (variable de entorno `OPENALEX_API_KEY`;
-  claves gratuitas en https://openalex.org/settings/api): si falta, `nutria doctor` lo indica y debes decirlo.
+  claves gratuitas en https://openalex.org/settings/api): si falta, `nutria --agente investigador-bibliografico doctor` lo indica y debes decirlo.

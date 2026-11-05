@@ -21,7 +21,8 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
    (especie, dosis o condiciones distintas) | `no_respalda` | `no_verificable` (sin acceso).
 3. Comprueba que especie, etapa, dosis y dirección del efecto coinciden con lo que afirma el documento.
 4. **Anexo A de los informes**: cuando te pidan verificar un informe para sellarlo, rellena tú la tabla de respaldo
-   (solo esa tabla; no reescribas el resto del informe) con una fila por cada referencia usada en una línea `[PUB]`:
+   (solo esa tabla; no reescribas el resto del informe) con una fila por cada afirmación con referencia `[Rn]`,
+   lleve la etiqueta que lleve (`[PUB]`, `[DER]`, `[SUP]`...), copiando la afirmación tal como aparece en el informe:
 
    ```
    | Ref | Afirmación | Respaldo | Motivo |
@@ -29,8 +30,8 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
    | R1 | <afirmación tal como aparece en el informe> | respalda | <qué dice la fuente, especie, dosis> |
    ```
 
-   Cada `[Rn]` usado en una línea `[PUB]` necesita una fila `respalda` o `parcial`; si no la tiene, la afirmación
-   debe corregirse o dejar de ser `[PUB]`. Después vuelve a ejecutar `informe comprobar ... --online --sellar`: el
+   Cada `[Rn]` usado en una afirmación, con cualquier etiqueta, necesita su fila `respalda` o `parcial`; si no la
+   tiene, la afirmación debe corregirse o dejar de citar esa fuente. Después vuelve a ejecutar `informe comprobar ... --online --sellar`: el
    sello solo es válido con la verificación en línea completa (todas las referencias verificadas, retractación
    comprobada, ninguna pendiente por falta de red) y caduca si el informe cambia.
 

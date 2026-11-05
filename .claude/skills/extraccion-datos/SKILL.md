@@ -6,7 +6,7 @@ description: Reglas para extraer datos cuantitativos de estudios de nutrición a
 # Extracción de datos
 
 Esquema: `src/nutria/data/schemas/extraccion.schema.json`; plantilla: `ejemplos/extraccion_ejemplo.json`. Flujo:
-`nutria fuente agregar --doi <doi>` → copias A y B en `research/datos/<tema>/` → depósito de cada copia → comparación
+`nutria --agente extractor-datos fuente agregar --doi <doi>` → copias A y B en `research/datos/<tema>/` → depósito de cada copia → comparación
 registrada → conciliación si hay discrepancias → exportación para el análisis.
 
 ## Reglas
@@ -79,7 +79,7 @@ registrada → conciliación si hay discrepancias → exportación para el anál
    llega al análisis.
 6. `estado_verificacion` y `verificado_por` los fija el sistema: `extraccion agregar` solo registra extracciones
    simples, que no pasan al análisis.
-7. Exportación para el análisis: `nutria extraccion exportar --variable <V> --especie <especie> --csv <f>` (formato de
+7. Exportación para el análisis: `nutria --agente extractor-datos extraccion exportar --variable <V> --especie <especie> --csv <f>` (formato de
    análisis: `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable,
    unidad, especie, diseno, dosis, ...`, la dieta basal numérica con la PDR, las ventanas y la definición de caso).
    Solo exporta extracciones con doble extracción verificada; se niega a mezclar especies salvo con

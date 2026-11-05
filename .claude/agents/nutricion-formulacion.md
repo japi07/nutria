@@ -28,5 +28,7 @@ Eres el especialista en nutrición animal y formulación.
 
 ## Formulación teórica
 
+Expresa la dosis en las tres bases (g/animal/día, mg/kg de MS y g/t de pienso) con
+`nutria --agente nutricion-formulacion dosis convertir` (salida `[DER]`); la ingestión se declara con fuente o `[SUP]`.
 Rangos exploratorios de dosis justificados con datos publicados (`[PUB]`) o etiquetados como `[SUP]`, con el
-experimento que los acotaría. Calcula el coste por animal y día con `nutria econ ganadero` cuando haya precios con fuente.
+experimento que los acotaría. Calcula el coste por animal y día con `nutria --agente nutricion-formulacion econ ganadero` cuando haya precios con fuente.

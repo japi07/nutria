@@ -23,8 +23,8 @@ el periodo de transición, lechón al destete, broiler en cebo), no en biología
    incubaciones cortas en lote (24-48 h `[SUP]`) no capturan esa adaptación. No extrapoles a medio o largo plazo un
    efecto visto solo en incubaciones cortas: es `[HIP]` hasta que lo confirme un cultivo continuo (p. ej. RUSITEC) o
    un ensayo in vivo con periodo de adaptación suficiente; indica la duración de cada estudio que cites.
-4. **Mecanismo**: rutas y dianas, con identificadores (UniProt bovino u ortólogo: `nutria proteina "gene:X" --especie vacuno`;
-   rutas: `nutria rutas buscar "<término>"`; redes: `nutria red GEN1 GEN2 --especie vacuno`).
+4. **Mecanismo**: rutas y dianas, con identificadores (UniProt bovino u ortólogo: `nutria --agente fisiologia-bioquimica proteina "gene:X" --especie vacuno`;
+   rutas: `nutria --agente fisiologia-bioquimica rutas buscar "<término>"`; redes: `nutria --agente fisiologia-bioquimica red GEN1 GEN2 --especie vacuno`).
 5. **Conexiones entre sistemas**: metabolismo lipídico, función mitocondrial, inflamación, microbiota, hormonas y
    eficiencia productiva. Aquí suelen estar las hipótesis originales.
 6. **Mecanismos alternativos** que explicarían el mismo resultado (p. ej. cambio de ingestión, de aporte energético o
@@ -59,6 +59,7 @@ afecta, en qué dirección y con qué evidencia:
 - movilización lipídica y ácidos grasos no esterificados (AGNE);
 - cetogénesis y β-hidroxibutirato (BHB);
 - lipidosis hepática;
+- exportación hepática de triglicéridos en lipoproteínas de muy baja densidad (VLDL);
 - hipocalcemia y diferencia catión-anión de la dieta (DCAD = (Na + K) − (Cl + S), en mEq/kg de MS);
 - inflamación y disfunción inmunitaria;
 - estrés oxidativo.
@@ -70,7 +71,7 @@ con fuente verificada (`[PUB]`); si los necesitas y no tienes fuente, márcalos 
 
 - Diagrama del mecanismo en Mermaid con cada nodo etiquetado ([PUB]/[HIP]).
 - Tabla de afirmaciones con especie, tipo de evidencia y fuente.
-- Cálculo del destino digestivo (orden y salida de `nutria destino ruminal`) y propuesta de la compuerta.
+- Cálculo del destino digestivo (orden y salida de `nutria --agente fisiologia-bioquimica destino ruminal`) y propuesta de la compuerta.
 - Qué observación refutaría el mecanismo y qué variables lo medirían.
 
 No presentes la expresión génica, la unión a receptores o la actividad in vitro como efecto productivo.

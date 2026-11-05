@@ -15,14 +15,23 @@ inclusión y exclusión.
 Bloques en inglés unidos con AND; sinónimos con OR dentro de cada bloque; MeSH en PubMed (`"Cattle"[MeSH]`);
 truncamiento con `*`. Guarda la consulta exacta de cada fuente.
 
+Las búsquedas de novedad que revelan la combinación inventiva van con `--sensibilidad confidencial` (la
+  procedencia guarda solo la huella de la consulta, que viaja igualmente al servicio externo); también en
+  `molecula`, `diana`, `proteina`, `red` y `rutas` cuando la consulta la revela. En WebSearch y WebFetch no escribas
+  la combinación completa; el hook web guarda por defecto solo el dominio y la huella, y `NUTRIA_PROCEDENCIA_WEB=claro` se usa
+  solo con temas no confidenciales.
+
+Códigos de salida: `buscar` o `diana` con 1 = resultados incompletos (repite o divide la búsqueda y dilo);
+  `doctor` con 1 = fallan comprobaciones esenciales (dilo y continúa con lo que no dependa de ellas).
+
 ## 3. Fuentes
 
 | Fuente | Orden | Para qué |
 |---|---|---|
-| PubMed | `nutria buscar pubmed "<q>" --resumenes` | MEDLINE, MeSH, tipos de publicación, retractaciones |
-| Europe PMC | `nutria buscar europepmc "<q>"` | PMC con texto completo, preprints, agencias |
-| OpenAlex | `nutria buscar openalex "<q>" --desde 2000` | cobertura amplia, citas, retractaciones |
-| EFSA Journal | `nutria buscar efsa "<q>"` | opiniones del Panel FEEDAP y guías |
+| PubMed | `nutria --agente investigador-bibliografico buscar pubmed "<q>" --resumenes` | MEDLINE, MeSH, tipos de publicación, retractaciones |
+| Europe PMC | `nutria --agente investigador-bibliografico buscar europepmc "<q>"` | PMC con texto completo, preprints, agencias |
+| OpenAlex | `nutria --agente investigador-bibliografico buscar openalex "<q>" --desde 2000` | cobertura amplia, citas, retractaciones |
+| EFSA Journal | `nutria --agente investigador-bibliografico buscar efsa "<q>"` | opiniones del Panel FEEDAP y guías |
 | Web | WebSearch / WebFetch | EUR-Lex, Registro UE de aditivos, FAO/AGRIS, Feedipedia, literatura gris |
 
 Con suscripción de la organización: Web of Science, Scopus y CAB Abstracts (buena cobertura de ciencia animal).
@@ -38,7 +47,7 @@ Consultas específicas de resultados nulos o adversos: `("no effect" OR "did not
 ## 5. Cribado y registro
 
 Cribado por título y resumen con motivo de exclusión. Registra las incluidas con verificación:
-`nutria fuente agregar --doi <doi> --tipo-estudio <tipo> --especie "<especie>"`.
+`nutria --agente investigador-bibliografico fuente agregar --doi <doi> --tipo-estudio <tipo> --especie "<especie>"`.
 
 ## 6. Documentación
 

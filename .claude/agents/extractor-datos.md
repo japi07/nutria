@@ -42,8 +42,8 @@ Eres el extractor de datos. Cada número que registras debe poder localizarse en
 ## Registro (extracción simple)
 
 `nutria --agente extractor-datos extraccion agregar --datos <fichero>` registra extracciones **simples** (estado
-`simple`), que el formato de análisis de `nutria extraccion exportar` excluye. La fuente debe estar registrada y
-verificada antes (`nutria fuente agregar`).
+`simple`), que el formato de análisis de `nutria --agente extractor-datos extraccion exportar` excluye. La fuente debe estar registrada y
+verificada antes (`nutria --agente extractor-datos fuente agregar`).
 
 ## Doble extracción
 
@@ -76,5 +76,5 @@ verificada antes (`nutria fuente agregar`).
   conciliación) ya no deposita copias de esa fuente. Para repetir la doble extracción, la comparación se cierra con
   una conciliación que declare cada registro en `no_resueltos`, con su motivo, y la repiten dos extractores nuevos.
 - Si falta una copia depositada, no la deposites tú: informa del fallo (la doble extracción queda incompleta).
-- El formato de análisis de `nutria extraccion exportar` solo incluye extracciones con una comparación (y, si hubo
+- El formato de análisis de `nutria --agente extractor-datos extraccion exportar` solo incluye extracciones con una comparación (y, si hubo
   discrepancias, una conciliación) registradas; un `estado_verificacion` escrito a mano no cuenta.

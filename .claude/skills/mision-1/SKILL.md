@@ -18,7 +18,7 @@ El workflow `mision-1-auto` (no es una orden con `/`: lánzalo por su nombre con
 mismas fases, una por invocación y con un punto de control humano entre ellas: `{"fase": "mapa"}` (por defecto) →
 `{"fase": "oportunidades", "problemas": [...aprobados por una persona...]}` → `{"fase": "planes", "seleccion": ["O-xxxx", ...]}`.
 Cada fase empieza con el paso 0. Cada entregable (mapa, ranking, planes) pasa por `verificador-citas`
-(`nutria verificar <md>`) antes de presentarse, y la verificación solo cuenta como completa si lo dice la salida de
+(`nutria --agente <tu-rol> verificar <md>`) antes de presentarse, y la verificación solo cuenta como completa si lo dice la salida de
 `nutria`. Requiere Claude Code con la herramienta Workflow: está en la versión 2.1.318 del binario nativo
 (`claude --version`), pero no en el paquete npm `@anthropic-ai/claude-code` 2.1.42. Los workflows se han probado con
 agentes simulados (`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin.
@@ -31,9 +31,9 @@ lanzar ningún agente. El registro del workflow da una estimación del número d
 
 ## Paso 0. Preparación (en cada fase)
 
-1. `nutria doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás (el workflow acepta
+1. `nutria --agente <tu-rol> doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás (el workflow acepta
    el estado de cada fuente como texto, "OK (200)", o como objeto, `{"estado": "ok", ...}`).
-2. `nutria estado` (en texto: una línea `O-xxxx [estado] título` por oportunidad). No dupliques oportunidades ya
+2. `nutria --agente <tu-rol> estado` (en texto: una línea `O-xxxx [estado] título` por oportunidad). No dupliques oportunidades ya
    registradas: compara los títulos normalizados con los registrados (el workflow no genera, comprueba ni registra de
    nuevo una oportunidad con el mismo título normalizado; si la salida no cuadra con el resumen por estados, o no hay
    registro, no continúa la fase "oportunidades").
@@ -60,7 +60,7 @@ actuales y su eficacia documentada**, brecha, mecanismos implicados y fuentes.
 `director-cientifico` consolida en `research/revisiones/M1a_mapa_problemas_<fecha>.md` (sin sobrescribir un mapa
 anterior): une duplicados, prioriza por carga × necesidad no cubierta (justificado), conserva los desacuerdos y
 **conserva las soluciones actuales de cada problema** (los generadores las necesitan para no proponer lo que ya
-existe). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1a_mapa_problemas_<fecha>.md`.
+existe). `verificador-citas` ejecuta `nutria --agente verificador-citas verificar research/revisiones/M1a_mapa_problemas_<fecha>.md`.
 
 **Punto de control humano**: presenta el mapa y su verificación; una persona aprueba la lista de problemas (o ajusta
 el foco) antes de continuar.
@@ -80,7 +80,7 @@ el foco) antes de continuar.
   dos comprobaciones, no se registra.
 - Registra cada oportunidad el agente que la generó: JSON en `research/oportunidades/M1_<fecha>_<título normalizado>.json`
   (sin sobrescribir ficheros existentes) y `nutria --agente <generador> oportunidad nueva --datos <f>`; hipótesis
-  con `nutria hipotesis nueva` en `research/hipotesis/M1_<fecha>_<título normalizado>_H<n>.json`.
+  con `nutria --agente <tu-rol> hipotesis nueva` en `research/hipotesis/M1_<fecha>_<título normalizado>_H<n>.json`.
 
 ## Paso 3 (M1c, fase "oportunidades"). Triage, crítica y puntuación ciega
 
@@ -88,15 +88,15 @@ Para cada oportunidad, en paralelo, cada especialista **propone** la compuerta d
 sin `--firma-humana` (`nutria --agente <rol> puntuar compuerta <ID> <compuerta> <estado> --motivo "..."`):
 - `regulacion-seguridad`: clasificación y vía (skill `triage-regulatorio`) → `regulatoria`;
 - `compuestos-toxicologia`: seguridad → `seguridad`;
-- `fisiologia-bioquimica`: destino digestivo con `nutria destino ruminal` → `destino_digestivo`;
+- `fisiologia-bioquimica`: destino digestivo con `nutria --agente fisiologia-bioquimica destino ruminal` → `destino_digestivo`;
 - `desarrollo-industrial`: fabricación y método analítico → `analitica`;
-- `economia-mercado-pi`: patentes y FTO preliminar → `propiedad_intelectual`; además ejecuta `nutria econ ganadero`
+- `economia-mercado-pi`: patentes y FTO preliminar → `propiedad_intelectual`; además ejecuta `nutria --agente economia-mercado-pi econ ganadero <toml> --exigir-fuentes`
   (entradas con fuente o `[SUP]`) antes de la puntuación;
 - `sostenibilidad-bienestar`: impacto, bienestar y ética de la validación → `etica`;
 - `critico-red-team`: intento de refutación, sin ver puntuaciones.
 
 Una propuesta `bloqueada` actúa de inmediato; `superada` no cuenta hasta que la firme una persona. Después se leen las
-compuertas efectivas del registro (`nutria oportunidad ver <ID> --sin-puntuaciones --json`): **una oportunidad con
+compuertas efectivas del registro (`nutria --agente <tu-rol> oportunidad ver <ID> --sin-puntuaciones --json`): **una oportunidad con
 alguna compuerta propuesta o efectiva `bloqueada` no se puntúa**; se informa como bloqueada con su motivo. Si no se
 pueden leer sus compuertas, tampoco se puntúa (falla en cerrado).
 
@@ -104,10 +104,10 @@ Las demás las puntúan **tres `evaluador-independiente`** por oportunidad, con 
 (`evaluador-1`, `evaluador-2`, `evaluador-3`) y, si es posible, modelos distintos, cada uno sin ver las puntuaciones de
 los demás: puntúan los 9 criterios con la skill `puntuacion` y lo registran (`nutria --agente <id> puntuar registrar`).
 
-Ranking (lo ejecuta el orquestador, no un evaluador): `nutria puntuar ranking --perfil recomendado --sim 5000` y
+Ranking (lo ejecuta el orquestador, no un evaluador): `nutria --agente director-cientifico puntuar ranking --perfil recomendado --sim 5000` y
 `--perfil original`. Guarda ambas salidas e interprétalas en `research/revisiones/M1_ranking_<fecha>.md` (estados APTA,
 CONDICIONAL, BLOQUEADA, INCOMPLETA, INSUFICIENTE; robustez frente a los pesos; desacuerdos; compuertas pendientes de
-firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ranking_<fecha>.md`.
+firma). `verificador-citas` ejecuta `nutria --agente verificador-citas verificar research/revisiones/M1_ranking_<fecha>.md`.
 
 ## Paso 4 (M1d, fase "planes"). Selección y planes
 
@@ -129,9 +129,9 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
    Directiva 2010/63/UE, in situ como in vivo, guía FEEDAP, BPL, potencia, registro previo, notificación a EFSA,
    duración de los ensayos frente a la adaptación de la microbiota); `director-cientifico` incorpora las correcciones.
 6. Con el diseño experimental ya escrito (F10), `sostenibilidad-bienestar` **vuelve a proponer la compuerta `etica`**
-   sobre ese diseño (el workflow informa si quedó registrada según la salida literal de `nutria puntuar compuerta`:
+   sobre ese diseño (el workflow informa si quedó registrada según la salida literal de `nutria --agente <tu-rol> puntuar compuerta`:
    una propuesta sin firma no sustituye una ética ya firmada por una persona), y `verificador-citas` ejecuta
-   `nutria verificar research/planes/<ID>.md`.
+   `nutria --agente <tu-rol> verificar research/planes/<ID>.md`.
 
 ## Entregables
 

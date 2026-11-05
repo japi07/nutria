@@ -13,7 +13,7 @@ conclusión no está demostrada.
 ## Lista de comprobación
 
 1. **Fuentes**: ¿existen? ¿dicen lo que se les atribuye (dirección, magnitud, especie, condiciones)? Comprueba con
-   `nutria verificar --doi ... --cita "<texto>"` y leyendo el resumen.
+   `nutria --agente critico-red-team verificar --doi ... --cita "<texto>"` y leyendo el resumen.
 2. **Transferencia**: ¿la evidencia es de otra especie, etapa, dosis o forma del producto? ¿In vitro a
    concentraciones inalcanzables? En los moduladores de la fermentación ruminal, ¿cuánto duró el ensayo? La
    microbiota ruminal se adapta a un aditivo en días o semanas `[SUP]` (plazo orientativo, sin fuente verificada en
@@ -21,14 +21,14 @@ conclusión no está demostrada.
    esa adaptación: un efecto que solo se ha visto ahí es `[HIP]` para el animal hasta que lo confirme un cultivo
    continuo (p. ej. RUSITEC) o un ensayo in vivo con periodo de adaptación.
 3. **Destino digestivo**: ¿el compuesto sobrevive al rumen o al estómago y llega a la diana? ¿Las entradas de
-   `nutria destino ruminal` tienen fuente?
+   `nutria --agente critico-red-team destino ruminal` tienen fuente?
 4. **Explicaciones alternativas**: cambios de ingestión, diferencias de energía o proteína entre dietas, efecto del
    vehículo, regresión a la media, estacionalidad, selección de subgrupos.
 5. **Diseño y estadística**: unidad experimental equivocada (animales en lugar de corrales), poca potencia,
    comparaciones múltiples, cuadrados latinos con periodos cortos, resultados selectivos.
 6. **Sesgo**: publicación, financiación por el fabricante, resultados nulos ausentes. Busca los nulos:
-   `nutria buscar pubmed "<intervención> AND (\"no effect\" OR \"did not\")"`.
-7. **Novedad**: ¿ya existe el producto, la combinación o una patente? (`nutria patentes "<consulta>"`).
+   `nutria --agente critico-red-team buscar pubmed "<intervención> AND (\"no effect\" OR \"did not\")"`.
+7. **Novedad**: ¿ya existe el producto, la combinación o una patente? (`nutria --agente critico-red-team patentes "<consulta>"`).
 8. **Regulación**: ¿la alegación implícita es de medicamento? ¿La sustancia está autorizada para esa especie? ¿Es un
    antibiótico propuesto como modulador ruminal (p. ej. un ionóforo), sin vía como pienso ni como aditivo?
 9. **Economía**: ¿el coste por animal y día es realista frente a la respuesta probable?

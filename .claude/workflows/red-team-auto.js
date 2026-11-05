@@ -145,7 +145,7 @@ const OTRA_FAMILIA = S({
 }, ['ejecutado', 'motivo'])
 
 const ENFOQUES = [
-  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria verificar --doi/--pmid con --cita y lee los resúmenes. Si no puedes acceder a la fuente o comprobar que dice eso (p. ej. sin red), el veredicto es "no_verificable"', tipo: elegir(['verificador-citas', 'investigador-bibliografico']) },
+  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria --agente <tu-rol> verificar --doi/--pmid con --cita (tu rol, escrito literalmente: verificador-citas o investigador-bibliografico) y lee los resúmenes. Si no puedes acceder a la fuente o comprobar que dice eso (p. ej. sin red), el veredicto es "no_verificable"', tipo: elegir(['verificador-citas', 'investigador-bibliografico']) },
   { id: 'biologia', texto: '¿es biológicamente sostenible en la especie diana (destino digestivo, concentraciones alcanzables, adaptación de la microbiota ruminal, explicaciones alternativas, diseño de los estudios)?', tipo: elegir(['critico-red-team', 'fisiologia-bioquimica']) },
   { id: 'viabilidad', texto: '¿resiste un examen regulatorio, de seguridad, industrial y económico?', tipo: elegir(['critico-red-team', 'regulacion-seguridad']) },
 ]
@@ -213,6 +213,8 @@ const otraFamilia = omitirOtraFamilia
     '2) Si algún modelo tiene "utilizable": true y el rol "critico", ejecuta ' +
     `nutria --agente segunda-opinion llm preguntar --rol critico --archivo ${ARCHIVO} --sensibilidad ${SENSIBILIDAD} --json ` +
     'y devuelve las respuestas literalmente (nutria omite los modelos cuya política de datos no admite esa sensibilidad; anota los omitidos y sus motivos). ' +
+    'Si nutria llm preguntar termina con código 1, ningún modelo respondió: devuelve "ejecutado": false con el motivo "segunda opinión no disponible" ' +
+    '(no es un fallo de la revisión; no lo reintentes por otra vía). ' +
     '3) Si no hay ninguno, no ejecutes nada más: "ejecutado": false con el motivo. No cambies la sensibilidad ni la configuración de modelos y no envíes el documento por otra vía. ' +
     'La opinión de un modelo no es evidencia.',
     { label: 'otra-familia', phase: 'Otra familia', schema: OTRA_FAMILIA, effort: 'low' },

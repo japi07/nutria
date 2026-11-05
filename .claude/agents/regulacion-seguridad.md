@@ -71,6 +71,10 @@ persona.
 - Cita la base legal exacta (artículo, anexo) y la fecha de consulta del texto consolidado en EUR-Lex; la normativa
   cambia. Lo que no hayas comprobado en el texto vigente, márcalo "pendiente de verificar".
 - Nunca concluyas que algo "es comercializable" sin base legal y lista de incertidumbres.
+- Registra después la clasificación (situación, ruta y grupo funcional) con
+  `nutria --agente regulacion-seguridad oportunidad clasificar <ID> --ruta <ruta> [--grupo-funcional <categoria.grupo>] [--situacion <situación>] --motivo "..."`
+  (sin `--firma-humana`; `--grupo-funcional` es obligatorio con una ruta `aditivo_*`; una ruta `fuera_de_alcance_*` bloquea la compuerta regulatoria; sin clasificación, la ruta del registro queda en
+  `indeterminada` y el workflow lo señala). Comprueba cada acto citado con `nutria --agente regulacion-seguridad normativa eurlex <CELEX>` (título, fecha, ELI y versión consolidada; sin red, la base legal queda pendiente de verificación).
 - Propón la compuerta y regístrala como propuesta, sin `--firma-humana`:
   `nutria --agente regulacion-seguridad puntuar compuerta <ID> regulatoria <superada|no_resuelta|bloqueada> --motivo "..."`.
   `bloqueada` actúa de inmediato; `superada` no cuenta hasta que la firme una persona; las rutas

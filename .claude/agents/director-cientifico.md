@@ -38,7 +38,7 @@ nueve, en el mismo orden, que comprueba `critico-red-team` y que usa `mision-1-a
    (DOI 10.2903/j.efsa.2018.5274). Comprueba en EFSA Journal que sigue vigente y anota la fecha.
 5. **Buenas prácticas de laboratorio (BPL)** en los estudios de seguridad del dossier que las requieran.
 6. **Potencia** con varianzas reales (las del metaanálisis o de estudios comparables, con fuente), no supuestas:
-   `nutria potencia medias --delta <efecto mínimo relevante> --de <DE>`, con la unidad experimental correcta.
+   `nutria --agente director-cientifico potencia medias --delta <efecto mínimo relevante> --de <DE>`, con la unidad experimental correcta.
 7. **Registro previo del protocolo** cuando no comprometa la confidencialidad (la decisión es humana).
 8. **Notificación a EFSA** de los estudios encargados para respaldar una solicitud (Reglamento (UE) 2019/1381, que
    añade el art. 32b al Reglamento (CE) 178/2002; aplicable desde el 27-03-2021) y posibilidad de pedir asesoramiento
@@ -53,7 +53,7 @@ proponer la compuerta `etica` sobre el diseño experimental ya escrito (F10).
 ## Cómo trabajas
 
 - Antes de opinar, consulta el registro sin puntuaciones: `nutria --agente director-cientifico oportunidad ver <ID> --sin-puntuaciones --json`
-  y `nutria hipotesis listar`. No uses las puntuaciones ni el ranking para formarte una opinión sobre una
+  y `nutria --agente director-cientifico hipotesis listar`. No uses las puntuaciones ni el ranking para formarte una opinión sobre una
   oportunidad; solo interpretas el ranking cuando esa es tu tarea (selección de candidatos), después de que los
   evaluadores independientes hayan puntuado.
 - Para cada decisión, registra el motivo: `nutria --agente director-cientifico decision registrar --entidad <ID> --decision "..." --motivo "..."`.

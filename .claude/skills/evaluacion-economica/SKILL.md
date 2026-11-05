@@ -23,7 +23,7 @@ de la rúbrica (`rentabilidad_ganadero` y `atractivo_empresa`, `docs/RUBRICA.md`
    `racion_completa` o `concentrado`, `[racion].base` `tal_cual` o `ms` y la ingestión de ese pienso). Las ingestiones
    se declaran con fuente o `[SUP]`: `nutria` no predice la ingestión (el racionamiento NASEM, INRAE o FEDNA queda fuera
    de alcance). Para convertir una dosis a mano, con salida `[DER]` trazable:
-   `nutria dosis convertir <valor> --desde g_animal_dia|mg_kg_ms|g_t --ingestion-ms KG [--portador P --base B
+   `nutria --agente economia-mercado-pi dosis convertir <valor> --desde g_animal_dia|mg_kg_ms|g_t --ingestion-ms KG [--portador P --base B
    --ingestion-pienso KG --ms-pienso F] [--precio-eur-kg P]`.
 4. `nutria --agente economia-mercado-pi econ ganadero <fichero> --sim 10000 --exigir-fuentes` (`--exigir-fuentes`
    falla si alguna entrada declarada no tiene `fuente` con etiqueta `[PUB]`, `[DER]`, `[SUP]` o `[DESC]`, si una
@@ -86,7 +86,7 @@ de la rúbrica (`rentabilidad_ganadero` y `atractivo_empresa`, `docs/RUBRICA.md`
 ## Reglas
 
 - No mezcles perspectivas: un ROI alto para el ganadero no implica un negocio viable, ni al revés. Pero los dos
-  modelos deben usar el mismo precio, dosis y días (`nutria econ coherencia`).
+  modelos deben usar el mismo precio, dosis y días (`nutria --agente economia-mercado-pi econ coherencia`).
 - Coste del producto por animal y día = dosis (g/animal/día) × precio (€/kg) / 1000; coste de inclusión por tonelada
   de pienso = dosis (g/t) × precio (€/kg) / 1000 (1 mg/kg = 1 g/t). Indica siempre la base (tal cual o MS) y el pienso
   portador (ración completa o concentrado).

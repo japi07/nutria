@@ -47,6 +47,12 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
+def _sin_agente(text: str) -> str:
+    """Texto con las órdenes «nutria --agente <rol> ...» escritas sin la atribución, para buscar una orden concreta (en
+    los subagentes el hook exige --agente en cada orden nutria: los agentes, las skills y los workflows la llevan)."""
+    return re.sub(r"\bnutria --agente (?:<[^>]+>|\S+) ", "nutria ", text)
+
+
 def _frontmatter(path: Path) -> tuple[dict, str]:
     text = _text(path)
     assert text.startswith("---\n"), f"{path.name}: falta el frontmatter"
@@ -324,7 +330,7 @@ def test_metaanalisis_skill_uses_contract_options():
     text = _norm(_skill("metaanalisis"))
     for fragment in ("--medida MD|SMD|ROM|RR|OR|RD", "--metodo REML|DL|PM|FE", "--ajuste hksj|hksj-mod|ninguno",
                      "--agregar-estudio --rho 0.5", "--subgrupo diseno", "meta stpierre", "--pendiente-aleatoria",
-                     "meta validar-predictivo", "extraccion comparar A.json B.json", "extraccion exportar --variable"):
+                     "meta validar-predictivo", "extraccion comparar <A> <B> --registrar", "extraccion exportar --variable"):
         assert fragment in text, fragment
 
 
@@ -337,7 +343,7 @@ def test_estado_skill_lists_unsigned_gates():
 
 
 def test_oportunidad_skill_starts_with_quick_discard():
-    text = _norm(_skill("oportunidad"))
+    text = _sin_agente(_norm(_skill("oportunidad")))
     assert text.index("**Descarte rápido") < text.index("**Evidencia (F4)**")
     for fragment in ("nutria destino ruminal", "nutria econ ganadero", "**detente**", "extraccion comparar",
                      "tres `evaluador-independiente`"):
@@ -345,7 +351,7 @@ def test_oportunidad_skill_starts_with_quick_discard():
 
 
 def test_mision1_skill_matches_workflow_phases():  # D2-6, D1-5, D1-9
-    text = _norm(_skill("mision-1"))
+    text = _sin_agente(_norm(_skill("mision-1")))
     for fragment in ('{"fase": "mapa"}', '"fase": "oportunidades", "problemas"', '"fase": "planes", "seleccion"',
                      "**conserva las soluciones actuales de cada problema**",
                      "nutria verificar research/revisiones/M1a_mapa_problemas_<fecha>.md",
@@ -356,7 +362,7 @@ def test_mision1_skill_matches_workflow_phases():  # D2-6, D1-5, D1-9
 
 
 def test_red_team_skill_quorum_and_cross_family():
-    text = _norm(_skill("red-team"))
+    text = _sin_agente(_norm(_skill("red-team")))
     for fragment in ("`sin_quorum`", "`sostenida` solo con 2 o más `sostenida`, ninguna `refutada` y el enfoque de fuentes en `sostenida`",
                      "nutria llm modelos --json", "nutria llm preguntar --rol critico --archivo <fichero>",
                      "sensibilidad por defecto es `confidencial`"):
@@ -2039,7 +2045,7 @@ def test_p8_evaluador_no_ve_las_decisiones_propuestas(project, capsys):  # D1-3:
     # y los prompts de los evaluadores y su agente lo prohíben de forma explícita
     for texto in (_text(WORKFLOWS_DIR / "evaluar-oportunidad-auto.js"), _text(WORKFLOWS_DIR / "mision-1-auto.js"),
                   _agent("evaluador-independiente")[1]):
-        assert "nutria decision listar" in texto
+        assert "nutria decision listar" in _sin_agente(texto)
 
 
 @requires_node
@@ -2498,3 +2504,56 @@ def test_coord_etica_repropuesta_solo_consta_con_su_salida_literal(caso, project
     reglas[-1]["respuesta"] = {"compuerta": "etica", "estado": "no_resuelta", "motivo": "m", "resumen": "r", "registro": literal}
     ok = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)["resultado"]["planes"][0]["etica"]
     assert ok["registrada"] is True
+
+
+@requires_node
+def test_coord_red_team_segunda_opinion_sin_respuesta_no_es_fallo():
+    # Petición de P4 a P8: `nutria llm preguntar` sale con 1 si ningún modelo respondió: «segunda opinión no disponible»
+    out = run_workflow("red-team-auto", "research/informes/O-0003.md",
+                       [{"label": "otra-familia", "respuesta": {"ejecutado": False, "motivo": "segunda opinión no disponible"}}])
+    prompt = call(out, "otra-familia")["prompt"]
+    assert "termina con código 1, ningún modelo respondió" in prompt and "segunda opinión no disponible" in prompt
+    assert out["resultado"]["otra_familia"]["ejecutado"] is False
+    assert not any(f["agente"] == "otra-familia" for f in out["resultado"]["fallos"]["detalle"])
+
+
+def test_coord_ordenes_nutria_atribuidas_en_agentes_y_skills():
+    # Petición de P1 a P8 (nota del director): dentro de un subagente el hook bloquea toda orden nutria sin --agente
+    # literal. Los agentes y las skills escriben cada orden que piden ejecutar con su --agente; quedan sin él las
+    # prohibiciones («no ejecutes nutria puntuar ranking») y las órdenes de una persona (con la firma humana).
+    import argparse
+
+    from nutria.cli import build_parser
+    subs = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
+    orden = re.compile(r"\bnutria\s+(?:(?:--json|--offline)\s+)*(" + "|".join(sorted(subs)) + r")\b")
+    negacion = re.compile(r"(?i)\b(no|nunca|ni|sin|jamás)\b[^.;:()]{0,40}$")
+    firma = "--firma" + "-humana"
+    faltan = []
+    for path in [*sorted(AGENTS_DIR.glob("*.md")), *sorted(SKILLS_DIR.glob("*/SKILL.md"))]:
+        texto = _text(path)
+        if texto.startswith("---"):
+            texto = texto.split("---", 2)[2]          # sin el front matter
+        for linea in texto.splitlines():
+            if firma in linea:
+                continue
+            faltan += [f"{path.parent.name}/{path.name}: {m.group(0)}" for m in orden.finditer(linea)
+                       if not negacion.search(linea[:m.start()])]
+    assert not faltan, faltan[:10]
+
+
+def test_coord_compuertas_de_los_workflows_coinciden_con_el_registro():
+    # Petición de P1 a P8: el rol que propone cada compuerta en los workflows (COMPUERTA_DE de evaluar-oportunidad-auto,
+    # TRIAGE de mision-1-auto) es el propietario que exige el registro (nutria.db.GATE_OWNERS)
+    from nutria.db import GATE_OWNERS
+    registro = {compuerta: dueno for compuerta, dueno in GATE_OWNERS.items()}
+    evaluar = _text(WORKFLOWS_DIR / "evaluar-oportunidad-auto.js")
+    bloque = evaluar[evaluar.index("const COMPUERTA_DE = {"):]
+    bloque = bloque[:bloque.index("}")]
+    compuerta_de = dict(re.findall(r"'([a-z-]+)': '([a-z_]+)'", bloque))
+    assert {compuerta: agente for agente, compuerta in compuerta_de.items()} == registro
+    mision = _text(WORKFLOWS_DIR / "mision-1-auto.js")
+    triage = mision[mision.index("const TRIAGE = ["):]
+    triage = triage[:triage.index("\n]\n")]
+    pares = re.findall(r"agente: '([a-z-]+)', compuerta: '([a-z_]+)'", triage)
+    assert {compuerta: agente for agente, compuerta in pares} == registro
+    assert COMPUERTA_DE == {agente: compuerta for compuerta, agente in registro.items()}   # la copia de estas pruebas

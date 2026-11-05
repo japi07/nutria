@@ -29,8 +29,8 @@ herramienta Workflow) ejecuta este procedimiento.
    `sostenida`, ninguna `refutada` y el enfoque de fuentes en `sostenida`; en cualquier otro caso, `no_verificable`.
    Así, si el enfoque de fuentes da `no_verificable` (p. ej. sin red) o no da resultado, la afirmación nunca sale
    `sostenida`: como mucho `debilitada` o `no_verificable`.
-4. Segunda opinión de otra familia de modelos (opcional): `nutria llm modelos --json`; si algún modelo es utilizable
-   con el rol `critico`, `nutria llm preguntar --rol critico --archivo <fichero>`. La sensibilidad por defecto es
+4. Segunda opinión de otra familia de modelos (opcional): `nutria --agente <tu-rol> llm modelos --json`; si algún modelo es utilizable
+   con el rol `critico`, `nutria --agente <tu-rol> llm preguntar --rol critico --archivo <fichero>`. La sensibilidad por defecto es
    `confidencial` (solo modelos locales o con acuerdo de no retención); `--sensibilidad normal` solo para información
    no confidencial. La opinión de un modelo no es evidencia.
 5. El mismo rol que extrajo las afirmaciones consolida en `research/revisiones/<directorio>_<nombre>_redteam.md` (el nombre incluye el

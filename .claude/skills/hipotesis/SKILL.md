@@ -11,7 +11,7 @@ description: Procedimiento para generar hipótesis originales y falsables (técn
    señalización hormonal ↔ eficiencia productiva.
 2. **Descubrimiento basado en literatura (modelo ABC)**: si A (problema) se relaciona con B (mecanismo) en una
    literatura y B con C (compuesto) en otra, pero no existen trabajos que unan A y C en la especie diana, A-C es una
-   hipótesis candidata. Compruébalo con búsquedas: `nutria buscar pubmed "A AND B"`, `"B AND C"`, `"A AND C"`.
+   hipótesis candidata. Compruébalo con búsquedas: `nutria --agente <tu-rol> buscar pubmed "A AND B"`, `"B AND C"`, `"A AND C"`.
 3. **Contradicciones** entre estudios: ¿qué diferencia (dieta basal, etapa, dosis, forma) explicaría resultados opuestos?
 4. **Reposicionamiento** desde la nutrición humana, otras especies o la acuicultura, con análisis explícito de la
    transferibilidad (destino digestivo, dosis, coste).
@@ -33,4 +33,4 @@ medibles; evidencia a favor y en contra (con etiquetas y fuentes); incertidumbre
 ## Registro
 
 `nutria --agente <agente> hipotesis nueva --datos research/hipotesis/<fichero>.json`. Los cambios de estado exigen
-motivo: `nutria hipotesis estado H-xxxx refutada --motivo "..."`. Nunca se presenta una hipótesis como descubrimiento.
+motivo: `nutria --agente <tu-rol> hipotesis estado H-xxxx refutada --motivo "..."`. Nunca se presenta una hipótesis como descubrimiento.

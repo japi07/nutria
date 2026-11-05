@@ -497,7 +497,7 @@ const VARIABLE = VARIABLES[0] || 'variable principal de la pregunta PECO'
 phase('Evidencia')
 const biblio = await lanzar(
   `${REGLAS}\nRevisión de alcance de la evidencia de ${ID} con la skill busqueda-bibliografica. PECO: ${plan.peco}. Variables: ${VARIABLES.join('; ') || VARIABLE} ` +
-  `(principal: ${VARIABLE}). Busca en al menos dos fuentes y busca activamente evidencia contraria; registra y verifica las fuentes incluidas (nutria fuente agregar) ` +
+  `(principal: ${VARIABLE}). Busca en al menos dos fuentes y busca activamente evidencia contraria; registra y verifica las fuentes incluidas (nutria --agente investigador-bibliografico fuente agregar --doi <doi> o --pmid <pmid>) ` +
   `y documenta la búsqueda en research/revisiones/${ID}_busqueda.md. Devuelve los estudios incluidos con su identificador registrado (doi:, pmid: u openalex:), ` +
   'si publican datos cuantitativos extraíbles de la variable principal (medias, dispersión y n por tratamiento) y si son comparables entre sí (misma especie y etapa, ' +
   'variable y unidad combinables, diseño compatible), con el motivo. En los moduladores ruminales, anota la duración de cada ensayo: una incubación corta en lote ' +
@@ -781,7 +781,7 @@ log(`Puntuación ciega: ${emitidas.length}/${EVALUADORES.length} puntuaciones em
 // ================================================================ síntesis e informe (después de puntuar)
 phase('Síntesis e informe')
 const informe = await lanzar(
-  `${REGLAS}\nSintetiza la evaluación de ${ID} siguiendo .claude/skills/informe/SKILL.md: nutria informe nuevo ${ID} (o actualiza ${RUTA_INFORME}; el informe va en esa ruta). ` +
+  `${REGLAS}\nSintetiza la evaluación de ${ID} siguiendo .claude/skills/informe/SKILL.md: nutria --agente director-cientifico informe nuevo ${ID} (o actualiza ${RUTA_INFORME}; el informe va en esa ruta). ` +
   'Integra el descarte rápido, la evidencia (revisión, doble extracción y metaanálisis si lo hubo) y las aportaciones, conservando los desacuerdos y las críticas; ' +
   'corrige o retira las afirmaciones con fuentes problemáticas. La sección 14 indica el estado de las seis compuertas y cuáles son propuestas sin firmar. ' +
   `La oportunidad ya la han puntuado a ciegas ${emitidas.length} evaluador(es) independiente(s): lee sus puntuaciones en ` +

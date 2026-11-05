@@ -7,9 +7,11 @@ disable-model-invocation: true
 
 # Metaanálisis: $ARGUMENTS
 
-1. **Doble extracción previa**: solo entran extracciones conciliadas (`doble_concordante` o `resuelta`; ver
-   `nutria extraccion comparar A.json B.json` en la skill `extraccion-datos`).
-2. **Exporta** en formato de análisis: `nutria extraccion exportar --variable "<variable>" --csv research/datos/<ID>/<variable>.csv`
+1. **Doble extracción previa**: solo entran extracciones con la doble extracción registrada (`doble_concordante` o
+   `resuelta`): depósito de las dos copias, `extraccion comparar <A> <B> --registrar` y, si hubo discrepancias,
+   `extraccion conciliar` (skill `extraccion-datos`). Un CSV exportado con `--incluir-sin-conciliar` (columna
+   `doble_extraccion_verificada` = `no`) es solo exploratorio: decláralo.
+2. **Exporta** en formato de análisis: `nutria --agente estadistico extraccion exportar --variable "<variable>" --especie "<especie>" [--etapa "<etapa>"] [--casos-completos <moderador>] --csv research/datos/<ID>/<variable>.csv`
    (columnas `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable,
    unidad, especie, diseno, unidad_experimental, dosis, ...` y la dieta basal numérica). Separa o excluye especies
    distintas, unidades incompatibles y diseños no combinables, y documenta por qué.
@@ -27,7 +29,7 @@ disable-model-invocation: true
      `--referencia diseno=<categoría>`) o analiza por separado (`--subgrupo diseno`); igual con
      `unidad_experimental` (referencia `animal`).
    - Con el corral (o la granja) como unidad experimental, n_trt y n_ctrl cuentan corrales, no animales.
-4. **Modelo principal**: `nutria meta analizar <csv> --medida MD --metodo REML` (Hartung-Knapp-Sidik-Jonkman
+4. **Modelo principal**: `nutria --agente estadistico meta analizar <csv> --medida MD --metodo REML` (Hartung-Knapp-Sidik-Jonkman
    modificado por defecto, `--ajuste hksj-mod`, que coincide con el estándar si q >= 1). Opciones:
    `--medida MD|SMD|ROM|RR|OR|RD`, `--metodo REML|DL|PM|FE`, `--ajuste hksj|hksj-mod|ninguno`. Informa estimación
    con IC, tau² con su IC Q-profile, I², intervalo de predicción y uno-fuera.
@@ -39,11 +41,11 @@ disable-model-invocation: true
      ajuste; no lo compares con `predict()` de metafor, que usa otros gl o z.
 5. **Dependencia**: si hay varios tratamientos frente al mismo control o varias comparaciones por estudio,
    `--agregar-estudio --rho 0.5` (declara la correlación supuesta y prueba otros valores) o
-   `nutria meta exportar-r <csv> --salida <script.R>` y el modelo multinivel con varianza robusta en R. El script
+   `nutria --agente estadistico meta exportar-r <csv> --salida <script.R>` y el modelo multinivel con varianza robusta en R. El script
    de `exportar-r` acepta las mismas `--medida`, `--metodo`, `--ajuste` y `--rho-intrasujeto` que `analizar` y
    reproduce su estimación, IC, p e intervalo de predicción (líneas `nutria:`).
 6. **Dosis-respuesta entre estudios** (St-Pierre, estudio como efecto aleatorio):
-   `nutria meta stpierre <csv> --respuesta <col> --dosis <col> --estudio estudio [--covariable ...]`.
+   `nutria --agente estadistico meta stpierre <csv> --respuesta <col> --dosis <col> --estudio estudio [--covariable ...]`.
    - Por defecto descompone la pendiente en sus componentes intra y entre estudios; informa ambas.
    - **Pendiente aleatoria**: por defecto, si al menos 3 estudios tienen 3 o más niveles de dosis, se ajustan el
      modelo con intercepto aleatorio y el de intercepto y pendiente aleatorios y se elige con la razón de
@@ -60,12 +62,12 @@ disable-model-invocation: true
    `--rho-intrasujeto`.
 9. **Sesgo de publicación**: embudo y Egger solo si k ≥ 10; si no, decláralo como no evaluable.
 10. **Modelos predictivos**: validación agrupada por estudio,
-    `nutria meta validar-predictivo <csv> --respuesta <Y> --predictores <X1> <X2> --estudio <S>`.
+    `nutria --agente estadistico meta validar-predictivo <csv> --respuesta <Y> --predictores <X1> <X2> --estudio <S>`.
 11. **Certeza** por variable: riesgo de sesgo, inconsistencia, evidencia indirecta, imprecisión, sesgo de publicación.
 12. **Interpretación**: efecto en unidades naturales frente al efecto mínimo relevante fijado de antemano; traducción
-    económica con `nutria econ ganadero`.
+    económica con `nutria --agente estadistico econ ganadero`.
 13. **Potencia del ensayo de validación** con la unidad experimental real:
-    `nutria potencia medias --delta <efecto mínimo relevante> --de <DE entre animales>` (animal como unidad);
+    `nutria --agente estadistico potencia medias --delta <efecto mínimo relevante> --de <DE entre animales>` (animal como unidad);
     con corrales, añade `--m <animales por corral> --icc <ICC>` (la salida da corrales y animales por grupo); en
     un crossover, `--diseno crossover --de-intra <DE intraanimal>` (o `--de` con `--rho-intrasujeto`); en un
     cuadrado latino, además `--diseno cuadrado_latino --tratamientos <t>`.

@@ -16,7 +16,7 @@ disable-model-invocation: true
 2. **Búsqueda**: `investigador-bibliografico` con la skill `busqueda-bibliografica` (≥ 2 fuentes y búsqueda de nulos).
 3. **Cribado** por título y resumen con motivos de exclusión; texto completo cuando esté disponible.
 4. **Doble extracción** independiente (dos `extractor-datos`: `extraccion_<fuente>_A.json` y `_B.json`),
-   comparación con `nutria extraccion comparar <A> <B>` y conciliación de discrepancias contra la fuente (skill
+   cada extractor deposita su copia con su propia identidad (`nutria --agente extractor-datos-A extraccion depositar --datos <A.json>`, y la B con extractor-datos-B); un tercer agente, que no es ninguno de los dos, la compara registrándola (`nutria --agente extractor-datos-C extraccion comparar <A> <B> --registrar`: código 0, concordantes y ya registradas; código 1, comparación CE-xxxx con discrepancias) y, si hay discrepancias, las resuelve releyendo la fuente y registra la conciliación (`nutria --agente extractor-datos-C extraccion conciliar <CE-xxxx> --datos <conciliacion.json>`, formato en `ejemplos/conciliacion_ejemplo.json`). Nunca con `extraccion agregar`. Para repetir una fuente tras discrepancias hacen falta identidades nuevas (skill
    `extraccion-datos`).
 5. **Riesgo de sesgo** por estudio, en tabla.
 6. **Síntesis**: `estadistico` con `/metaanalisis`; si no se puede combinar, síntesis narrativa estructurada explicando

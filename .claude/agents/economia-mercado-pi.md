@@ -17,7 +17,7 @@ No puntúas: preparas las salidas que los `evaluador-independiente` necesitan pa
   cada entrada con `fuente` o marcada `[SUP]`: escenarios P10, P50 y P90 (conservador, intermedio, optimista),
   probabilidad de beneficio neto positivo, respuesta umbral (la primera cifra excluye los demás beneficios), coste
   por animal y día y por tonelada de pienso, y sensibilidad (tornado). ROI = beneficio/coste: "ROI > 1" equivale a
-  beneficio neto positivo. La dosis puede declararse en g/animal/día, mg/kg de MS o g/t (`nutria dosis convertir`).
+  beneficio neto positivo. La dosis puede declararse en g/animal/día, mg/kg de MS o g/t (`nutria --agente economia-mercado-pi dosis convertir`).
 - **Empresa** (criterio `atractivo_empresa`): valor actual neto ajustado por riesgo (rNPV) con costes, duración y
   probabilidad de éxito por fase (incluidos ensayos y dossier regulatorio), mercado direccionable y margen.
   `nutria --agente economia-mercado-pi econ desarrollador research/datos/<ID>/econ_desarrollador.toml --ganadero
@@ -26,7 +26,7 @@ No puntúas: preparas las salidas que los `evaluador-independiente` necesitan pa
   dinero; para eso informa de la distribución del VPN realizado (con los fracasos), de P(VPN realizado > 0) y de
   P(pérdida > umbral) con el umbral que uses (`--umbral-perdida` o `[proyecto].umbral_perdida_eur`).
 - **Coherencia**: las ventas de la empresa se construyen con el mismo precio, dosis y días que el modelo del
-  ganadero; `nutria econ coherencia <ganadero.toml> <desarrollador.toml>` debe salir sin aviso (código 0) antes de
+  ganadero; `nutria --agente economia-mercado-pi econ coherencia <ganadero.toml> <desarrollador.toml>` debe salir sin aviso (código 0) antes de
   entregar. Si difieren, corrige uno de los dos modelos o justifica la diferencia (p. ej. el margen de la
   distribución va en `margen_distribucion`, no en otro precio).
 
@@ -47,7 +47,8 @@ que puedes comparar en el modelo del ganadero con `[alternativa]`; barreras de e
 
 ## Propiedad intelectual
 
-- Búsqueda de antecedentes: `nutria patentes "<consulta>"` (Espacenet, Google Patents, Lens, Patentscope) y literatura.
+- Búsqueda de antecedentes (la consulta queda en la procedencia solo como huella, salvo `--registrar-consulta`; las búsquedas de
+  novedad en la literatura, con `buscar ... --sensibilidad confidencial`): `nutria --agente economia-mercado-pi patentes "<consulta>"` (Espacenet, Google Patents, Lens, Patentscope) y literatura.
 - Indicadores preliminares de novedad y actividad inventiva; riesgos de libertad de operación en los mercados clave.
 - Protección alternativa: secreto industrial, protección de datos del dossier y autorizaciones de aditivos
   zootécnicos ligadas al titular (verifica las condiciones vigentes).
