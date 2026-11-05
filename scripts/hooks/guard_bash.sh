@@ -111,6 +111,77 @@ posicion='(^|[;&|(){}!`]|\$\(|(then|do|else|elif|exec|time|command|nohup|nice|xa
 multiplexor_ingles='(^|[^[:alnum:]_.-])screen[[:space:]]([^;&|]*[[:space:]])?-[[:alnum:]]*[dDm]|(^|[^[:alnum:]_.-])expect[[:space:]]+(-[bcdDfinN]?([[:space:]]|$)|[^[:space:];&|]+\.exp([[:space:]]|$))|\|[[:space:]]*expect([[:space:]]|$)|(^|[^[:alnum:]_.-])expect[[:space:]]*<'
 # Mención de nutria como orden o módulo (no como parte de una ruta: src/nutria/, research/nutria.sqlite).
 menciona_nutria='(^|[^[:alnum:]_./-])nutria([^[:alnum:]_./-]|$)|-m[[:space:]]*nutria|(from|import)[[:space:]]+nutria'
+# Para la identidad (sección 5) cuenta también nutria por su ruta (/usr/local/bin/nutria, ./nutria, .venv/bin/nutria):
+# una palabra que termina en /nutria.
+menciona_nutria_ruta="${menciona_nutria}|(^|[[:space:]=])[^[:space:];&|()]*/nutria([[:space:];&|)]|\$)"
+# La orden sin los comentarios de la shell (un # al principio de una palabra, fuera de comillas, hasta el final de la
+# línea, que aquí es ;), con los escapes de JSON deshechos (\" es ", \\ es \). Un comentario no se ejecuta: no
+# puede aportar el --agente de una orden (nutria ... # --agente evaluador-2).
+awk_sin_comentarios='{
+  s = $0; n = length(s); t = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c == "\\" && i < n) { d = substr(s, i + 1, 1); if (d == "\"" || d == "\\" || d == "/") { t = t d; i++; continue } }
+    t = t c
+  }
+  n = length(t); out = ""; q = ""; prev = " "
+  for (i = 1; i <= n; i++) {
+    c = substr(t, i, 1)
+    if (q == "") {
+      if (c == "\\") { out = out substr(t, i, 2); i++; prev = "x"; continue }
+      if (c == "\047") { q = (prev == "$") ? "$" : "\047"; out = out c; prev = c; continue }
+      if (c == "\"") { q = c; out = out c; prev = c; continue }
+      if (c == "#" && prev ~ /[[:space:];&|()]/) {
+        j = index(substr(t, i), ";")
+        if (j == 0) break
+        i = i + j - 2; prev = " "; continue
+      }
+      out = out c; prev = c; continue
+    }
+    if (c == "\\" && q != "\047") { out = out substr(t, i, 2); i++; continue }
+    if (c == "\047" && (q == "\047" || q == "$")) q = ""
+    else if (c == "\"" && q == "\"") q = ""
+    out = out c
+  }
+  print out
+}'
+# 1 si todas las órdenes simples de la línea (separadas por ; & | ( ) o acentos graves fuera de comillas) son de una
+# lista cerrada que no ejecuta nada (grep, head, tail, wc, cut, uniq, ls, cat, cd, pwd; git status, log, diff, show,
+# blame, grep, ls-files, add y commit sin opciones globales) y no hay sustituciones ($( y acentos graves, también entre
+# comillas dobles) ni asignaciones delante de la orden. Así, nutria como texto (grep -rn nutria docs/, git commit -m
+# '... nutria ...') no se toma por una orden sin --agente; cualquier otra orden en la línea (| sh, xargs...) anula la
+# excepción.
+awk_solo_seguras='{
+  s = $0; n = length(s)
+  if (index(s, "$(") || index(s, "`") || index(s, "<(") || index(s, ">(")) { print 0; exit }
+  seg = ""; q = ""; nseg = 0
+  for (i = 1; i <= n + 1; i++) {
+    c = (i <= n) ? substr(s, i, 1) : ";"
+    if (q == "" && i <= n) {
+      if (c == "\\") { seg = seg substr(s, i, 2); i++; continue }
+      if (c == "\047" || c == "\"") { q = c; seg = seg c; continue }
+    } else if (i <= n) {
+      if (c == "\\" && q == "\"") { seg = seg substr(s, i, 2); i++; continue }
+      if (c == q) q = ""
+      seg = seg c; continue
+    }
+    if (c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", seg)
+      if (seg != "") {
+        nseg++
+        m = split(seg, w, /[[:space:]]+/)
+        for (k = 1; k <= 2; k++) gsub(/[\047"\\]/, "", w[k])
+        if (w[1] ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { print 0; exit }
+        if (w[1] ~ /^(grep|egrep|fgrep|head|tail|wc|cut|uniq|ls|cat|cd|pwd)$/) { seg = ""; continue }
+        if (w[1] == "git" && w[2] ~ /^(status|log|diff|show|blame|grep|ls-files|add|commit)$/) { seg = ""; continue }
+        print 0; exit
+      }
+      seg = ""; continue
+    }
+    seg = seg c
+  }
+  print (nseg > 0 && q == "") ? 1 : 0
+}'
 nombres_registro='nutria.sqlite nutria.sqlite-wal nutria.sqlite-shm nutria.sqlite-journal procedencia.jsonl'
 # Opciones de env antes de la orden que ejecuta (con su argumento, si lo llevan) y asignaciones VAR=valor.
 env_opciones='([[:space:]]+(-[uCS][[:space:]]*[^-[:space:]][^[:space:]]*|--(unset|chdir|split-string|default-signal|ignore-signal|block-signal)(=[^[:space:]]*|[[:space:]]+[^-[:space:]][^[:space:]]*)?|-[^[:space:]i]*|--[^[:space:]i][^[:space:]]*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*'
@@ -176,7 +247,9 @@ fi
 mensaje_registro="el registro (research/nutria.sqlite) y la procedencia (research/procedencia.jsonl) solo cambian a través de la CLI nutria (las reglas de firma, compuertas, puntuaciones y la cadena de hashes están en ella); tampoco se borran o sobrescriben con comodines que puedan cubrirlos ni borrando research/ entera. Para leer la procedencia, usa nutria procedencia o un cat/tail simple; si de verdad hace falta tocarlos, que lo haga una persona."
 if [ "$solo_lectura" = 0 ]; then
   sin_cli=$(printf '%s' "$minusculas" | sed -E 's/python[0-9.]*([[:space:]]+-[a-z]+)*[[:space:]]+-m[[:space:]]*(nutria|pytest)/\2/g')
-  verbos="${ini}(cp|mv|rm|dd|ln|rsync|install|truncate|shred|tee|sed|awk|perl|python[0-9.]*|node|ruby|checkout|restore|reset|stash|clean|revert)${fin}"
+  # También los borrados y editores que no tienen variante con comodines en la lista de 3b (unlink, ex, vim -es, php,
+  # gio, find -delete, tar --remove-files, zip -m): un nombre literal se trata como un comodín que lo cubre.
+  verbos="${ini}(cp|mv|rm|dd|ln|rsync|install|truncate|shred|tee|sed|awk|perl|python[0-9.]*|node|ruby|checkout|restore|reset|stash|clean|revert|unlink|ex|vi|vim|nvim|ed|php|gio|srm|wipe|sponge)${fin}|${ini}find${fin}([^;&|]*[[:space:]])?-(delete|exec|execdir|ok|okdir)${fin}|${ini}tar${fin}[^;&|]*--remove-files|${ini}zip${fin}([^;&|]*[[:space:]])?-[[:alnum:]]*m"
   if contiene "$minusculas" 'nutria\.sqlite'; then
     if contiene "$sin_cli" "sqlite3|\.connect\(|>+[[:space:]]*[^&[:space:]]*nutria\.sqlite|$verbos"; then
       bloquea "$mensaje_registro"
@@ -311,7 +384,9 @@ if [ "$solo_lectura" = 0 ]; then
   fi
   if por_segmento "$minusculas" "${git_orden}(reflog[[:space:]]+(expire|delete)|update-ref)([[:space:]]|$)" \
     || contiene "$minusculas" 'gc\.reflogexpire|core\.logallrefupdates' \
-    || por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)"; then
+    || por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)" \
+    || contiene "$minusculas" "${ini}(cp|dd|ln|install|tee|sed|awk|perl|python[0-9.]*|node|ruby|ex|vi|vim|nvim|ed|php|gio|sponge|chmod|touch)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git/[^[:space:]]" \
+    || contiene "$minusculas" '>+[[:space:]]*([^[:space:];&|]*/)?\.git/'; then
     bloquea "no se borra ni se reescribe el reflog de git (ni .git) desde Bash: \`nutria procedencia verificar\` lo usa para detectar la historia reescrita tras quitar eventos ya confirmados. Si hace falta, que lo haga una persona."
   fi
 fi
@@ -327,6 +402,11 @@ fi
 busca_ficheros=0
 contiene "$minusculas" "${ini}(find|locate|plocate|mlocate|fd|fdfind)${fin}" && busca_ficheros=1
 comodines=$(printf '%s' "$minusculas" | tr '()<>=,;&|\t' '          ' | tr ' ' '\n' | grep -E '[*?]|\[.*\]|\{.*,.*\}' | sort -u)
+# Solo pueden cubrir la clave las palabras con / (o cualquiera, si la orden busca ficheros): las demás (referencias [R1]
+# en un --motivo o en un mensaje de commit) no cuentan para el tope.
+if [ "$busca_ficheros" = 0 ]; then
+  comodines=$(printf '%s\n' "$comodines" | grep -F /)
+fi
 if [ "$(printf '%s\n' "$comodines" | grep -c .)" -gt 100 ]; then
   bloquea "demasiados patrones con comodines en una sola orden: escribe los nombres de los ficheros."
 fi
@@ -359,6 +439,14 @@ if [ -n "$tipo" ]; then
   if [ "$tipo" = "evaluador-independiente" ] && contiene "$minusculas" 'nutria\.sqlite'; then
     bloquea "un evaluador independiente no lee la base de datos del registro directamente (regla 9): usa nutria --agente evaluador-<n> oportunidad ver <ID> --sin-puntuaciones."
   fi
+  # ni con un comodín que la cubra (strings research/*.sqlite, cat research/*)
+  if [ "$tipo" = "evaluador-independiente" ]; then
+    for palabra in $(printf '%s' "$minusculas" | tr '()<>=,;&|' '         ' | tr ' ' '\n' | grep -E '[*?]|\[.*\]|\{.*,.*\}' | head -n 50); do
+      if es_comodin "$palabra" && cubre "${palabra##*/}" $nombres_registro; then
+        bloquea "un evaluador independiente no lee la base de datos del registro directamente (regla 9), tampoco con comodines: usa nutria --agente evaluador-<n> oportunidad ver <ID> --sin-puntuaciones."
+      fi
+    done
+  fi
   if [ "$solo_lectura" = 1 ]; then
     exit 0
   fi
@@ -388,8 +476,16 @@ if [ -n "$tipo" ]; then
     && contiene "$plano" "${ini}(xargs|eval|parallel)${fin}|subprocess|os\.(system|popen|exec[a-z]*|spawn[a-z]*)|(from|import)[[:space:]]+nutria|nutria\.(cli|__main__)|runpy|import_module"; then
     bloquea "dentro de un subagente, nutria se ejecuta directamente (nutria --agente $tipo ...), no a través de Python, xargs ni eval: así el rol declarado con --agente se puede comprobar."
   fi
-  # Cada orden simple que menciona nutria lleva su --agente (también dentro de $(...), subshells y bucles).
-  if printf '%s\n' "$sin_comillas" | tr ';&|()`' '\n\n\n\n\n\n' | grep -E -e "$menciona_nutria" | grep -Evq -e '--agente(=|[[:space:]])'; then
+  # Cada orden simple que menciona nutria (también por su ruta) lleva su --agente (también dentro de $(...), subshells
+  # y bucles). Los comentarios no cuentan: ni aportan un --agente ni lo piden. Una línea hecha solo de órdenes que no
+  # ejecutan nada (grep -rn nutria docs/ | head, git commit -m '... nutria ...') no ejecuta nutria: no se exige.
+  ident=$(printf '%s\n' "$base" | awk "$awk_sin_comentarios")
+  ident_sin_comillas=$(printf '%s' "$ident" | tr -d '\\"'"'")
+  ident_exenta=$(printf '%s\n' "$ident" | awk "$awk_solo_seguras")
+  if [ "$ident_exenta" = 1 ]; then
+    exit 0
+  fi
+  if printf '%s\n' "$ident_sin_comillas" | tr ';&|()`' '\n\n\n\n\n\n' | grep -E -e "$menciona_nutria_ruta" | grep -Evq -e '--agente(=|[[:space:]])'; then
     if [ "$tipo" = "evaluador-independiente" ]; then
       bloquea "un evaluador independiente se identifica en cada orden nutria: nutria --agente evaluador-<n> ... (regla 9; así la CLI le oculta las puntuaciones ajenas)."
     fi
@@ -398,7 +494,7 @@ if [ -n "$tipo" ]; then
   # Valor de cada --agente: con = o tras espacios o comas (también en una lista de Python), hasta el siguiente espacio,
   # coma, paréntesis o corchete de cierre o separador de órdenes. Un valor que no sea un nombre literal se bloquea
   # ($R, ${R}, $(...), `...`, {} de xargs, comodines). Los valores repetidos se comprueban una vez.
-  valores=$(printf '%s' "$sin_comillas" | grep -oE -- '--agente(=|[[:space:],]+)[^][:space:];&|,)]*' \
+  valores=$(printf '%s' "$ident_sin_comillas" | grep -oE -- '--agente(=|[[:space:],]+)[^][:space:];&|,)]*' \
     | sed -E 's/^--agente(=|[[:space:],]+)//' | sort -u)
   if [ "$(printf '%s\n' "$valores" | grep -c .)" -gt 20 ]; then
     bloquea "demasiados valores distintos de --agente en una sola orden: dentro de un subagente, cada orden nutria lleva --agente $tipo."

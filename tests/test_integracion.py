@@ -424,3 +424,171 @@ def test_coord_eventos_con_las_versiones_de_las_bibliotecas_de_calculo(project):
             assert ev["entorno"][dist] == metadata.version(dist), dist
         except metadata.PackageNotFoundError:
             assert dist not in ev["entorno"]
+
+
+# ============================================================================ fase de coordinación (2): hook de Bash
+HOOKS = ROOT / "scripts" / "hooks"
+
+
+def _hook_bash(command: str, agent_type: str | None = None, cwd: str = "/home/u/nutria") -> subprocess.CompletedProcess:
+    payload = {"session_id": "s", "transcript_path": "/home/u/.claude/projects/p/s.jsonl", "cwd": cwd,
+               "hook_event_name": "PreToolUse", "tool_name": "Bash",
+               "tool_input": {"command": command, "description": "orden de prueba"}}
+    if agent_type:
+        payload.update(agent_id="a1", agent_type=agent_type)
+    return subprocess.run(["sh", str(HOOKS / "guard_bash.sh")], input=json.dumps(payload), capture_output=True,
+                          text=True, timeout=60)
+
+
+_MUCHAS_REFERENCIAS = " ".join(f"[R{i}]" for i in range(1, 120))
+
+
+@pytest.mark.parametrize("command", [
+    # nutria como texto en órdenes que no ejecutan nada (revisión final de P1: falsos positivos de la ronda 3)
+    "grep -rn nutria docs/ | head -5",
+    "grep -c nutria README.md | wc -l",
+    "git commit -m 'Registro de nutria (P1); varios cambios'",
+    "git add -A && git commit -m \"nutria: órdenes atribuidas\"",
+    "git log --oneline | grep nutria | head -3",
+    # un comentario después de una orden bien atribuida
+    "nutria --agente critico-red-team estado # nota para la persona",
+    # más de 100 referencias [Rn] (palabras con corchetes) en un --motivo o en un mensaje de commit
+    f"nutria --agente critico-red-team decision registrar --entidad O-0001 --decision d --motivo \"{_MUCHAS_REFERENCIAS}\"",
+    f"git commit -F - <<'EOF'\nRevisión {_MUCHAS_REFERENCIAS}\nEOF",
+])
+def test_coord_hook_no_bloquea_ordenes_legitimas_de_un_subagente(command):
+    res = _hook_bash(command, "critico-red-team")
+    assert res.returncode == 0, (command, res.stderr)
+
+
+@pytest.mark.parametrize("command", [
+    # un comentario no aporta el --agente (revisión final de P1: el evaluador veía puntuaciones ajenas)
+    "python3 -m nutria --json oportunidad ver O-0001 # --agente critico-red-team",
+    "nutria puntuar registrar --datos p.json # --agente critico-red-team",
+    "sh -c \"nutria estado\" # --agente critico-red-team",
+    # nutria por su ruta
+    "/usr/local/bin/nutria puntuar ranking",
+    "./nutria estado",
+    ".venv/bin/nutria --json estado",
+    # la excepción de las órdenes que no ejecutan nada no vale si algo de la línea puede ejecutar nutria
+    "grep -o 'nutria estado' notas.txt | sh",
+    "echo nutria estado | sh",
+    "git commit -m \"$(nutria estado)\"",
+    "git commit -m x; nutria estado",
+    "grep x f && nutria estado",
+    "PATH=/tmp grep nutria x",
+    "git -c diff.external=nutria diff",
+    "awk 'BEGIN{system(\"nutria estado\")}'",
+    "find . -maxdepth 0 -exec nutria estado ;",
+    "cat <<'EOF' | sh\nnutria estado\nEOF",
+])
+def test_coord_hook_sigue_exigiendo_agente_a_nutria_ejecutable(command):
+    res = _hook_bash(command, "critico-red-team")
+    assert res.returncode == 2, (command, res.stdout)
+    # un evaluador tampoco: su identidad va en cada orden nutria
+    assert _hook_bash(command.replace("critico-red-team", "evaluador-2"), "evaluador-independiente").returncode == 2
+
+
+def test_coord_hook_el_comentario_no_hace_pasar_por_evaluador():
+    # Reproducción de la revisión final de P1 (r3b_comentario_e2e.py): el evaluador sin --agente real
+    res = _hook_bash("python3 -m nutria --json oportunidad ver O-0001 # --agente evaluador-2", "evaluador-independiente")
+    assert res.returncode == 2 and "se identifica en cada orden nutria" in res.stderr
+    assert _hook_bash("nutria --agente evaluador-2 --json oportunidad ver O-0001 --sin-puntuaciones # leer",
+                      "evaluador-independiente").returncode == 0
+
+
+@pytest.mark.parametrize("command", [
+    # borrados literales del registro y de la procedencia, coherentes con sus variantes con comodines
+    "unlink research/nutria.sqlite",
+    "find research -name nutria.sqlite -delete",
+    "find . -name procedencia.jsonl -delete",
+    "ex -sc '$d|x' research/procedencia.jsonl",
+    "vim -es -c '$d' -c 'wq' research/procedencia.jsonl",
+    "php -r 'unlink(\"research/nutria.sqlite\");'",
+    "zip -m copia.zip research/nutria.sqlite",
+    "tar --remove-files -cf copia.tar research/nutria.sqlite",
+    "gio remove research/nutria.sqlite",
+    # el reflog y el resto de .git (revisión final de P1: verificar daba «íntegra» tras vaciar el reflog)
+    ": > .git/logs/refs/heads/main",
+    "cp /dev/null .git/logs/refs/heads/main",
+    "ex -sc '1d|x' .git/logs/HEAD",
+    "printf '#!/bin/sh\\nnutria estado\\n' > .git/hooks/pre-commit",
+])
+def test_coord_hook_bloquea_borrados_literales_y_escrituras_en_git(command):
+    for agente in (None, "critico-red-team"):
+        res = _hook_bash(command, agente)
+        assert res.returncode == 2, (command, agente)
+
+
+@pytest.mark.parametrize("command", [
+    "tar czf copia.tgz research/nutria.sqlite",
+    "zip copia.zip research/nutria.sqlite",
+    "find research -name nutria.sqlite",
+    "cat .git/HEAD",
+    "git log --oneline -3",
+])
+def test_coord_hook_deja_leer_y_copiar_el_registro_y_git(command):
+    assert _hook_bash(command).returncode == 0, command
+
+
+@pytest.mark.parametrize("ruta, bloqueada", [
+    ("/home/u/nutria/.git/logs/refs/heads/main", True),
+    ("/home/u/nutria/.git/hooks/pre-commit", True),
+    ("/home/u/nutria/.git/config", True),
+    (".git/refs/heads/main", True),
+    ("/home/u/nutria/.github/workflows/ci.yml", False),
+    ("/home/u/nutria/research/planes/plan.md", False),
+])
+def test_coord_guard_write_protege_git(ruta, bloqueada):
+    payload = {"tool_name": "Write", "tool_input": {"file_path": ruta, "content": "x"}}
+    res = subprocess.run(["sh", str(HOOKS / "guard_write.sh")], input=json.dumps(payload), capture_output=True,
+                         text=True, timeout=60)
+    assert res.returncode == (2 if bloqueada else 0), ruta
+
+
+def test_coord_hook_evaluador_no_lee_el_registro_con_comodines():
+    # Revisión final de P1 (6): «strings research/*.sqlite» daba 0 a un evaluador; con el nombre literal ya se bloqueaba
+    for command in ("strings research/*.sqlite | grep -i evaluador", "cat research/*", "od -c research/nutria.sq*"):
+        res = _hook_bash(command, "evaluador-independiente")
+        assert res.returncode == 2 and "no lee la base de datos" in res.stderr, command
+    assert _hook_bash("cat research/oportunidades/*.json | head", "critico-red-team").returncode == 0
+
+
+# ============================================================================ fase de coordinación (2): evaluadores
+def test_coord_normalize_rater_quita_los_caracteres_de_formato():
+    # Revisión final de P1 (3): tres variantes invisibles de evaluador-1 contaban como tres evaluadores
+    from nutria import db
+    for variante in ("evaluador-1​", "evaluador​-1", "evaluador-1\xad", "﻿evaluador-1", "evaluador‍-1"):
+        assert db.normalize_rater(variante) == "evaluador-1", repr(variante)
+
+
+def test_coord_variantes_invisibles_de_un_evaluador_no_cuentan_como_tres(project, capsys):
+    _oportunidad(project)
+    for variante in ("evaluador-1​", "evaluador​-1", "evaluador-1\xad"):
+        code, _, err = _run(capsys, ["--agente", variante, "puntuar", "registrar", "--datos",
+                                     str(_puntuaciones(project, variante))])
+        assert code == 0, err
+    code, out, _ = _run(capsys, ["--agente", "orquestador", "--json", "puntuar", "ranking", "--min-evaluadores", "3",
+                                 "--sim", "200"])
+    fila = next(r for r in json.loads(out) if r["opportunity_id"] == "O-0001")
+    assert fila["status"] == "INSUFICIENTE" and fila["raters"] == 1
+
+
+def test_coord_ranking_cuenta_evaluadores_normalizados_en_registros_antiguos(project, capsys):
+    # Petición de P1 a P6 (c): puntuaciones registradas antes de normalizar el evaluador («Evaluador-1» y
+    # «evaluador-1 ») son de un solo evaluador; de cada criterio vale la última
+    import sqlite3
+
+    from nutria.config import load_config
+    _oportunidad(project)
+    conn = sqlite3.connect(load_config().db_path)
+    try:
+        for n, rater in enumerate(("Evaluador-1", "evaluador-1 ", "evaluador-2")):
+            conn.execute("INSERT INTO scores (opportunity_id, rater, criterion, value, low, high, created_at) "
+                         "VALUES ('O-0001', ?, 'evidencia', ?, 0, 1, ?)", (rater, 0.25 * (n + 1), f"2026-01-0{n + 1}"))
+        conn.commit()
+    finally:
+        conn.close()
+    code, out, _ = _run(capsys, ["--agente", "orquestador", "--json", "puntuar", "ranking", "--sim", "200"])
+    fila = next(r for r in json.loads(out) if r["opportunity_id"] == "O-0001")
+    assert fila["raters"] == 2

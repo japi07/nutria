@@ -2240,13 +2240,14 @@ _DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe
 
 
 def normalize_rater(rater: str | None) -> str:
-    """Identificador canónico de un evaluador: forma Unicode NFKC, guiones tipográficos como '-', sin espacios
-    sobrantes y en minúsculas.
+    """Identificador canónico de un evaluador: forma Unicode NFKC, sin caracteres de formato invisibles (categoría
+    Cf: U+200B, U+00AD, U+200D, U+FEFF...), guiones tipográficos como '-', sin espacios sobrantes y en minúsculas.
 
-    'evaluador-1', ' evaluador-1 ', 'Evaluador-1' y 'evaluador‐1' (guion U+2010) son el mismo evaluador: se guardan
-    igual y cuentan una sola vez para el mínimo de evaluadores distintos del ranking."""
+    'evaluador-1', ' evaluador-1 ', 'Evaluador-1', 'evaluador‐1' (guion U+2010) y 'evaluador\u200b-1' son el mismo
+    evaluador: se guardan igual y cuentan una sola vez para el mínimo de evaluadores distintos del ranking."""
     import unicodedata
-    text = unicodedata.normalize("NFKC", str(rater or "")).translate(_DASHES)
+    text = unicodedata.normalize("NFKC", str(rater or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf").translate(_DASHES)
     return " ".join(text.split()).casefold()
 
 
