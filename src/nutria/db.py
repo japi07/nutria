@@ -674,8 +674,17 @@ def schema_errors(kind: str, data: Any, schema: dict | None = None) -> list[str]
     """Errores de validación de `data` contra el esquema `kind` (o contra `schema`), legibles y ordenados. Aplica
     también la palabra clave "x-texto" (textos informados y específicos)."""
     validator = _validator_class()(schema) if schema is not None else _schema_validator(kind)
-    return [f"{'/'.join(map(str, e.path)) or '(raíz)'}: {schema_error_text(e)}"
-            for e in sorted(validator.iter_errors(data), key=lambda e: list(e.path))]
+    errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+    # En un mismo campo, el problema concreto del texto sustituye a los errores genéricos de longitud o de patrón.
+    texts = {tuple(e.path) for e in errors if e.validator == "x-texto"}
+    out: list[str] = []
+    for e in errors:
+        if e.validator in ("minLength", "pattern") and tuple(e.path) in texts:
+            continue
+        message = f"{'/'.join(map(str, e.path)) or '(raíz)'}: {schema_error_text(e)}"
+        if message not in out:
+            out.append(message)
+    return out
 
 
 def _is_number(value: Any) -> bool:
@@ -740,6 +749,10 @@ def extraction_problems(data: dict) -> list[str]:
     rdp, cp = data.get("pdr_pct_ms"), data.get("pb_pct_ms")
     if _is_number(rdp) and _is_number(cp) and rdp > cp:
         problems.append(f"pdr_pct_ms ({rdp}) supera pb_pct_ms ({cp}): la PDR es una fracción de la PB")
+    for events, n in (("eventos_control", "n_control"), ("eventos_tratamiento", "n_tratamiento")):
+        if _is_number(data.get(events)) and _is_number(data.get(n)) and data[events] > data[n]:
+            problems.append(f"{events} ({data[events]}) supera {n} ({data[n]}): los eventos son animales (o unidades) "
+                            "con el evento dentro del grupo")
     case, outcome = data.get("definicion_caso"), data.get("variable")
     if isinstance(case, str) and isinstance(outcome, str) and plain_text(case) == plain_text(outcome):
         problems.append("definicion_caso repite el nombre de la variable: indica el criterio y el umbral del artículo "

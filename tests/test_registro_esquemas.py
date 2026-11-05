@@ -620,7 +620,7 @@ def test_incidencia_exige_ventana_respecto_al_hito_y_definicion_de_caso():
         with pytest.raises(SystemExit):
             _validate("extraccion", {k: v for k, v in inc.items() if k != campo})
     for changes in ({"definicion_caso": ""}, {"definicion_caso": "-"}, {"definicion_caso": "Cetosis  Subclínica"},
-                    {"ventana_inicio_dias": 20},
+                    {"ventana_inicio_dias": 20}, {"eventos_tratamiento": 25},
                     {"n_control": None, "no_consta": ["media_control", "media_tratamiento", "tipo_dispersion",
                                                       "n_control"]}):
         with pytest.raises(SystemExit):
