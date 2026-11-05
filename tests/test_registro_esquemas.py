@@ -383,6 +383,90 @@ def test_conciliacion_valor_releido_y_promedio_confirmado(project, capsys):
                                                                               (None, 3, "resuelta")]
 
 
+def test_conciliacion_hacia_un_dato_que_la_fuente_no_publica(project, capsys):
+    """Revisión de D2-12: si la fuente no publica un dato obligatorio, la conciliación elige la copia que lo declaró
+    en 'no_consta' (origen 'A' o 'B': el campo queda a null y declarado, y los opcionales que esa copia omitió se
+    omiten) o, si las dos copias leyeron una cifra que la fuente no publica, el origen 'fuente' con valor null (el
+    sistema lo declara en 'no_consta'). Las filas así conciliadas cuentan como verificadas y se exportan."""
+    leche = _records(_source(1))[0]
+    sin_medias = dict(leche, media_control=None, media_tratamiento=None, tipo_dispersion=None,
+                      no_consta=["media_control", "media_tratamiento", "tipo_dispersion"])
+    for k in ("dispersion_control", "dispersion_tratamiento"):
+        sin_medias.pop(k)
+
+    def conciliar(ce, resoluciones):
+        path = _write(project / f"c_{ce}.json", {"conciliacion": [{"a": 1, "b": 1, "resoluciones": resoluciones}]})
+        return _code([*CONCILIADOR, "extraccion", "conciliar", ce, "--datos", path])
+
+    def discrepancias(a, b):
+        capsys.readouterr()
+        assert main(["--json", "extraccion", "comparar", a, b, "--registrar"]) == 1
+        return sorted({d["campo"] for d in json.loads(capsys.readouterr().out)["discrepancias"]})
+
+    motivo = "Tabla 3 releída: el artículo no publica las medias por tratamiento"
+    # 1. A las declara en no_consta y B leyó unas cifras de otra tabla: gana A, con cada campo en discrepancia
+    campos = discrepancias(_deposit(project, "n_A.json", [sin_medias], "extractor-n-A"),
+                           _deposit(project, "n_B.json", [leche], "extractor-n-B"))
+    assert campos == ["dispersion_control", "dispersion_tratamiento", "media_control", "media_tratamiento",
+                      "no_consta", "tipo_dispersion"]
+    # 'fuente' con el mismo valor que A (null) se rechaza: se indica origen 'A'
+    assert conciliar("CE-0001", [{"campo": c, "origen_valor": "fuente", "valor": sin_medias.get(c), "motivo": motivo}
+                                 for c in campos]) == 3
+    assert "indica origen_valor 'A'" in capsys.readouterr().err
+    assert conciliar("CE-0001", [{"campo": c, "origen_valor": "A", "motivo": motivo} for c in campos]) == 0
+    (row,) = db.list_extractions(_conn())
+    assert (row["mean_ctrl"], row["mean_trt"], row["dispersion_type"], row["disp_ctrl"]) == (None, None, None, None)
+    assert sorted(row["not_reported"]) == ["media_control", "media_tratamiento", "tipo_dispersion"]
+    assert row["check_status"] == "resuelta" and row["id"] in db.verified_extraction_ids(_conn())
+    # 2. lo mismo con la copia B como la que declaró el dato en no_consta
+    campos = discrepancias(_deposit(project, "m_A.json", [dict(leche, fuente=_source(2))], "extractor-m-A"),
+                           _deposit(project, "m_B.json", [dict(sin_medias, fuente=_source(2))], "extractor-m-B"))
+    assert conciliar("CE-0002", [{"campo": c, "origen_valor": "B", "motivo": motivo} for c in campos]) == 0
+    fila = next(r for r in db.list_extractions(_conn()) if r["comparison_id"] == "CE-0002")
+    assert fila["mean_trt"] is None and fila["disp_ctrl"] is None and fila["id"] in db.verified_extraction_ids(_conn())
+    # 3. las dos copias leyeron una cifra (distinta) que la fuente no publica: 'fuente' con valor null
+    otra = dict(leche, fuente=_source(3))
+    campos = discrepancias(_deposit(project, "f_A.json", [otra], "extractor-f-A"),
+                           _deposit(project, "f_B.json", [dict(otra, media_control=33.0)], "extractor-f-B"))
+    assert campos == ["media_control"]
+    assert conciliar("CE-0003", [{"campo": "media_control", "origen_valor": "fuente", "valor": None,
+                                  "motivo": "Tabla 3 releída: la media del control no se publica"}]) == 0
+    fila = next(r for r in db.list_extractions(_conn()) if r["comparison_id"] == "CE-0003")
+    assert fila["mean_ctrl"] is None and fila["not_reported"] == ["media_control"]
+    assert fila["id"] in db.verified_extraction_ids(_conn())
+    out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "nulos.csv"))
+    assert out["filas"] == 3 and out["excluidas"] == {}
+    # un opcional que la fuente no publica se omite ('fuente' con null)
+    opcional = dict(leche, fuente=_source(4), p_valor=0.03)
+    campos = discrepancias(_deposit(project, "p_A.json", [opcional], "extractor-p-A"),
+                           _deposit(project, "p_B.json", [dict(opcional, p_valor=0.04)], "extractor-p-B"))
+    assert conciliar("CE-0004", [{"campo": "p_valor", "origen_valor": "fuente", "valor": None,
+                                  "motivo": "Tabla 3 releída: el artículo no da el valor de P"}]) == 0
+    fila = next(r for r in db.list_extractions(_conn()) if r["comparison_id"] == "CE-0004")
+    assert fila["p_value"] is None and fila["not_reported"] is None
+    assert fila["id"] in db.verified_extraction_ids(_conn())
+
+
+def test_conciliacion_avisa_si_empareja_registros_de_variables_distintas(project, capsys):
+    """Revisión de D2-12 (residuo): emparejar registros de dos variables distintas es responsabilidad de quien
+    concilia; el resultado y la decisión registrada lo avisan."""
+    recs_a = _records(_source())[:1]
+    proteina = dict(recs_a[0], variable="proteína de la leche", unidad="%", media_control=3.1, media_tratamiento=3.3)
+    grasa = dict(recs_a[0], variable="grasa de la leche", unidad="%", media_control=3.8, media_tratamiento=4.0)
+    a = _deposit(project, "x_A.json", [recs_a[0], proteina], "extractor-datos-A")
+    b = _deposit(project, "x_B.json", [recs_a[0], grasa], "extractor-datos-B")
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
+    resoluciones = [{"campo": c, "origen_valor": "A", "motivo": MOTIVO}
+                    for c in ("media_control", "media_tratamiento", "variable")]
+    path = _write(project / "c.json", {"conciliacion": [{"a": 1, "b": 1},
+                                                        {"a": 2, "b": 2, "resoluciones": resoluciones}]})
+    capsys.readouterr()
+    assert main([*CONCILIADOR, "extraccion", "conciliar", "CE-0001", "--datos", path]) == 0
+    out = capsys.readouterr().out
+    assert "AVISO: A2/B2 emparejados con variable distinta" in out and "grasa de la leche" in out
+    assert "AVISO" in db.list_decisions(_conn(), "CE-0001")[-1]["rationale"]
+
+
 def test_conciliacion_de_copias_con_distinto_numero_de_registros(project, capsys):
     source = _source()
     recs_a = _records(source)
@@ -464,35 +548,59 @@ def test_copias_corregidas_tras_ver_discrepancias_no_sustituyen_a_la_conciliacio
     deposito_rechazado("x_E.json", "extractor-datos", 7)
 
 
-def test_comparar_sin_registrar_no_deja_ver_una_copia_depositada_antes_de_depositar(project, capsys, monkeypatch):
-    """Sin --registrar, `comparar` no enfrenta una copia depositada a otra sin depositar (ni por la entrada estándar):
-    ver las discrepancias antes de depositar la propia permitiría corregirla. Y, aunque las dos estén depositadas,
-    ver las discrepancias no permite sustituir ninguna por una corregida."""
+def test_comparar_sin_registrar_no_muestra_discrepancias_en_un_proyecto(project, capsys, monkeypatch,
+                                                                         tmp_path_factory):
+    """Revisión de D2-12: en un proyecto con registro, `comparar` sin --registrar no muestra las discrepancias de
+    ningún par de ficheros: dos borradores sin depositar, una copia depositada (tal cual, reformateada o por la entrada
+    estándar) frente a un borrador, ni dos copias depositadas. Verlas sin registrarlas permitía igualar los borradores
+    antes de depositarlos, o sustituir las copias por otras de extractores nuevos, y obtener 'doble_concordante' sin
+    conciliación ni rastro. Fuera de un proyecto (sin registro) la orden solo compara dos ficheros."""
     import io
     source = _source()
     recs = _records(source)
     distinta = copy.deepcopy(recs)
-    distinta[0]["media_tratamiento"] = 30.0
-    a = _deposit(project, "x_A.json", recs, "extractor-datos-A")
-    borrador = _write(project / "x_B.json", distinta)
-    capsys.readouterr()
-    assert main(["extraccion", "comparar", a, borrador]) == 3
-    assert "Una de las copias está depositada y la otra no" in capsys.readouterr().err
-    monkeypatch.setattr("sys.stdin", io.StringIO((project / "x_B.json").read_text("utf-8")))
-    assert main(["extraccion", "comparar", "-", a]) == 3
-    # dos ficheros sin depositar: la orden sigue sirviendo para ver diferencias
-    otro = _write(project / "otro.json", recs, indent=5)
-    assert main(["extraccion", "comparar", otro, borrador]) == 1
-    # dos copias depositadas: se ven las discrepancias, pero ya no se sustituye ninguna
-    b = _deposit(project, "x_B.json", distinta, "extractor-datos-B")
-    assert main(["extraccion", "comparar", a, b]) == 1
-    capsys.readouterr()
-    corregida = _write(project / "x_B2.json", recs, indent=4)
-    assert main(["--agente", "extractor-datos-B", "extraccion", "depositar", "--datos", corregida]) == 3
-    assert "es definitiva" in capsys.readouterr().err
-    assert main(["extraccion", "comparar", a, corregida, "--registrar"]) == 3
+    distinta[0]["media_tratamiento"] = 39.9          # el extractor B se equivocó al leer la tabla
+
+    def sin_vistazo(*argv, stdin=None):
+        capsys.readouterr()
+        if stdin is not None:
+            monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+        assert _code(["--agente", "orquestador", "extraccion", "comparar", *argv]) == 3
+        out, err = capsys.readouterr()
+        assert "solo se comparan con --registrar" in err
+        assert "media_tratamiento" not in out + err and "39.9" not in out + err
+
+    # 1. dos borradores sin depositar (la vía de la revisión: verlos, igualar B y depositar las dos)
+    borrador_a = _write(project / "x_A.json", recs, indent=1)
+    borrador_b = _write(project / "x_B.json", distinta, indent=3)
+    sin_vistazo(borrador_a, borrador_b)
+    sin_vistazo("-", borrador_b, stdin=json.dumps(recs))
+    # 2. la copia A depositada frente al borrador de B: tal cual, reformateada o por la entrada estándar
+    a = _deposit(project, "x_A.json", recs, "extractor-datos-A", indent=1)
+    sin_vistazo(a, borrador_b)
+    sin_vistazo(_write(project / "x_A_ref.json", recs, indent=0), borrador_b)
+    sin_vistazo("-", borrador_b, stdin=json.dumps(recs, ensure_ascii=False))
+    # 3. las dos copias depositadas: tampoco sin registrar (si no, C y D podrían depositar copias corregidas)
+    b = _deposit(project, "x_B.json", distinta, "extractor-datos-B", indent=3)
+    sin_vistazo(a, b)
     assert db.list_extractions(_conn()) == [] and db.list_extraction_comparisons(_conn()) == []
-    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1   # el camino: comparación y conciliación
+    eventos = [json.loads(line) for line in (project / "research" / "procedencia.jsonl").read_text("utf-8").splitlines()]
+    assert sum(e["action"] == "extraccion_comparar_rechazada" for e in eventos) == 6   # los intentos dejan rastro
+    # el camino: la comparación registrada muestra la discrepancia y exige conciliarla
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
+    assert "39.9" in capsys.readouterr().out
+    c = _deposit(project, "x_C.json", recs, "extractor-datos-C", indent=5)
+    d = _deposit(project, "x_D.json", recs, "extractor-datos-D", indent=6)
+    assert main(["extraccion", "comparar", c, d, "--registrar"]) == 3          # CE-0001 sin conciliar
+    assert db.list_extractions(_conn()) == []
+    # fuera de un proyecto no hay registro que proteger: la orden compara dos ficheros y no registra nada
+    fuera = tmp_path_factory.mktemp("fuera_del_proyecto")
+    monkeypatch.chdir(fuera)
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", str(project / "x_A.json"), str(project / "x_B.json")]) == 1
+    assert "39.9" in capsys.readouterr().out
+    assert not (fuera / "research" / "nutria.sqlite").exists()
 
 
 def test_diseno_factorial_no_se_toma_por_un_dato_repetido(project, capsys):

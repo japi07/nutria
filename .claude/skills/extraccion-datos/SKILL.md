@@ -46,18 +46,24 @@ registrada → conciliación si hay discrepancias → exportación para el anál
 2. Cada extractor deposita su copia: `nutria --agente extractor-datos-A extraccion depositar --datos <A.json>` (y
    `extractor-datos-B` con la suya). Se guarda el sha256 del fichero y quién la depositó. Las identidades se comparan
    sin mayúsculas, tildes ni signos (`Extractor_Datos A` es `extractor-datos-a`) y solo con letras latinas y cifras.
-   Una copia depositada es definitiva: hasta que se compare, su extractor no deposita otra de la misma fuente.
-3. Comparación registrada: `nutria extraccion comparar <A.json> <B.json> --registrar` (dos copias depositadas por
-   extractores distintos; código de salida 1 si hay discrepancias). Sin `--registrar` solo muestra las diferencias
-   entre dos ficheros sin depositar o entre dos copias ya depositadas; nunca enfrenta una copia depositada a otra sin
-   depositar (ver la otra copia antes de depositar la propia rompe la independencia).
+   Una copia depositada es definitiva: hasta que se compare, su extractor no deposita otra de la misma fuente. En un
+   flujo automático, usa una identidad por extractor, oportunidad y ejecución (p. ej. `extractor-datos-A-O-0003-1`):
+   una ejecución interrumpida deja su copia depositada (la siguiente puede compararla con la B de otro extractor o
+   usar identidades nuevas), y quien participó en una comparación con discrepancias no vuelve a extraer esa fuente.
+3. Comparación registrada: `nutria --agente <id> extraccion comparar <A.json> <B.json> --registrar` (dos copias
+   depositadas por extractores distintos; código de salida 1 si hay discrepancias). En un proyecto, `comparar` sin
+   `--registrar` se niega (código 3) con cualquier par de ficheros: las discrepancias solo se ven al registrar la
+   comparación, para que nadie iguale los borradores antes de depositarlos ni sustituya las copias por otras.
 4. Si coinciden, el sistema registra los registros como `doble_concordante`. Si no, cada discrepancia se resuelve
    releyendo la fuente y se registra la conciliación: `nutria --agente <id> extraccion conciliar <CE-xxxx> --datos
    <conciliacion.json>` (plantilla: `ejemplos/conciliacion_ejemplo.json`). La hace otro extractor o el orquestador,
    identificado con `--agente`: quien depositó la copia A o la B no concilia esa comparación. El sistema construye
    cada registro a partir de la copia A y de las resoluciones (origen `A`, `B` o `fuente` y motivo) y lo marca
-   `resuelta`; lo que no se pueda resolver va a `no_resueltos` y no se registra. `nutria extraccion comparaciones
-   --pendientes` lista las comparaciones sin conciliar.
+   `resuelta`; lo que no se pueda resolver va a `no_resueltos` y no se registra. Si la fuente no publica un dato,
+   la resolución toma la copia que lo declaró en `no_consta` (origen `A` o `B`, también para `no_consta`) o, si las
+   dos copias leyeron una cifra, `fuente` con `"valor": null` (el sistema lo declara en `no_consta`). Comprueba que
+   cada pareja `a`/`b` es el mismo dato: el resultado avisa si emparejas registros de variables distintas. `nutria
+   extraccion comparaciones --pendientes` lista las comparaciones sin conciliar.
 5. Las copias no se corrigen después de ver las discrepancias: mientras una fuente tenga una comparación con
    discrepancias sin conciliar, no se registra otra comparación de esa fuente, y quien participó en una comparación
    con discrepancias (copia A o B, comparación o conciliación) ya no deposita copias de esa fuente. Para repetir la

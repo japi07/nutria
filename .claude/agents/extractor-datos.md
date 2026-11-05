@@ -53,9 +53,10 @@ verificada antes (`nutria fuente agregar`).
 - Al terminar, **deposita tu copia** con el identificador de tu copia:
   `nutria --agente extractor-datos-A extraccion depositar --datos <tu fichero>` (o `extractor-datos-B`). El registro
   guarda su sha256 y quién la depositó; si el fichero cambia después, deja de ser la copia depositada. Una copia
-  depositada es definitiva: no depositas otra de la misma fuente para corregirla. Nunca deposites la copia de otro
-  extractor ni la compares con la tuya antes de depositar la tuya (`comparar` sin `--registrar` no enfrenta una copia
-  depositada a otra sin depositar). Tu identidad se compara sin mayúsculas, tildes ni signos.
+  depositada es definitiva: no depositas otra de la misma fuente para corregirla. Nunca leas ni deposites la copia de
+  otro extractor. En el proyecto, `comparar` solo funciona con `--registrar` (sin él se niega con cualquier par de
+  ficheros): las discrepancias se ven al registrar la comparación, nunca antes. Tu identidad se compara sin
+  mayúsculas, tildes ni signos; usa la que te indiquen para esta oportunidad y ejecución.
 - La conciliación (otro extractor o el orquestador, identificado con `--agente`; nunca quien depositó la copia A o la
   B) ejecuta `nutria --agente extractor-datos extraccion comparar <A.json> <B.json> --registrar`, que exige dos copias
   depositadas por extractores distintos. Sin discrepancias (código 0), el sistema registra los registros como
@@ -64,8 +65,11 @@ verificada antes (`nutria fuente agregar`).
   `nutria --agente extractor-datos extraccion conciliar <CE-xxxx> --datos <conciliacion.json>` (formato en
   `ejemplos/conciliacion_ejemplo.json`). Cada registro de A y de B se empareja (`a`, `b`) o va a `no_resueltos` con su
   motivo; cada campo en discrepancia lleva una resolución con `origen_valor` (`A`, `B` o `fuente`, con el `valor`
-  releído) y el `motivo` (dónde se releyó). El sistema construye cada registro conciliado a partir de la copia A y de
-  esas resoluciones y lo registra como `resuelta`; lo no resuelto no se registra.
+  releído) y el `motivo` (dónde se releyó). Si la fuente no publica el dato, elige la copia que lo declaró en
+  `no_consta` (también para el campo `no_consta`) o `fuente` con `"valor": null` si las dos leyeron una cifra. El
+  sistema construye cada registro conciliado a partir de la copia A y de esas resoluciones y lo registra como
+  `resuelta`; lo no resuelto no se registra. Empareja solo registros del mismo dato: si las variables de una pareja
+  difieren, el resultado lo avisa y queda en el registro.
 - No corrijas tu copia después de ver las discrepancias: con una comparación sin conciliar, el registro no admite
   otra comparación de esa fuente, y quien participó en una comparación con discrepancias (copia A o B, comparación o
   conciliación) ya no deposita copias de esa fuente. Para repetir la doble extracción, la comparación se cierra con

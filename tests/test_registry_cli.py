@@ -144,8 +144,9 @@ def test_extraction_batch_export_and_double_extraction(project, capsys):
     other = dict(base, media_tratamiento=31.5)
     (project / "b.json").write_text(json.dumps(other), "utf-8")
     capsys.readouterr()
-    assert main(["extraccion", "comparar", str(project / "e.json"), str(project / "b.json")]) == 1
-    assert "media_tratamiento" in capsys.readouterr().out
+    # en un proyecto, las discrepancias solo se ven al registrar la comparación de dos copias depositadas
+    assert main(["extraccion", "comparar", str(project / "e.json"), str(project / "b.json")]) == 3
+    assert "media_tratamiento" not in capsys.readouterr().out
 
 
 def test_invalid_json_is_rejected(project):

@@ -1100,13 +1100,6 @@ def _exposure_error(who: str, hits: list[tuple[str, str]]) -> RegistryError:
         "conciliación registrada")
 
 
-def deposited_shas(conn: sqlite3.Connection, shas: list[str]) -> set[str]:
-    """Cuáles de esas huellas sha256 son copias de doble extracción depositadas."""
-    return {r["sha256"] for r in conn.execute(
-        f"SELECT DISTINCT sha256 FROM extraction_copies WHERE sha256 IN ({', '.join('?' for _ in shas)})",
-        list(shas))} if shas else set()
-
-
 def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha256: str, path: str | None = None,
                             actor: str | None = None) -> dict:
     """Deposita una copia de doble extracción (sin registrarla para el análisis). La huella sha256 del fichero
@@ -1249,7 +1242,13 @@ def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: 
 
 
 def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) -> tuple[dict, str, list[str]]:
-    """Construye el registro conciliado: parte de la copia A y aplica solo las resoluciones declaradas."""
+    """Construye el registro conciliado: parte de la copia A y aplica solo las resoluciones declaradas.
+
+    Un valor nulo se conserva como en la copia de la que sale: con origen 'A' o 'B', el campo queda como en esa copia
+    (a null y declarado en su 'no_consta' si es obligatorio y la fuente no lo publica; omitido si es opcional). Con
+    origen 'fuente' y valor null (la fuente no publica el dato), un campo obligatorio queda a null y, si 'no_consta'
+    no tiene su propia resolución (A y B lo declaran igual), el sistema lo añade a 'no_consta'; uno opcional se omite.
+    """
     problems: list[str] = []
     by_field: dict[str, dict] = {}
     for res in resolutions:
@@ -1259,7 +1258,9 @@ def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) ->
         elif field in COMPARE_IGNORED or (field not in EXTRACTION_FIELDS and field != "no_consta"):
             problems.append(f"{where}: '{field}' no es un campo conciliable del esquema de extracción")
         by_field[field] = res
+    required = set(load_schema("extraccion")["required"])
     record = {k: v for k, v in x.items() if k not in EXTRACTION_SYSTEM_FIELDS}
+    not_published: list[str] = []      # obligatorios que la fuente no publica según la resolución ('fuente': null)
     for key in sorted((set(x) | set(y) | set(by_field)) - COMPARE_IGNORED):
         va, vb = x.get(key), y.get(key)
         differ = not same_value(_norm_value(key, va), _norm_value(key, vb))
@@ -1276,9 +1277,11 @@ def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) ->
                             "extracción)")
             continue
         if origin in ("A", "B"):
-            value = va if origin == "A" else vb
+            chosen = x if origin == "A" else y
+            value, keep = chosen.get(key), key in chosen
         else:
             value = res.get("valor")
+            keep = value is not None or key in required
             for label, other in (("A", va), ("B", vb)):
                 if same_value(_norm_value(key, value), _norm_value(key, other)):
                     problems.append(f"{where}: el valor 'fuente' de '{key}' coincide con la copia {label}: indica "
@@ -1290,10 +1293,15 @@ def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) ->
                     problems.append(f"{where}: '{key}' = {value!r} es el promedio de A ({va!r}) y B ({vb!r}); promediar "
                                     "está prohibido. Si la fuente da exactamente ese valor, añade "
                                     "\"confirmado_en_fuente\": true a la resolución")
-        if value is None:
-            record.pop(key, None)
-        else:
+                if value is None and key in required:
+                    not_published.append(key)
+        if keep:
             record[key] = value
+        else:
+            record.pop(key, None)
+    if not_published and "no_consta" not in by_field:
+        declared = record.get("no_consta") if isinstance(record.get("no_consta"), list) else []
+        record["no_consta"] = declared + [k for k in not_published if k not in declared]
     return record, ("resuelta" if by_field else "doble_concordante"), problems
 
 
@@ -1358,6 +1366,15 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
                 built.append((entry, record, status))
         if problems:
             raise RegistryError("Conciliación rechazada (no se registra nada): " + "; ".join(problems[:12]))
+        # Emparejar registros de variables distintas es responsabilidad de quien concilia: queda avisado y registrado.
+        warnings = []
+        for entry, _record, _status in built:
+            rec_a, rec_b = records["a"][entry["a"] - 1], records["b"][entry["b"] - 1]
+            for field in ("variable", "unidad"):
+                if plain_text(rec_a.get(field)) != plain_text(rec_b.get(field)):
+                    warnings.append(f"A{entry['a']}/B{entry['b']} emparejados con {field} distinta "
+                                    f"({rec_a.get(field)!r} en A, {rec_b.get(field)!r} en B): compruébese que son el "
+                                    "mismo dato y no dos datos distintos de la fuente")
         extractor = f"{comp['actor_a']} | {comp['actor_b']}"
         detail = []
         for entry, record, status in built:
@@ -1373,8 +1390,9 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
         _log_decision(conn, comparison_id, "doble extracción conciliada",
                       f"{len(ids)} registro(s) registrados ({sum(d['estado'] == 'resuelta' for d in detail)} "
                       f"resueltos); {len(unresolved)} no resuelto(s) sin registrar"
-                      + (f"; fichero sha256 {sha256[:12]}" if sha256 else ""), actor)
-        return {"id": comparison_id, "ids": ids, "registros": detail, "no_resueltos": unresolved}
+                      + (f"; fichero sha256 {sha256[:12]}" if sha256 else "")
+                      + "".join(f"; AVISO: {w}" for w in warnings), actor)
+        return {"id": comparison_id, "ids": ids, "registros": detail, "no_resueltos": unresolved, "avisos": warnings}
 
 
 def list_extraction_comparisons(conn: sqlite3.Connection, pending_only: bool = False) -> list[dict]:

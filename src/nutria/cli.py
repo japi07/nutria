@@ -514,30 +514,36 @@ def _leer_bytes(path: str) -> bytes:
     return stdin.read() if stdin is not None else sys.stdin.read().encode("utf-8")
 
 
+COMPARAR_SOLO_REGISTRADA = (
+    "En un proyecto con registro, las copias de una doble extracción solo se comparan con --registrar: cada extractor "
+    "deposita la suya (`nutria --agente <id> extraccion depositar --datos <fichero>`) y quien concilia ejecuta "
+    "`nutria --agente <id> extraccion comparar A.json B.json --registrar`, que registra la comparación (sha256 de las "
+    "dos copias, extractores y discrepancias) y muestra las discrepancias. No se muestran sin registrarlas: verlas "
+    "antes permitiría igualar las copias (o sustituirlas por otras de extractores nuevos) y obtener "
+    "'doble_concordante' sin conciliación ni rastro.")
+
+
 def _comparar_extracciones(args, cfg) -> int:
     if not args.registrar:
+        if cfg.db_path.is_file():
+            # Ni dos borradores sin depositar, ni una copia depositada (reformateada o por la entrada estándar) frente
+            # a un borrador, ni dos copias depositadas: toda comparación de copias deja rastro en el registro.
+            log_event(cfg, "extraccion_comparar_rechazada", inputs={"a": args.a, "b": args.b},
+                      outputs={"motivo": "sin --registrar en un proyecto con registro"}, actor=args.agente)
+            raise registry.RegistryError(COMPARAR_SOLO_REGISTRADA)
+        # Sin registro (fuera de un proyecto) no hay copias depositadas ni comparaciones que proteger: es un diff.
         if args.a == "-" and args.b == "-":
             raise SystemExit("Solo una de las dos copias puede leerse de la entrada estándar")
         raw = {"a": _leer_bytes(args.a), "b": _leer_bytes(args.b)}
-        if cfg.db_path.is_file():
-            # Ver las discrepancias con una copia depositada antes de depositar la propia permitiría corregirla.
-            shas = {k: sha256_text(v) for k, v in raw.items()}
-            depositadas = registry.deposited_shas(_conn(cfg), sorted(set(shas.values())))
-            if len({shas["a"], shas["b"]} & depositadas) == 1 and shas["a"] != shas["b"]:
-                raise registry.RegistryError(
-                    "Una de las copias está depositada y la otra no: sin --registrar solo se comparan dos ficheros sin "
-                    "depositar o dos copias ya depositadas. Ver las discrepancias con una copia depositada antes de "
-                    "depositar la propia permitiría corregirla: deposita la otra copia (`nutria --agente <id> "
-                    "extraccion depositar --datos <fichero>`) y compáralas con --registrar")
         a, b = json.loads(raw["a"].decode("utf-8")), json.loads(raw["b"].decode("utf-8"))
         a, b = (a if isinstance(a, list) else [a]), (b if isinstance(b, list) else [b])
         diffs = registry.compare_extraction_records(a, b)
-        text = ("Extracciones concordantes. Para registrarlas como 'doble_concordante', cada extractor deposita su "
-                "copia (`extraccion depositar`) y se ejecuta `extraccion comparar A.json B.json --registrar`."
+        text = ("Extracciones concordantes (fuera de un proyecto: no se registra nada). En el proyecto, cada extractor "
+                "deposita su copia (`extraccion depositar`) y se ejecuta `extraccion comparar A.json B.json --registrar`."
                 if not diffs else _texto_discrepancias(diffs)
-                + f"\n{len(diffs)} discrepancia(s): registra la comparación con --registrar y concíliala con "
-                  "`extraccion conciliar <CE-xxxx> --datos <fichero>`, resolviendo cada una releyendo la fuente.")
-        log_event(cfg, "extraccion_comparar", inputs={"a": args.a, "b": args.b},
+                + f"\n{len(diffs)} discrepancia(s) (fuera de un proyecto: no se registra nada).")
+        log_event(cfg, "extraccion_comparar", inputs={"a": args.a, "b": args.b, "sha256_a": sha256_text(raw["a"]),
+                                                      "sha256_b": sha256_text(raw["b"]), "registrar": False},
                   outputs={"discrepancias": len(diffs)}, actor=args.agente)
         _emit(args, {"discrepancias": diffs}, text)
         return 1 if diffs else 0
@@ -602,7 +608,7 @@ def _conciliar_extracciones(args, cfg, conn) -> int:
               outputs={"ids": res["ids"], "no_resueltos": len(res["no_resueltos"])}, actor=args.agente)
     estados = ", ".join(f"#{d['id']} {d['estado']}" for d in res["registros"]) or "ninguna"
     _emit(args, res, f"Conciliación de {args.id} registrada. Extracciones: {estados}. No resueltos (sin registrar): "
-                     f"{len(res['no_resueltos'])}")
+                     f"{len(res['no_resueltos'])}" + "".join(f"\nAVISO: {w}" for w in res.get("avisos") or []))
     return 0
 
 
@@ -1408,12 +1414,15 @@ def build_parser() -> argparse.ArgumentParser:
             x.add_argument("--casos-completos", dest="casos_completos", nargs="+", metavar="MODERADOR",
                            help="exporta solo los registros que informan de estos moderadores numéricos "
                                 "(meta-regresión de casos completos) y lista los excluidos")
-    x = es.add_parser("comparar", parents=[common], help="doble extracción: diferencias campo a campo")
+    x = es.add_parser("comparar", parents=[common],
+                      help="doble extracción: compara y registra dos copias depositadas (--registrar)")
     x.add_argument("a")
     x.add_argument("b")
     x.add_argument("--registrar", action="store_true",
                    help="registra la comparación de dos copias depositadas por extractores distintos; sin "
-                        "discrepancias, registra los registros como 'doble_concordante'")
+                        "discrepancias, registra los registros como 'doble_concordante'. En un proyecto con registro "
+                        "es obligatoria: las discrepancias no se muestran sin registrarlas (fuera de un proyecto, "
+                        "sin ella, solo compara los dos ficheros)")
     x = es.add_parser("depositar", parents=[common],
                       help="deposita una copia de doble extracción (sha256 y extractor) sin registrarla")
     x.add_argument("--datos", dest="json_file", required=True, help="fichero JSON de la copia (A o B)")
