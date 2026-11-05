@@ -52,6 +52,15 @@ def _project(tmp_path: Path, text: str) -> rnpv.Project:
     return rnpv.load_project(_write(tmp_path, "empresa.toml", text))
 
 
+def _exit_code(argv: list[str]) -> int:
+    """Código de salida de la CLI, tanto si `main` lo devuelve como si argparse sale con SystemExit (opción no
+    válida)."""
+    try:
+        return main(argv)
+    except SystemExit as exc:
+        return int(exc.code)
+
+
 # ============================================================================================ D4-2: dosis
 def test_dosis_tres_bases_y_vuelta():
     """50 g/vaca/día con 20 kg MS y 8 kg de concentrado tal cual: 2500 mg/kg MS y 6250 g/t; y de vuelta."""
@@ -887,7 +896,7 @@ def test_respuesta_umbral_no_mezcla_moda_y_mediana(tmp_path, project, capsys):
     text = capsys.readouterr().out
     assert "Respuesta umbral (valores centrales coherentes: coste, valor unitario y días con la moda de cada entrada" \
         in text and "exp(media_log − de_log²) en la lognormal" in text
-    assert main(["econ", "ganadero", str(path), "--valor-central", "media"]) == 2
+    assert _exit_code(["econ", "ganadero", str(path), "--valor-central", "media"]) == 2
 
 
 def test_coherencia_con_el_mismo_estadistico(tmp_path):
