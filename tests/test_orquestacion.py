@@ -2557,3 +2557,81 @@ def test_coord_compuertas_de_los_workflows_coinciden_con_el_registro():
     pares = re.findall(r"agente: '([a-z-]+)', compuerta: '([a-z_]+)'", triage)
     assert {compuerta: agente for agente, compuerta in pares} == registro
     assert COMPUERTA_DE == {agente: compuerta for compuerta, agente in registro.items()}   # la copia de estas pruebas
+
+
+# ============================================================================ fase de coordinación: peticiones de P2 y P6
+@requires_node
+def test_coord_redaccion_pide_citas_solo_con_rn_y_anexo_a_por_cada_rn(project, capsys):
+    # Petición de P2 a P8 (5): los encargos de redacción piden lo que comprueban `informe comprobar` y el hook de
+    # research/ (citas solo [Rn], identificadores solo en la bibliografía, etiqueta por fila de tabla con cifras y la
+    # ruta tras «Ruta regulatoria»); (3): una fila del Anexo A por cada afirmación con [Rn], lleve la etiqueta que lleve.
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"),
+              {"label": "informe:O-0003", "respuesta": {"archivo": "research/informes/O-0003.md", "decision_propuesta": "continuar"}},
+              {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    # quienes redactan documentos de research/ (descarte, búsqueda, aportaciones, críticas, informe y su verificación)
+    redactan = [c for c in out["llamadas"] if c["label"].split(":")[0] in
+                ("descarte", "bibliografia", "critica", "verificacion", "informe", "verificacion-informe")
+                or c["label"].startswith(("desarrollo-industrial:", "economia-mercado-pi:", "sostenibilidad-bienestar:"))]
+    assert {c["label"].split(":")[0] for c in redactan} >= {"descarte", "informe", "verificacion-informe"}
+    for c in redactan:
+        assert "Cita solo con [Rn]" in c["prompt"], c["label"]
+    informe = call(out, "informe:O-0003")["prompt"]
+    assert "justo después de «Ruta regulatoria»" in informe
+    verificacion = call(out, "verificacion-informe:O-0003")["prompt"]
+    assert "una fila por cada afirmación con [Rn], lleve la etiqueta que lleve" in verificacion
+    assert "solo en el Anexo A" in verificacion
+    # y el siguiente paso enlaza la revisión del crítico en el informe y vuelve a sellarlo
+    siguiente = out["resultado"]["siguiente"]
+    assert "revision_critica" in siguiente and "--online --sellar" in siguiente
+    mision = _text(WORKFLOWS_DIR / "mision-1-auto.js")
+    assert "const REGLAS" in mision and "CITAS" in mision[mision.index("const REGLAS"):mision.index("const REGLAS") + 600]
+
+
+@requires_node
+@pytest.mark.parametrize("archivo, es_informe", [("research/informes/O-0003.md", True),
+                                                  ("research/planes/O-0003.md", False)])
+def test_coord_red_team_menciona_el_documento_y_pide_enlazar_la_revision(archivo, es_informe):
+    # Petición de P2 a P8 (1): la revisión adversarial queda en research/revisiones, menciona el informe y el informe la
+    # enlaza en `revision_critica` (sin ella no pasa a revisado ni a final); el enlace cambia el informe: se vuelve a sellar.
+    destino = "research/revisiones/" + archivo.split("research/")[1].replace("/", "_").replace(".md", "_redteam.md")
+    out = run_workflow("red-team-auto", archivo, [{"label": "consolidacion", "respuesta": {"archivo": destino}}])
+    assert f"# Revisión adversarial de {archivo}" in call(out, "consolidacion")["prompt"]
+    siguiente = out["resultado"]["siguiente"]
+    if es_informe:
+        assert f"revision_critica: {destino}" in siguiente and "--online --sellar" in siguiente
+        assert "nutria informe revisar" in siguiente
+    else:
+        assert siguiente is None
+    # sin consolidado (fallo del agente) no hay nada que enlazar
+    sin = run_workflow("red-team-auto", archivo, [{"label": "consolidacion", "respuesta": None}])
+    assert sin["resultado"]["siguiente"] is None
+
+
+def test_coord_la_revision_escrita_como_pide_red_team_vale_para_el_informe(project):
+    # El contrato completo con P2: una revisión que empieza como pide la consolidación de red-team-auto satisface
+    # `check._critique_issues` (existe en research/revisiones, la enlaza revision_critica y menciona el informe).
+    from nutria.reports import check as chk
+    informe = project / "research" / "informes" / "O-0003.md"
+    informe.parent.mkdir(parents=True, exist_ok=True)
+    rel = "research/revisiones/informes_O-0003_redteam.md"
+    (project / rel).parent.mkdir(parents=True, exist_ok=True)
+    (project / rel).write_text("# Revisión adversarial de research/informes/O-0003.md\n\n| afirmación | resultado |\n"
+                               "|---|---|\n| A1 | sostenida |\n", "utf-8")
+    doc = chk._parse(f"---\noportunidad: O-0009\nrevision_critica: {rel}\n---\n# Informe\n")
+    assert chk._critique_issues(doc, informe) == []
+    (project / rel).write_text("| afirmación | resultado |\n|---|---|\n| A1 | sostenida |\n", "utf-8")
+    assert any("no menciona este informe" in str(i) for i in chk._critique_issues(doc, informe))
+
+
+def test_coord_economia_alineada_con_la_skill_en_mision_y_oportunidad():
+    # Petición de P6 a P8: econ ganadero --exigir-fuentes (por animal y día y por tonelada), econ desarrollador --ganadero
+    # --exigir-fuentes (VPN realizado y P(pérdida > umbral)) y econ coherencia antes de puntuar.
+    mision = _sin_agente(_norm(_text(WORKFLOWS_DIR / "mision-1-auto.js")))
+    triage = mision[mision.index("compuerta: 'propiedad_intelectual'"):]
+    triage = triage[:triage.index("compuerta: 'etica'")]
+    for texto in (triage, _sin_agente(_norm(_skill("mision-1"))), _sin_agente(_norm(_skill("oportunidad")))):
+        assert "econ ganadero" in texto and "--exigir-fuentes" in texto and "por tonelada de pienso" in texto
+        assert "econ desarrollador" in texto and "--ganadero" in texto and "P(pérdida > umbral)" in texto
+        assert "econ coherencia" in texto

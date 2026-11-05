@@ -23,8 +23,8 @@ decisión, y nunca los leen.
    - `compuestos-toxicologia`: señales de seguridad → compuerta `seguridad`;
    - `fisiologia-bioquimica`: destino digestivo con `nutria --agente fisiologia-bioquimica destino ruminal` → compuerta `destino_digestivo` (sin
      extrapolar efectos de incubaciones cortas en lote, que no capturan la adaptación de la microbiota ruminal);
-   - `economia-mercado-pi`: modelo del ganadero con `nutria --agente economia-mercado-pi econ ganadero <toml> --exigir-fuentes` (coste por animal y día, respuesta
-     umbral, P10/P50/P90).
+   - `economia-mercado-pi`: modelo del ganadero con `nutria --agente economia-mercado-pi econ ganadero <toml> --exigir-fuentes` (coste por animal y día
+     y por tonelada de pienso, respuesta umbral, P10/P50/P90), con la skill `evaluacion-economica`.
    Si alguno propone `bloqueada`, **detente**: registra el motivo (`nutria --agente <tu-rol> decision registrar ...`, sin firma) y
    preséntalo a una persona. Salir de `bloqueada` exige firma humana. Vuelve a leer las compuertas del registro: el
    registro manda aunque un agente no lo haya dicho.
@@ -39,6 +39,10 @@ decisión, y nunca los leen.
    aporta a una decisión), `desarrollo-industrial` (compuerta `analitica`), `regulacion-seguridad`,
    `economia-mercado-pi` (rNPV, novedad frente a productos y patentes, compuerta `propiedad_intelectual`),
    `sostenibilidad-bienestar` (compuerta `etica`). Como máximo 10 preguntas (el workflow admite hasta 15).
+   El rNPV sale de `nutria --agente economia-mercado-pi econ desarrollador <toml> --ganadero <econ_ganadero.toml>
+   --exigir-fuentes` (distribución del VPN realizado y P(pérdida > umbral), no solo P(rNPV > 0)), y antes de puntuar
+   `nutria --agente economia-mercado-pi econ coherencia <econ_ganadero.toml> <econ_desarrollador.toml>` no debe avisar (si
+   avisa, se declara).
 6. **Crítica**: `critico-red-team` sobre cada aportación; `verificador-citas` sobre las fuentes. Si algún especialista
    propone una compuerta `bloqueada`, o el registro la tiene bloqueada, **detente** antes de puntuar y del informe.
 7. **Hipótesis**: actualiza su estado con motivo (`nutria --agente <tu-rol> hipotesis estado H-xxxx refutada --motivo "..."`).

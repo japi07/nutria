@@ -66,7 +66,12 @@ const MAX_RONDAS_EXTRA = 2
 // Mínimo del encargo: al menos 10 oportunidades, al menos 6 en rumiantes (la misma proporción si el tope es menor).
 const MINIMO_MISION = { oportunidades: 10, rumiantes: 6 }
 const OBJ_RUM = N_OPS >= MINIMO_MISION.oportunidades ? MINIMO_MISION.rumiantes : Math.ceil(N_OPS * 0.6)
-const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria (solo fuentes obtenidas con nutria buscar o WebSearch y verificadas), contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana. Si una fuente no responde, dilo y no lo sustituyas por suposiciones.'
+// Lo que comprueban nutria informe comprobar y el hook de research/ en lo que se redacta (petición de P2): citar de otra
+// forma bloquea el borrador o invalida la verificación.
+const CITAS = 'Cita solo con [Rn] en la misma frase y su entrada en la bibliografía del documento: nada de citas autor-año (tampoco narrativas: «García et al. (2018) mostraron»), «[1]», «(R1)» ni «según R1»; ' +
+  'los DOI, PMID y enlaces de artículos, solo en la bibliografía; la afirmación de una [PUB] va en su propia frase; cada fila de tabla con cifras lleva su etiqueta, aunque la unidad esté en la cabecera.'
+const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria (solo fuentes obtenidas con nutria buscar o WebSearch y verificadas), contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana. Si una fuente no responde, dilo y no lo sustituyas por suposiciones. ' +
+  CITAS
 
 // ---------------------------------------------------------------- fallos y presupuesto
 // Los fallos de agentes se cuentan y se informan; nunca se descartan en silencio.
@@ -183,7 +188,10 @@ const TRIAGE = [
   { agente: 'compuestos-toxicologia', compuerta: 'seguridad', tarea: 'seguridad para la especie diana, el consumidor, el usuario y el medio ambiente a la dosis prevista (nutria --agente compuestos-toxicologia molecula pubchem "<nombre>" --peligros: «clasificado_sin_frases_H» no equivale a «sin peligro» y «sin_clasificacion» es que PubChem no tiene datos)' },
   { agente: 'fisiologia-bioquimica', compuerta: 'destino_digestivo', tarea: 'destino digestivo a la dosis prevista; en rumiantes, calcula con nutria --agente fisiologia-bioquimica destino ruminal (entradas con fuente o [SUP]) y ten en cuenta la adaptación de la microbiota ruminal' },
   { agente: 'desarrollo-industrial', compuerta: 'analitica', tarea: 'viabilidad de fabricación y método analítico para el activo o un marcador' },
-  { agente: 'economia-mercado-pi', compuerta: 'propiedad_intelectual', tarea: 'antecedentes de patentes y libertad de operación preliminar (nutria --agente economia-mercado-pi patentes, con la consulta guardada solo como huella salvo --registrar-consulta); además, antes de la puntuación, con la skill evaluacion-economica, ejecuta nutria --agente economia-mercado-pi econ ganadero research/datos/<ID>/econ_ganadero.toml --exigir-fuentes (entradas con fuente o [SUP]; coste por animal y día y por tonelada de pienso) y deja el modelo y la salida en research/datos/<ID>/' },
+  { agente: 'economia-mercado-pi', compuerta: 'propiedad_intelectual', tarea: 'antecedentes de patentes y libertad de operación preliminar (nutria --agente economia-mercado-pi patentes, con la consulta guardada solo como huella salvo --registrar-consulta); además, antes de la puntuación, con la skill evaluacion-economica, ejecuta nutria --agente economia-mercado-pi econ ganadero research/datos/<ID>/econ_ganadero.toml --exigir-fuentes (entradas con fuente o [SUP]; coste por animal y día y por tonelada de pienso), ' +
+    'nutria --agente economia-mercado-pi econ desarrollador research/datos/<ID>/econ_desarrollador.toml --ganadero research/datos/<ID>/econ_ganadero.toml --exigir-fuentes (distribución del VPN realizado ' +
+    'y P(pérdida > umbral), no solo P(rNPV > 0)) y nutria --agente economia-mercado-pi econ coherencia research/datos/<ID>/econ_ganadero.toml research/datos/<ID>/econ_desarrollador.toml ' +
+    '(sin aviso; si avisa, decláralo), y deja los modelos y las salidas en research/datos/<ID>/' },
   { agente: 'sostenibilidad-bienestar', compuerta: 'etica', tarea: 'impacto ambiental, bienestar y ética de la validación futura' },
 ]
 // Tres evaluadores independientes con modelos distintos; identificadores estables por puesto (un reintento

@@ -90,8 +90,11 @@ sin `--firma-humana` (`nutria --agente <rol> puntuar compuerta <ID> <compuerta> 
 - `compuestos-toxicologia`: seguridad → `seguridad`;
 - `fisiologia-bioquimica`: destino digestivo con `nutria --agente fisiologia-bioquimica destino ruminal` → `destino_digestivo`;
 - `desarrollo-industrial`: fabricación y método analítico → `analitica`;
-- `economia-mercado-pi`: patentes y FTO preliminar → `propiedad_intelectual`; además ejecuta `nutria --agente economia-mercado-pi econ ganadero <toml> --exigir-fuentes`
-  (entradas con fuente o `[SUP]`) antes de la puntuación;
+- `economia-mercado-pi`: patentes y FTO preliminar → `propiedad_intelectual`; además, antes de la puntuación y con la skill
+  `evaluacion-economica`, ejecuta `nutria --agente economia-mercado-pi econ ganadero <toml> --exigir-fuentes` (entradas con fuente o
+  `[SUP]`; coste por animal y día y por tonelada de pienso), `nutria --agente economia-mercado-pi econ desarrollador <toml> --ganadero
+  <econ_ganadero.toml> --exigir-fuentes` (distribución del VPN realizado y P(pérdida > umbral)) y `nutria --agente economia-mercado-pi
+  econ coherencia <econ_ganadero.toml> <econ_desarrollador.toml>` (sin aviso; si avisa, lo declara);
 - `sostenibilidad-bienestar`: impacto, bienestar y ética de la validación → `etica`;
 - `critico-red-team`: intento de refutación, sin ver puntuaciones.
 

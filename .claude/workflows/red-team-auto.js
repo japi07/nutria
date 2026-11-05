@@ -98,6 +98,7 @@ const rutaRedTeam = (archivo) => {
   return `research/revisiones/${nombre}_redteam.md`
 }
 const DESTINO = rutaRedTeam(ARCHIVO)
+const ES_INFORME = /(^|\/)research\/informes\/[^/]+\.md$/.test(String(ARCHIVO).replace(/\\/g, '/'))
 const BASE_DESTINO = DESTINO.replace(/\.md$/, '')
 // Ruta real que declara el agente de consolidación: solo vale si es DESTINO o una variante -N de DESTINO.
 const rutaDeclarada = (r) => (r && typeof r.archivo === 'string' &&
@@ -246,7 +247,8 @@ phase('Consolidación')
 const sinQuorum = resultados.filter((j) => j.resultado === 'sin_quorum').map((j) => j.id)
 const consolidado = await lanzar(
   `Escribe ${DESTINO} (crea solo ese fichero; no modifiques ${ARCHIVO} ni ningún otro; si ya existe una revisión anterior con ese nombre, no la ` +
-  `sobrescribas: usa ${BASE_DESTINO}-2.md, -3.md... y devuelve la ruta real en "archivo") con una tabla "afirmación | resultado | motivos por enfoque | acción propuesta" ` +
+  `sobrescribas: usa ${BASE_DESTINO}-2.md, -3.md... y devuelve la ruta real en "archivo"). Empieza con el título "# Revisión adversarial de ${ARCHIVO}" (el informe la ` +
+  'enlaza en su front matter con revision_critica, y nutria comprueba que la revisión menciona el documento) y sigue con una tabla "afirmación | resultado | motivos por enfoque | acción propuesta" ' +
   'y un resumen de las tres debilidades más graves. No escribiste el documento revisado. Los resultados ya están agregados con quórum y con la regla de fuentes ' +
   '(si el enfoque "fuentes" no pudo comprobarlas, nunca "sostenida"): no los cambies. Las afirmaciones "sin_quorum" no tienen veredicto (menos de 2 veredictos ' +
   `válidos): dilo y propone repetir su revisión.${noRevisadas.length ? ` Las afirmaciones ${noRevisadas.map((af) => af.id).join(', ')} quedaron sin revisar por el límite de ${MAX_AFIRMACIONES}: dilo.` : ''} ` +
@@ -271,6 +273,12 @@ return {
   otra_familia: { ejecutado: Boolean(segundaOpinion && segundaOpinion.ejecutado), motivo: segundaOpinion ? segundaOpinion.motivo : null,
     modelos: segundaOpinion && segundaOpinion.modelos_utilizables ? segundaOpinion.modelos_utilizables : [] },
   informe: rutaDeclarada(consolidado),
+  // Un informe de research/informes/ solo pasa a revisado o final con esta revisión enlazada en su front matter
+  // (revision_critica); el enlace cambia el informe, así que hay que volver a sellarlo.
+  siguiente: consolidado && ES_INFORME
+    ? `Enlaza la revisión en el front matter de ${ARCHIVO} (revision_critica: ${rutaDeclarada(consolidado)}), incorpora las correcciones y vuelve a ` +
+      `sellarlo (nutria informe comprobar ${ARCHIVO} --online --sellar); el paso a revisado o final lo registra una persona con nutria informe revisar.`
+    : null,
   nota: consolidado ? 'Consolidado escrito' : 'No se pudo escribir el consolidado',
   fallos: resumenFallos(),
 }

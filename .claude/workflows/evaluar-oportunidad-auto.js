@@ -61,7 +61,12 @@ const EJECUCION = OPCIONES.ejecucion.valor
 const MIN_COMPARABLES = 3
 const DIR = `research/datos/${ID}`
 const RUTA_INFORME = `research/informes/${ID}.md`
-const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria, contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana.'
+// Lo que comprueban nutria informe comprobar y el hook de research/ en lo que se redacta (petición de P2): citar de otra
+// forma bloquea el borrador o invalida el sello.
+const CITAS = 'Cita solo con [Rn] en la misma frase y su entrada en la bibliografía del documento: nada de citas autor-año (tampoco narrativas: «García et al. (2018) mostraron»), «[1]», «(R1)» ni «según R1»; ' +
+  'los DOI, PMID y enlaces de artículos, solo en la bibliografía; la afirmación de una [PUB] va en su propia frase; cada fila de tabla con cifras lleva su etiqueta, aunque la unidad esté en la cabecera.'
+const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria, contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana. ' +
+  CITAS
 
 const EVALUADORES = [
   { id: 'evaluador-1', modelo: 'opus' },
@@ -783,7 +788,8 @@ phase('Síntesis e informe')
 const informe = await lanzar(
   `${REGLAS}\nSintetiza la evaluación de ${ID} siguiendo .claude/skills/informe/SKILL.md: nutria --agente director-cientifico informe nuevo ${ID} (o actualiza ${RUTA_INFORME}; el informe va en esa ruta). ` +
   'Integra el descarte rápido, la evidencia (revisión, doble extracción y metaanálisis si lo hubo) y las aportaciones, conservando los desacuerdos y las críticas; ' +
-  'corrige o retira las afirmaciones con fuentes problemáticas. La sección 14 indica el estado de las seis compuertas y cuáles son propuestas sin firmar. ' +
+  'corrige o retira las afirmaciones con fuentes problemáticas. La sección 14 indica el estado de las seis compuertas y cuáles son propuestas sin firmar, y la ruta regulatoria ' +
+  'del registro justo después de «Ruta regulatoria». ' +
   `La oportunidad ya la han puntuado a ciegas ${emitidas.length} evaluador(es) independiente(s): lee sus puntuaciones en ` +
   `${emitidas.map((p) => p.archivo).join(', ') || '(ninguna emitida)'} sin modificarlas (se registran solo si el informe obtiene un sello válido) y recógelas en la ` +
   'sección 0 con su intervalo y sus desacuerdos, sin promediarlos para ocultarlos, junto con el estado de las compuertas y una decisión propuesta (continuar, ' +
@@ -797,7 +803,8 @@ if (informe && informe.archivo && informe.archivo !== RUTA_INFORME) log(`El info
 const verificacionInforme = informe
   ? await lanzar(
     `${REGLAS}\nVerifica el informe ${RUTA_INFORME}. 1) Rellena la tabla de respaldo del Anexo A ("| Ref | Afirmación | Respaldo | Motivo |", Respaldo: respalda | parcial | ` +
-    'no_respalda | no_verificable) leyendo cada fuente; cada [Rn] usado en una línea [PUB] necesita una fila respalda o parcial. ' +
+    'no_respalda | no_verificable) leyendo cada fuente: una fila por cada afirmación con [Rn], lleve la etiqueta que lleve ([PUB], [DER], [SUP]...), con la afirmación ' +
+    'copiada tal como aparece en el informe y solo en el Anexo A; cada [Rn] usado en una línea [PUB] necesita una fila respalda o parcial. ' +
     `2) Ejecuta nutria --agente verificador-citas informe comprobar ${RUTA_INFORME} --online --sellar. No registres verificaciones manuales (las referencias con solo URL ` +
     'las registra una persona) y no cambies el estado ni revisado_por_humano. Lista cada problema de respaldo o de verificación; la validez del sello la comprueba ' +
     'después otro agente con la salida literal de nutria.',
@@ -867,7 +874,9 @@ return {
   fallos: resumenFallos(),
   siguiente: (sello.valido
     ? `nutria puntuar ranking (con menos de 3 evaluadores registrados ${ID} queda INSUFICIENTE). Antes de pasar el informe a revisado, lanza el workflow ` +
-      `red-team-auto por su nombre con la herramienta Workflow y los argumentos {"archivo": "${RUTA_INFORME}"}. La decisión sobre ${ID}, las compuertas ` +
+      `red-team-auto por su nombre con la herramienta Workflow y los argumentos {"archivo": "${RUTA_INFORME}"}, enlaza su revisión en el front matter del informe ` +
+      '(revision_critica: research/revisiones/<fichero>.md; sin ella no puede pasar a revisado ni a final) y vuelve a sellarlo con nutria informe comprobar --online --sellar. ' +
+      `La decisión sobre ${ID}, las compuertas ` +
       '"superada" y el paso del informe a "revisado" requieren firma o revisión humana.' +
       (pendientes.length ? ` Puntuaciones sin registrar: vuelve a lanzar este workflow con ${JSON.stringify({ id: ID, registrar_puntuaciones: pendientes })}.` : '')
     : siguienteSinSello(sello.motivo, pendientes)) + extraPrematuros,
