@@ -185,8 +185,9 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   QPS (presunción cualificada de seguridad) de la especie en la lista vigente de EFSA, genes de resistencia a
   antimicrobianos adquiridos, toxigenicidad o patogenicidad y, si la cepa de producción está modificada
   genéticamente, ausencia de células viables y de ADN recombinante en el producto (guía de la EFSA sobre la
-  caracterización de microorganismos en la cadena alimentaria; referencia exacta pendiente). Esto último decide
-  también si aplica el Reglamento (CE) 1829/2003 (tabla de normativa).
+  caracterización de microorganismos en la cadena alimentaria; referencia exacta pendiente). Esto último es también
+  lo que determina si aplica el Reglamento (CE) 1829/2003 (tabla de normativa; alcance para las cepas de producción
+  pendiente de verificación).
 
 ## Implicaciones comerciales que conviene evaluar pronto
 

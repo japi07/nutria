@@ -19,7 +19,7 @@ el periodo de transición, lechón al destete, broiler en cebo), no en biología
    vivo (plasma, tejido, contenido digestivo). Una actividad a concentraciones inalcanzables no es evidencia.
 3. **Adaptación de la microbiota ruminal**: la microbiota se adapta a un aditivo que modifica la fermentación (p. ej.
    un modulador del metano o un antimicrobiano) en días o semanas `[SUP]` (plazo orientativo, sin fuente verificada
-   en el registro: búscala para el compuesto y la dosis concretos), y el efecto puede atenuarse o desaparecer. Las
+   en el registro: búscala para el compuesto y la dosis concretos), y el efecto puede atenuarse o desaparecer `[SUP]`. Las
    incubaciones cortas en lote (24-48 h `[SUP]`) no capturan esa adaptación. No extrapoles a medio o largo plazo un
    efecto visto solo en incubaciones cortas: es `[HIP]` hasta que lo confirme un cultivo continuo (p. ej. RUSITEC) o
    un ensayo in vivo con periodo de adaptación suficiente; indica la duración de cada estudio que cites.
