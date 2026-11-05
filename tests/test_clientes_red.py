@@ -439,11 +439,19 @@ def test_cache_import_checks_declared_dates_against_the_export_date(proj, router
     res = json.loads(out)
     assert code == cli.SALIDA_RESULTADO and res["importadas"] == 0
     assert {r["motivo"] for r in res["rechazadas"]} == {"fecha posterior a la de la exportación"}
-    for value in (None, "ayer", "2999-01-01T00:00:00+00:00"):
+    for value in (None, "ayer"):
         data["exportado"] = value
         bundle.write_text(json.dumps(data), "utf-8")
         code, out, _ = run(capsys, ["--json", "cache", "importar", str(bundle)])
-        assert code == cli.SALIDA_ENTRADA and "fecha de exportación válida" in json.loads(out)["error"]
+        assert code == cli.SALIDA_ENTRADA and "no indica una fecha de exportación válida" in json.loads(out)["error"]
+    # Una fecha válida pero futura (reloj desajustado o fichero alterado) se explica como tal, no como «no válida».
+    for future in ("2999-01-01T00:00:00+00:00", (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()):
+        data["exportado"] = future
+        bundle.write_text(json.dumps(data), "utf-8")
+        code, out, err = run(capsys, ["--json", "cache", "importar", str(bundle)])
+        message = json.loads(out)["error"]
+        assert code == cli.SALIDA_ENTRADA and "es posterior a la hora actual de esta máquina" in message
+        assert "reloj" in message and "no indica una fecha" not in message and message in err
     assert not cache_files(proj / ".cache")
 
 
@@ -1581,6 +1589,9 @@ def _assert_json_error(out, err, code, tipo):
     payload = json.loads(out)
     assert set(payload) >= {"error", "codigo", "tipo"} and payload["codigo"] == code and payload["tipo"] == tipo
     assert "Traceback" not in err
+    # Con --json, el texto del error sale también por stderr (lo que lee una persona, y lo que leen las pruebas de
+    # otros paquetes escritas antes de la salida en JSON); stdout solo lleva el objeto JSON.
+    assert payload["error"] in err
     return payload
 
 

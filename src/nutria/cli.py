@@ -1625,8 +1625,11 @@ def cmd_llm(args, cfg) -> int:
                                     f"{'sí' if r['utilizable'] else 'no: ' + r['motivo']}" for r in rows))
         return 0
     if args.accion == "evaluar":
-        _emit(args, router.evaluate(cfg, Path(args.archivo), role=args.rol, model_id=args.modelo))
-        return 0
+        res = router.evaluate(cfg, Path(args.archivo), role=args.rol, model_id=args.modelo)
+        _emit(args, res)
+        # Como `preguntar`: sin ningún resultado (todos omitidos, p. ej. con --offline, o sin modelos) o con algún
+        # fallo, el resultado es negativo o incompleto (código 1).
+        return SALIDA_OK if res.get("resultados") and not res.get("errores") else SALIDA_RESULTADO
     prompt = Path(args.archivo).read_text("utf-8") if args.archivo else args.prompt
     if not prompt:
         raise SystemExit("Indica --prompt o --archivo")
@@ -2004,8 +2007,8 @@ CODIGOS_SALIDA = {
                                     "`extraccion comparar`, sello no válido, referencia, lote de referencias o informe "
                                     "que no supera la verificación, búsqueda o consulta incompleta (alguna página o "
                                     "parte falló), caché con copias no válidas o importación con entradas rechazadas, "
-                                    "comprobaciones esenciales de `doctor` fallidas, `llm preguntar` sin ninguna "
-                                    "respuesta o con algún modelo que falló"),
+                                    "comprobaciones esenciales de `doctor` fallidas, `llm preguntar` o `llm evaluar` "
+                                    "sin ninguna respuesta o con algún modelo que falló"),
     SALIDA_ENTRADA: ("entrada", "entrada no válida o condición previa no cumplida: argumentos, fichero inexistente o "
                                 "inaccesible (directorio, permisos), JSON o CSV fuera de formato, configuración no "
                                 "válida, proyecto sin inicializar, orden no permitida para el rol del agente"),
@@ -2065,7 +2068,7 @@ class ErrorOrden(Exception):
 
 def _texto_codigos_salida() -> str:
     import textwrap
-    lines = ["códigos de salida (con --json, los errores salen por stdout como "
+    lines = ["códigos de salida (los errores salen en texto por stderr; con --json, además por stdout como "
              "{\"error\": ..., \"codigo\": ..., \"tipo\": ...}):"]
     for codigo, (_tipo, descripcion) in CODIGOS_SALIDA.items():
         lines.append(textwrap.fill(descripcion, width=100, initial_indent=f"  {codigo:>3}  ",
@@ -2082,17 +2085,59 @@ def _salida_verificacion(res) -> int:
     return SALIDA_OK if res.ok else SALIDA_RESULTADO
 
 
+def _silenciar(stream) -> None:
+    """Redirige `stream` (stdout o stderr) a /dev/null cuando quien lo leía ya lo cerró (tubería rota), para que el
+    intérprete no vuelva a fallar al vaciarlo al terminar («Exception ignored ... BrokenPipeError», código 120)."""
+    import os
+    try:
+        fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(fd, stream.fileno())
+        finally:
+            os.close(fd)
+    except (OSError, ValueError, AttributeError):   # sin descriptor propio (p. ej. la salida capturada de las pruebas)
+        pass
+
+
+def _vaciar_stdout() -> bool:
+    """Vacía stdout; False (y stdout silenciada) si quien la leía ya la había cerrado (p. ej. `| head` o `| true`)."""
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _silenciar(sys.stdout)
+        return False
+    return True
+
+
+def _imprimir(stream, texto: str) -> bool:
+    """Imprime una línea en `stream` y la vacía; False, sin traza, si quien la leía ya había cerrado la tubería."""
+    try:
+        print(texto, file=stream, flush=True)
+    except BrokenPipeError:
+        _silenciar(stream)
+        return False
+    except (OSError, ValueError):   # flujo cerrado o inutilizable: no hay dónde informar
+        return False
+    return True
+
+
 def _error(args, mensaje, codigo: int, prefijo: str, cfg=None, motivo: str | None = None) -> int:
-    """Presenta un error (en JSON por stdout con --json; en texto por stderr si no) y devuelve su código."""
+    """Presenta un error y devuelve su código.
+
+    El texto («prefijo: mensaje») sale siempre por stderr, con --json o sin él: es lo que lee una persona (y lo que
+    leían las órdenes y pruebas anteriores a la salida en JSON). Con --json, el error sale además por stdout como un
+    objeto JSON ({"error", "codigo", "tipo"[, "motivo"]}), que es lo que lee quien procesa la salida. Si quien leía
+    stdout ya la había cerrado, el código sigue siendo el del error (su texto está en stderr), sin traza."""
     from .http import redact
     texto = redact(mensaje, cfg) or prefijo
     if getattr(args, "json", False):
         payload = {"error": texto, "codigo": codigo, "tipo": CODIGOS_SALIDA.get(codigo, ("interno",))[0]}
         if motivo:
             payload["motivo"] = motivo
-        print(json.dumps(payload, ensure_ascii=False))
+        _imprimir(sys.stdout, json.dumps(payload, ensure_ascii=False))
     else:
-        print(f"{prefijo}: {texto}", file=sys.stderr)
+        _vaciar_stdout()   # lo que la orden ya imprimió sale antes que el error (y una tubería cerrada no da traza)
+    _imprimir(sys.stderr, f"{prefijo}: {texto}")
     return codigo
 
 
@@ -2107,9 +2152,18 @@ def _describe_oserror(exc: OSError) -> str:
 
 
 def _parse_args(parser, argv: list[str]):
-    """Analiza los argumentos; con --json, un error de uso sale también como JSON por stdout."""
-    if "--json" not in argv:
-        return parser.parse_args(argv)
+    """Analiza los argumentos. Un error de uso sale por stderr (argparse) y, con --json, también como JSON por
+    stdout. Si quien leía la ayuda (`--help`) cerró la tubería antes de recibirla, el código es el de la tabla (141),
+    sin «Exception ignored» al cerrar el intérprete."""
+    try:
+        return _parse_args_json(parser, argv) if "--json" in argv else parser.parse_args(argv)
+    except SystemExit as exc:
+        if not _vaciar_stdout() and exc.code in (0, None):
+            raise SystemExit(SALIDA_TUBERIA) from None
+        raise
+
+
+def _parse_args_json(parser, argv: list[str]):
     import contextlib
     import io
     buffer = io.StringIO()
@@ -2120,10 +2174,16 @@ def _parse_args(parser, argv: list[str]):
         if exc.code not in (0, None):
             lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
             message = lines[-1].split(": error: ", 1)[-1] if lines else "argumentos no válidos"
-            print(json.dumps({"error": message, "codigo": SALIDA_ENTRADA, "tipo": "entrada"}, ensure_ascii=False))
+            _imprimir(sys.stdout, json.dumps({"error": message, "codigo": SALIDA_ENTRADA, "tipo": "entrada"},
+                                             ensure_ascii=False))
         raise
     finally:
-        sys.stderr.write(buffer.getvalue())
+        if buffer.getvalue():
+            try:
+                sys.stderr.write(buffer.getvalue())
+                sys.stderr.flush()
+            except (OSError, ValueError):
+                pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2144,9 +2204,14 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "antiguedad_maxima", None) is not None:
             cfg.cache_max_offline_days = positive_days(args.antiguedad_maxima, "--antiguedad-maxima")
         cfg.actor = args.agente
-        return int(args.func(args, cfg) or 0)
+        code = int(args.func(args, cfg) or 0)
+        # Se vacía aquí, dentro del try: si quien leía la salida ya la cerró (`| head`, `| true`), es el código 141 de
+        # la tabla y no un «Exception ignored ... BrokenPipeError» con código 120 al cerrar el intérprete.
+        return code if _vaciar_stdout() else SALIDA_TUBERIA
     except SystemExit as exc:
         if exc.code is None or isinstance(exc.code, int):
+            if not _vaciar_stdout() and not exc.code:
+                raise SystemExit(SALIDA_TUBERIA) from None
             raise
         # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa, salvo un
         # identificador que no existe en el registro, que es el mismo error que da la base de datos (código 3).
@@ -2166,11 +2231,7 @@ def main(argv: list[str] | None = None) -> int:
         prefijo = _PREFIJOS_RED.get(exc.motivo, "Error de red")
         return _error(args, str(exc), SALIDA_RED, prefijo, cfg, exc.motivo)
     except BrokenPipeError:   # quien lee la salida la cerró antes (p. ej. `| head`): no es un error de la orden
-        import os
-        try:
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        except (OSError, ValueError):
-            pass
+        _silenciar(sys.stdout)
         return SALIDA_TUBERIA
     except (requests.RequestException, ConnectionError, TimeoutError) as exc:
         return _error(args, f"{type(exc).__name__}: {exc}", SALIDA_RED, "Error de red", cfg)

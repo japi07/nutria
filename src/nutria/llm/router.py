@@ -209,11 +209,14 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
     system = ("Responde de forma breve y directa. Si la pregunta pide una cifra, empieza por la cifra. "
               "Si pide SÍ o NO, empieza por SÍ o NO.")
     scores: dict[str, dict] = {}
+    errors: dict[str, int] = {}
     rows = []
     for item in items:
         # El banco de preguntas no contiene información confidencial.
         for res in ask(cfg, item["pregunta"], role=role, model_id=model_id, system=system, max_tokens=400,
                        sensitivity="normal"):
+            if "error" in res:   # un fallo no se descarta en silencio: se cuenta por modelo (la orden sale con 1)
+                errors[res["modelo"]] = errors.get(res["modelo"], 0) + 1
             if "texto" not in res:
                 continue
             correct = grade(item, res["texto"])
@@ -228,4 +231,7 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
     out_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", "utf-8")
     for s in scores.values():
         s["exactitud"] = s["aciertos"] / s["total"] if s["total"] else None
-    return {"resultados": scores, "detalle": str(out_file), "n_items": len(items)}
+    out = {"resultados": scores, "detalle": str(out_file), "n_items": len(items)}
+    if errors:
+        out["errores"] = errors
+    return out

@@ -1011,9 +1011,15 @@ def import_cache(client: HttpClient, source: Path, expected_sha256: str | None =
     if not isinstance(items, list):
         raise ValueError(f"{source}: 'entradas' debe ser una lista")
     exported_at = _parse_ts(bundle.get("exportado"))
-    if exported_at is None or exported_at > time.time() + _FUTURE_TOLERANCE_S:
+    if exported_at is None:
         raise ValueError(f"{source}: la exportación no indica una fecha de exportación válida ('exportado'): no se "
                          "importa nada")
+    now = time.time()
+    if exported_at > now + _FUTURE_TOLERANCE_S:
+        raise ValueError(f"{source}: la fecha de exportación ('exportado': {_iso(exported_at)}) es posterior a la hora "
+                         f"actual de esta máquina ({_iso(now)}) en más de {_FUTURE_TOLERANCE_S:.0f} s: el reloj de una "
+                         "de las dos máquinas está desajustado o el fichero se ha alterado; no se importa nada (ajusta "
+                         "el reloj y vuelve a exportar)")
     accepted, rejected, kept_local = [], [], 0
     for index, item in enumerate(items):
         problem = _import_problem(item, exported_at)
