@@ -36,7 +36,7 @@ from urllib.parse import unquote
 
 from ..http import NetworkError, NotFoundError, OfflineError
 from ..sources import crossref, doiorg, openalex, pubmed
-from ..sources.base import Record, clean_text, normalize_doi
+from ..sources.base import Record, normalize_doi
 
 try:  # el paquete de fuentes aporta la redacción de secretos
     from ..http import redact as _redact
@@ -290,7 +290,6 @@ _ORDINALS = (r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|
 _EDITION_RE = re.compile(
     rf"\b(?:(?:\d+\s*(?:st|nd|rd|th|\.?\s*[ªa])|{_ORDINALS})\.?\s+)?(?:rev(?:ised)?\.?\s+|revisada\s+)?"
     r"(?:ed(?:ition|ici[oó]n)?\b\.?)(?:\s+rev(?:ised|isada)?\b\.?)?", re.IGNORECASE)
-_EDITION_WORDS = frozenset({"edition", "ed", "eds", "revised", "rev", "edicion", "revisada"})
 
 
 def _strip_title_prefix(text: str) -> str:
