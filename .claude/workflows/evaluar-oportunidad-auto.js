@@ -399,6 +399,7 @@ const bloqueos = resumenDescarte.filter((d) => d.estado === 'bloqueada')
 if (bloqueos.length) {
   log(`Descarte rápido: ${bloqueos.map((b) => b.analisis).join(', ')} propone(n) "bloqueada"; la evaluación se detiene`)
   return detener('Descarte rápido', {
+    motivo: `propuesta "bloqueada" en el descarte rápido: ${bloqueos.map((b) => `${b.analisis} (${b.agente})`).join(', ')}`,
     bloqueos: bloqueos.map((b) => ({ analisis: b.analisis, agente: b.agente, motivo: b.motivo, archivo: b.archivo })),
     descarte_rapido: resumenDescarte,
   })
@@ -583,7 +584,8 @@ const bloqueosEspecialistas = aportacionesValidas
   .map((a) => ({ agente: a.agente, compuerta: a.compuerta_propuesta.compuerta, motivo: a.compuerta_propuesta.motivo, archivo: a.archivo }))
 if (bloqueosEspecialistas.length) {
   log(`Especialistas: ${bloqueosEspecialistas.map((b) => `${b.compuerta} (${b.agente})`).join(', ')} propuesta(s) "bloqueada"; la evaluación se detiene antes de puntuar`)
-  return detener('Especialistas', { bloqueos: bloqueosEspecialistas, descarte_rapido: resumenDescarte, evidencia: resumenEvidencia,
+  return detener('Especialistas', { motivo: `propuesta "bloqueada" de un especialista: ${bloqueosEspecialistas.map((b) => `${b.compuerta} (${b.agente})`).join(', ')}`,
+    bloqueos: bloqueosEspecialistas, descarte_rapido: resumenDescarte, evidencia: resumenEvidencia,
     aportaciones: resumenAportaciones() })
 }
 const registroPrevio = await leerRegistro('antes-de-puntuar')

@@ -576,6 +576,7 @@ def test_evaluar_stops_when_quick_discard_proposes_blocked(analisis, agente, pro
     assert out["fases"] == ["Compuertas del registro", "Descarte rápido"]
     res = out["resultado"]
     assert res["detenida_en"] == "Descarte rápido"
+    assert res["motivo"] == f'propuesta "bloqueada" en el descarte rápido: {analisis} ({agente})'
     assert res["bloqueos"] == [{"analisis": analisis, "agente": agente, "motivo": "MOTIVO-BLOQUEO",
                                 "archivo": f"research/revisiones/O-0003_descarte_{analisis}.md"}]
     assert "nutria destino ruminal" in call(out, "descarte:destino_digestivo")["prompt"]
@@ -987,6 +988,7 @@ def test_p8_evaluar_se_detiene_antes_de_puntuar_si_un_especialista_propone_bloqu
     assert not any(l.startswith(("puntuacion:", "informe:", "sello:", "registro-puntuacion:", "compuertas-registro:antes")) for l in ls)
     res = out["resultado"]
     assert res["detenida_en"] == "Especialistas"
+    assert res["motivo"] == 'propuesta "bloqueada" de un especialista: analitica (desarrollo-industrial)'
     assert res["bloqueos"] == [{"agente": "desarrollo-industrial", "compuerta": "analitica", "motivo": "SIN-METODO",
                                 "archivo": "research/revisiones/O-0003_02_desarrollo-industrial.md"}]
 
