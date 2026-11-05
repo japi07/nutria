@@ -607,8 +607,12 @@ def test_modelos_rechazan_secciones_y_claves_desconocidas(tmp_path, which, text,
 
 
 def test_skill_y_agente_explican_la_economia():
-    skill = " ".join((ROOT / ".claude" / "skills" / "evaluacion-economica" / "SKILL.md").read_text("utf-8").split())
-    agent = " ".join((ROOT / ".claude" / "agents" / "economia-mercado-pi.md").read_text("utf-8").split())
+    # las órdenes llevan la atribución que exige el hook en los subagentes («nutria --agente <rol> dosis convertir»):
+    # se busca la orden sin ella
+    def sin_agente(text: str) -> str:
+        return re.sub(r"\bnutria --agente (?:<[^>]+>|\S+) ", "nutria ", " ".join(text.split()))
+    skill = sin_agente((ROOT / ".claude" / "skills" / "evaluacion-economica" / "SKILL.md").read_text("utf-8"))
+    agent = sin_agente((ROOT / ".claude" / "agents" / "economia-mercado-pi.md").read_text("utf-8"))
     for fragment in ("/ 1000", "por tonelada", "nutria dosis convertir", "P(pérdida > umbral)", "VPN realizado",
                      "no es la probabilidad de que el proyecto gane dinero", "nutria econ coherencia",
                      "--exigir-fuentes", "tornado", "cópula gaussiana", "[alternativa]", "EXCLUYE"):

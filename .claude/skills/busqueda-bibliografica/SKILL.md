@@ -26,12 +26,14 @@ Códigos de salida: `buscar` o `diana` con 1 = resultados incompletos (repite o 
 
 ## 3. Fuentes
 
+Cada orden lleva tu rol escrito literalmente en `--agente` (`investigador-bibliografico`, o el tuyo si otro especialista usa esta skill): dentro de un subagente, el hook bloquea una orden `nutria` sin él o con el rol de otro.
+
 | Fuente | Orden | Para qué |
 |---|---|---|
-| PubMed | `nutria --agente investigador-bibliografico buscar pubmed "<q>" --resumenes` | MEDLINE, MeSH, tipos de publicación, retractaciones |
-| Europe PMC | `nutria --agente investigador-bibliografico buscar europepmc "<q>"` | PMC con texto completo, preprints, agencias |
-| OpenAlex | `nutria --agente investigador-bibliografico buscar openalex "<q>" --desde 2000` | cobertura amplia, citas, retractaciones |
-| EFSA Journal | `nutria --agente investigador-bibliografico buscar efsa "<q>"` | opiniones del Panel FEEDAP y guías |
+| PubMed | `nutria --agente <tu-rol> buscar pubmed "<q>" --resumenes` | MEDLINE, MeSH, tipos de publicación, retractaciones |
+| Europe PMC | `nutria --agente <tu-rol> buscar europepmc "<q>"` | PMC con texto completo, preprints, agencias |
+| OpenAlex | `nutria --agente <tu-rol> buscar openalex "<q>" --desde 2000` | cobertura amplia, citas, retractaciones |
+| EFSA Journal | `nutria --agente <tu-rol> buscar efsa "<q>"` | opiniones del Panel FEEDAP y guías |
 | Web | WebSearch / WebFetch | EUR-Lex, Registro UE de aditivos, FAO/AGRIS, Feedipedia, literatura gris |
 
 Con suscripción de la organización: Web of Science, Scopus y CAB Abstracts (buena cobertura de ciencia animal).
@@ -47,7 +49,7 @@ Consultas específicas de resultados nulos o adversos: `("no effect" OR "did not
 ## 5. Cribado y registro
 
 Cribado por título y resumen con motivo de exclusión. Registra las incluidas con verificación:
-`nutria --agente investigador-bibliografico fuente agregar --doi <doi> --tipo-estudio <tipo> --especie "<especie>"`.
+`nutria --agente <tu-rol> fuente agregar --doi <doi> --tipo-estudio <tipo> --especie "<especie>"`.
 
 ## 6. Documentación
 
