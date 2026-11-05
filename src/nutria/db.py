@@ -20,7 +20,9 @@ Reglas que el registro hace cumplir (no solo recomienda):
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from functools import lru_cache
 from importlib import resources
@@ -432,6 +434,40 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def plain_text(value: Any) -> str:
+    """Minúsculas, sin tildes y con espacios simples: para reconocer y comparar textos libres."""
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().casefold()
+    return " ".join(text.split())
+
+
+# Variables de incidencia o de trastornos y unidades de proporción o de recuento: una incidencia expresada como
+# porcentaje o como media también necesita su definición de caso y su ventana (D4-7).
+INCIDENCE_OUTCOME_RE = re.compile(
+    r"\b(?:incidencia|prevalencia|riesgo|casos?|cetosis|hipercetonemia|hipocalcemia|fiebre (?:de la leche|vitularia)"
+    r"|paresia|mastitis|metritis|endometritis|retencion (?:de (?:la )?placenta|placentaria)|placenta retenida"
+    r"|desplazamiento (?:de(?:l)? )?abomaso|abomaso desplazado|acidosis|cojeras?|laminitis|lipidosis|higado graso"
+    r"|morbilidad|mortalidad|muertes?|supervivencia|abortos?|distocias?|diarreas?|enfermedad(?:es)?|trastornos?"
+    r"|perdidas? (?:de (?:la )?)?gestacion|concepcion|prenez|fertilidad|descartes?|bajas"
+    r"|tasa de (?:gestacion|partos?|reposicion|curacion|recidivas?|eliminacion))\b")
+INCIDENCE_UNIT_RE = re.compile(
+    r"%|\b(?:porcentaje|proporcion|fraccion|casos?|animales|vacas|novillas|terneros|cerdas|lechones|aves|incidencia"
+    r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?)\b|/ ?100\b|por (?:100|cada)\b")
+PER_TIME_UNIT_RE = re.compile(r"/ ?(?:h|hora|d|dia|min)\b|por (?:hora|dia|minuto)\b")
+
+
+def incidence_like(outcome: Any, unit: Any) -> bool:
+    """Variable de incidencia o de un trastorno expresada como proporción o recuento (no como velocidad por tiempo)."""
+    unit_text = plain_text(unit)
+    return bool(INCIDENCE_OUTCOME_RE.search(plain_text(outcome)) and INCIDENCE_UNIT_RE.search(unit_text)
+                and not PER_TIME_UNIT_RE.search(unit_text))
+
+
+def is_incidence(get) -> bool:
+    """¿Es un registro de incidencia? `get(campo)` devuelve el valor de un campo del esquema de extracción."""
+    return (_is_number(get("eventos_control")) or _is_number(get("eventos_tratamiento"))
+            or bool(get("definicion_caso")) or incidence_like(get("variable"), get("unidad")))
+
+
 def extraction_problems(data: dict) -> list[str]:
     """Reglas de una extracción que el esquema JSON no puede expresar."""
     if not isinstance(data, dict):
@@ -457,10 +493,19 @@ def extraction_problems(data: dict) -> list[str]:
     if _is_number(rdp) and _is_number(cp) and rdp > cp:
         problems.append(f"pdr_pct_ms ({rdp}) supera pb_pct_ms ({cp}): la PDR es una fracción de la PB")
     case, outcome = data.get("definicion_caso"), data.get("variable")
-    if isinstance(case, str) and isinstance(outcome, str) and \
-            " ".join(case.casefold().split()) == " ".join(outcome.casefold().split()):
+    if isinstance(case, str) and isinstance(outcome, str) and plain_text(case) == plain_text(outcome):
         problems.append("definicion_caso repite el nombre de la variable: indica el criterio y el umbral del artículo "
                         "(p. ej. 'BHB en sangre ≥ 1,2 mmol/L')")
+    has_events = _is_number(data.get("eventos_control")) or _is_number(data.get("eventos_tratamiento"))
+    if not has_events and incidence_like(outcome, data.get("unidad")):
+        missing = [k for k in ("definicion_caso", "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias")
+                   if data.get(k) is None]
+        if missing:
+            problems.append(
+                f"'{outcome}' ({data.get('unidad')}) es una incidencia o un trastorno expresado como proporción o "
+                f"recuento: como con eventos_control/eventos_tratamiento, faltan {', '.join(missing)} (definición de "
+                "caso con su umbral y ventana respecto al hito), para no combinar incidencias definidas de forma "
+                "distinta")
     return problems
 
 
@@ -549,31 +594,54 @@ def _field_diffs(x: dict, y: dict) -> list[dict]:
     return out
 
 
-# Campos que identifican un mismo dato: dos registros iguales en todos ellos son el mismo registro.
-DUPLICATE_KEY = ("fuente", "experimento", "variable", "intervencion", "comparador", "dosis", "dosis_unidad",
-                 "dosis_base", "n_control", "n_tratamiento", "media_control", "media_tratamiento", "eventos_control",
-                 "eventos_tratamiento", "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias")
+# Campos que identifican una misma comparación de un estudio (sin sus valores): dos registros que coinciden en todos
+# ellos son el mismo dato, aunque sus medias, n o eventos difieran (sería una segunda extracción del mismo dato).
+EXTRACTION_IDENTITY = ("fuente", "experimento", "especie", "raza", "sexo", "paridad", "estado_fisiologico", "variable",
+                       "unidad", "intervencion", "comparador", "dosis", "dosis_unidad", "dosis_base", "forma_producto",
+                       "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias", "definicion_caso")
+EXTRACTION_VALUES = ("n_control", "n_tratamiento", "media_control", "media_tratamiento", "tipo_dispersion",
+                     "dispersion_control", "dispersion_tratamiento", "eventos_control", "eventos_tratamiento")
+
+
+def _identity_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return plain_text(value) or None
+    if _is_number(value):
+        return round(float(value), 9)
+    return value
+
+
+def extraction_identity(get) -> tuple:
+    """Identidad de la comparación (`get(campo)` da el valor de un campo del esquema), sin mayúsculas ni tildes."""
+    return tuple(_identity_value(get(k)) for k in EXTRACTION_IDENTITY)
+
+
+def row_identity(row: Any) -> tuple:
+    """Identidad de una extracción registrada (fila de la tabla extractions)."""
+    return extraction_identity(lambda k: row[EXTRACTION_FIELDS[k]])
 
 
 def _double_extracted_duplicate(conn: sqlite3.Connection, record: dict) -> sqlite3.Row | None:
-    """Extracción ya registrada por doble extracción con los mismos datos (evita contar dos veces un estudio)."""
-    rows = conn.execute("SELECT * FROM extractions WHERE source_id = ? AND outcome = ? AND comparison_id IS NOT NULL",
-                        (record.get("fuente"), record.get("variable"))).fetchall()
-    for row in rows:
-        if all(same_value(_norm_value(k, record.get(k)), _norm_value(k, row[EXTRACTION_FIELDS[k]]))
-               for k in DUPLICATE_KEY):
-            return row
-    return None
+    """Extracción ya registrada por doble extracción de la misma comparación (evita contar dos veces un dato)."""
+    identity = extraction_identity(record.get)
+    rows = conn.execute("SELECT * FROM extractions WHERE source_id = ? AND comparison_id IS NOT NULL ORDER BY id",
+                        (record.get("fuente"),)).fetchall()
+    return next((row for row in rows if row_identity(row) == identity), None)
 
 
 def _insert_double_extracted(conn: sqlite3.Connection, record: dict, actor: str | None, status: str,
                              comparison_id: str, pair: tuple[int, int], extractor: str, checked_by: str) -> int:
     duplicate = _double_extracted_duplicate(conn, record)
     if duplicate is not None:
+        changed = [f"{k}: {duplicate[EXTRACTION_FIELDS[k]]!r} frente a {record.get(k)!r}" for k in EXTRACTION_VALUES
+                   if not same_value(_identity_value(duplicate[EXTRACTION_FIELDS[k]]), _identity_value(record.get(k)))]
         raise RegistryError(
-            f"El registro A{pair[0]}/B{pair[1]} ({record.get('variable')}, {record.get('intervencion')}) repite la "
-            f"extracción #{duplicate['id']} ya registrada por doble extracción ({duplicate['comparison_id']}): no se "
-            "registra dos veces el mismo dato")
+            f"El registro A{pair[0]}/B{pair[1]} ({record.get('variable')}, {record.get('intervencion')}) es la misma "
+            f"comparación que la extracción #{duplicate['id']}, ya registrada por doble extracción "
+            f"({duplicate['comparison_id']})" + (f", con otros valores ({'; '.join(changed)})" if changed else "")
+            + ": no se registra dos veces el mismo dato. Si es otro dato del mismo estudio (otro experimento, subgrupo, "
+            "momento, dosis o definición de caso), distínguelo en experimento, paridad, estado_fisiologico, "
+            "ventana_inicio_dias/ventana_fin_dias, dosis o definicion_caso")
     return _insert_extraction(conn, record, actor, status, comparison_id, pair, extractor=extractor,
                               checked_by=checked_by)
 
@@ -706,10 +774,13 @@ def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) ->
                 problems.append(f"{where}: discrepancia sin resolver en '{key}' (A={va!r}, B={vb!r})")
             continue
         origin = res["origen_valor"]
+        if not differ:
+            # Lo que las dos copias independientes extrajeron igual no lo cambia la conciliación (ni con 'fuente').
+            problems.append(f"{where}: resolución no permitida para '{key}': A y B coinciden ({va!r}); la conciliación "
+                            "solo resuelve discrepancias (si las dos copias se equivocaron igual, repite la doble "
+                            "extracción)")
+            continue
         if origin in ("A", "B"):
-            if not differ:
-                problems.append(f"{where}: resolución innecesaria para '{key}': A y B coinciden ({va!r})")
-                continue
             value = va if origin == "A" else vb
         else:
             value = res.get("valor")
@@ -776,8 +847,12 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
         if not problems:
             for k, entry in enumerate(entries, 1):
                 where = f"conciliacion[{k}] (A{entry['a']}, B{entry['b']})"
-                record, status, errs = _apply_resolutions(records["a"][entry["a"] - 1], records["b"][entry["b"] - 1],
-                                                          entry.get("resoluciones") or [], where)
+                rec_a, rec_b = records["a"][entry["a"] - 1], records["b"][entry["b"] - 1]
+                if rec_a.get("fuente") != rec_b.get("fuente"):
+                    problems.append(f"{where}: son de fuentes distintas ({rec_a.get('fuente')} y {rec_b.get('fuente')}): "
+                                    "no son el mismo dato y no se emparejan; decláralos en 'no_resueltos'")
+                    continue
+                record, status, errs = _apply_resolutions(rec_a, rec_b, entry.get("resoluciones") or [], where)
                 errs += [f"{where}: registro resultante: {p}"
                          for p in schema_errors("extraccion", record) + extraction_problems(record)]
                 problems += errs
