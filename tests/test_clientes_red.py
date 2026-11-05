@@ -1543,3 +1543,148 @@ def test_constraints_pin_every_project_dependency_within_pyproject_bounds():
         key = re.sub(r"[-_.]+", "-", req.name).lower()
         assert key in pins, req.name
         assert req.specifier.contains(pins[key], prereleases=True), (req, pins[key])
+
+
+# ============================================================================ validación de respuestas (D5-15, D3-16)
+CAPTCHA = "<html><head><title>Please verify you are human</title></head><body>challenge</body></html>"
+
+
+def test_a_response_that_fails_validation_is_neither_cached_nor_served(cfg):
+    net = Router()
+    net.add(r"api\.example\.org", (200, CAPTCHA))
+
+    def check(page):
+        return None if "<meta" in page else "sin metadatos"
+
+    with pytest.raises(NetworkError, match="sin metadatos") as info:
+        HttpClient(cfg, session=Session(net)).get_text(URL, validate=check)
+    assert info.value.motivo == "respuesta" and not cache_files(cfg.cache_dir)
+    assert read_events(cfg, action="http_error")[-1]["outputs"]["motivo"] == "respuesta"
+    assert not read_events(cfg, action="http")                     # nada que confirme una copia
+    # una copia ya guardada sin validar (p. ej. por otra versión) se descarta al validarla y se vuelve a pedir
+    HttpClient(cfg, session=Session(net)).get_text(URL)
+    net.add(r"api\.example\.org", (200, '<meta property="eli:title" content="T">'))
+    client = HttpClient(cfg, session=Session(net))
+    assert client.get_text(URL, validate=check).startswith("<meta") and len(net.calls) == 3
+    assert "no es una respuesta válida de la fuente" in client.avisos[0]
+    # una validación que falla con una excepción cuenta como problema (falla en cerrado)
+    with pytest.raises(NetworkError, match="ZeroDivisionError"):
+        HttpClient(cfg, session=Session(net), fresh=True).get_text(URL, validate=lambda page: 1 / 0)
+
+
+def test_eurlex_challenge_page_is_not_cached_and_the_next_query_gets_the_real_page(proj, router, capsys):
+    router.add(r"eur-lex\.europa\.eu", (200, CAPTCHA))
+    code, out, err = run(capsys, ["normativa", "eurlex", "32009R0767"])
+    assert code == cli.SALIDA_RED and "sin metadatos reconocibles" in err
+    assert not cache_files(proj / ".cache")
+    router.add(r"eur-lex\.europa\.eu", (200, EURLEX_PAGE))         # minutos después, la página real
+    code, out, _ = run(capsys, ["--json", "normativa", "eurlex", "32009R0767"])
+    assert code == 0 and json.loads(out)["fecha_documento"] == "2009-07-13" and not json.loads(out)["cache"]
+    assert len(cache_files(proj / ".cache")) == 1
+    router.add(r"eur-lex\.europa\.eu", (200, CAPTCHA))             # la copia válida se sigue sirviendo
+    code, out, _ = run(capsys, ["--json", "normativa", "eurlex", "32009R0767"])
+    assert code == 0 and json.loads(out)["cache"]
+
+
+# ============================================================================ exportar e importar: comprobaciones
+def test_cache_import_checks_the_expected_hash_before_importing(proj, router, capsys, monkeypatch, tmp_path):
+    pubmed_routes(router)
+    assert run(capsys, ["buscar", "pubmed", "rumen choline"])[0] == 0
+    bundle = tmp_path / "cache.json"
+    code, out, _ = run(capsys, ["--json", "cache", "exportar", str(bundle)])
+    digest = json.loads(out)["sha256"]
+    assert code == 0 and digest == hashlib.sha256(bundle.read_bytes()).hexdigest()
+    for path in cache_files(proj / ".cache"):
+        path.unlink()
+    imports = len(events(proj, "cache_importar"))
+    code, out, err = run(capsys, ["cache", "importar", str(bundle), "--sha256", "0" * 64])
+    assert code == cli.SALIDA_ENTRADA and "no es la esperada" in err and not cache_files(proj / ".cache")
+    assert len(events(proj, "cache_importar")) == imports                # nada importado ni registrado
+    assert run(capsys, ["cache", "importar", str(bundle), "--sha256", "abc"])[0] == cli.SALIDA_ENTRADA
+    code, out, _ = run(capsys, ["cache", "importar", str(bundle), "--sha256", digest.upper()])
+    assert code == 0 and "Importadas 2" in out and "sin --sha256" not in out
+    assert events(proj, "cache_importar")[-1]["inputs"]["sha256"] == digest
+    code, out, _ = run(capsys, ["cache", "importar", str(bundle)])
+    assert code == 0 and "sin --sha256 no se comprueba" in out
+
+
+def test_confidential_search_with_registration_warns_that_sources_stay_in_the_registry(proj, router, capsys):
+    pubmed_routes(router)
+    code, out, _ = run(capsys, ["buscar", "pubmed", "idea secreta", "--sensibilidad", "confidencial", "--registrar"])
+    assert code == 0 and "quedan en claro en el registro" in out
+    assert "idea secreta" not in (proj / "research" / "procedencia.jsonl").read_text("utf-8")
+
+
+# ============================================================================ router de modelos: proveedores (D9-12)
+@pytest.mark.parametrize("provider, base, expected_url", [
+    ("anthropic", None, "https://api.anthropic.com/v1/messages"),
+    ("openai_compatible", "http://localhost:8000/v1/", "http://localhost:8000/v1/chat/completions"),
+    ("gemini", None, "https://generativelanguage.googleapis.com/v1beta/models/m1:generateContent"),
+])
+def test_llm_router_builds_each_provider_request_and_parses_the_answer(tmp_path, monkeypatch, provider, base,
+                                                                      expected_url):
+    from nutria.llm import router as llm_router
+    monkeypatch.setenv("CLAVE_PRUEBA", SECRET)
+    answers = {"anthropic": {"content": [{"type": "text", "text": "hola"}], "usage": {"in": 1}, "model": "m1-r"},
+               "openai_compatible": {"choices": [{"message": {"content": "hola"}}], "usage": {"in": 1},
+                                     "model": "m1-r"},
+               "gemini": {"candidates": [{"content": {"parts": [{"text": "ho"}, {"text": "la"}]}}],
+                          "usageMetadata": {"in": 1}, "modelVersion": "m1-r"}}
+    sent = {}
+
+    def post(url, json=None, headers=None, timeout=None):
+        sent.update(url=url, body=json, headers=headers, timeout=timeout)
+        resp = Resp(200, answers[provider], url=url)
+        resp.raise_for_status = lambda: None
+        resp.json = lambda: answers[provider]
+        return resp
+
+    monkeypatch.setattr(llm_router.requests, "post", post)
+    spec = llm_router.ModelSpec(id="x", provider=provider, model="m1", base_url=base, api_key_env="CLAVE_PRUEBA",
+                                roles=["critico"], data_policy="local", verified="", active=True)
+    config = Config(root=tmp_path, cache_dir=tmp_path / "cache")
+    out = llm_router._call(config, spec, "pregunta", "sistema", 50, 0.2)   # noqa: SLF001
+    assert out["text"] == "hola" and out["model_reported"] == "m1-r" and sent["url"] == expected_url
+    assert sent["timeout"] >= 120 and json.dumps(sent["body"]).count("pregunta") == 1
+    assert SECRET in json.dumps(sent["headers"])                     # la clave solo viaja en la cabecera
+    assert "sistema" in json.dumps(sent["body"])
+    config.offline = True
+    with pytest.raises(ValueError, match="modo offline"):
+        llm_router._call(config, spec, "pregunta", None, 50, None)    # noqa: SLF001
+
+
+# ============================================================================ PubMed: resúmenes por lotes (D7-12, D7-13)
+EFETCH = """<PubmedArticleSet>{}</PubmedArticleSet>"""
+ARTICLE = """<PubmedArticle><MedlineCitation><PMID>{pmid}</PMID><Article><Abstract>
+<AbstractText Label="OBJECTIVE">Objetivo {pmid}.</AbstractText><AbstractText>Resultado.</AbstractText></Abstract>
+<PublicationTypeList><PublicationType>Journal Article</PublicationType></PublicationTypeList></Article>
+<MeshHeadingList><MeshHeading><DescriptorName>Rumen</DescriptorName></MeshHeading></MeshHeadingList>
+</MedlineCitation><PubmedData><ArticleIdList><ArticleId IdType="doi">10.1000/{pmid}</ArticleId></ArticleIdList>
+</PubmedData></PubmedArticle>"""
+
+
+def test_pubmed_abstracts_are_fetched_in_batches_and_a_failure_flags_the_result(cfg, monkeypatch):
+    monkeypatch.setattr(pubmed, "ESUMMARY_BATCH", 2)
+    ids = ["11", "12", "13"]
+
+    def handler(url, params, kw):
+        if url.endswith("esearch.fcgi"):
+            return {"esearchresult": {"count": "3", "idlist": ids}}
+        if url.endswith("esummary.fcgi"):
+            return {"result": {"uids": params["id"].split(","),
+                               **{i: {"uid": i, "title": f"T{i}", "articleids": [], "pubtype": []}
+                                  for i in params["id"].split(",")}}}
+        return EFETCH.format("".join(ARTICLE.format(pmid=i) for i in params["id"].split(",")))
+
+    client = FakeClient(cfg, handler)
+    res = pubmed.search_records(client, "rumen", retmax=3, with_abstracts=True)
+    assert [len(p["id"].split(",")) for u, p in client.calls if u.endswith("efetch.fcgi")] == [2, 1]
+    assert res["records"][0].abstract == "OBJECTIVE: Objetivo 11.\nResultado." and res["records"][2].extra["mesh"] == [
+        "Rumen"]
+    assert pubmed.parse_efetch(EFETCH.format(ARTICLE.format(pmid="5")))["5"]["doi"] == "10.1000/5"
+
+    def failing(url, params, kw):
+        return NetworkError("HTTP 503 en efetch") if url.endswith("efetch.fcgi") else handler(url, params, kw)
+
+    res = pubmed.search_records(FakeClient(cfg, failing), "rumen", retmax=3, with_abstracts=True)
+    assert res["incompleto"] and any("no se pudieron descargar los resúmenes" in a for a in res["avisos"])
