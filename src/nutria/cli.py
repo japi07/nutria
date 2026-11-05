@@ -1469,7 +1469,7 @@ def cmd_puntuar(args, cfg) -> int:
         outputs={"orden": [[r.opportunity_id, r.status, r.gate_tier] for r in rows], "avisos": warnings,
                  "sha256_resultado": sha256_text(canonical([r.to_dict() for r in rows]))}, actor=args.agente)
     if args.json and warnings:
-        print("\n".join(warnings), file=sys.stderr)
+        _imprimir(sys.stderr, "\n".join(warnings))
     _emit(args, [r.to_dict() for r in rows],
           f"Perfil: {profile} | {args.sim} simulaciones | semilla {args.semilla} | alfa {args.alfa} | "
           f"mínimo {args.min_evaluadores} evaluadores\n" + format_table(rows, args.top, profile))
@@ -2336,13 +2336,13 @@ def cmd_procedencia(args, cfg) -> int:
     corruptas = getattr(events, "corruptas", [])
     integridad = verify_chain(cfg, use_git=False)   # el listado avisa si lo que muestra puede estar alterado
     if not integridad["integra"]:
-        print(f"AVISO: la procedencia no es íntegra: {'; '.join(integridad['problemas'])}. Lo que se muestra puede "
-              "incluir eventos alterados o añadidos por fuera de nutria; detalle con `nutria procedencia verificar`.",
-              file=sys.stderr)
+        _imprimir(sys.stderr, f"AVISO: la procedencia no es íntegra: {'; '.join(integridad['problemas'])}. Lo que se "
+                              "muestra puede incluir eventos alterados o añadidos por fuera de nutria; detalle con "
+                              "`nutria procedencia verificar`.")
     elif corruptas:
-        print(f"AVISO: {len(corruptas)} línea(s) corrupta(s) en {cfg.provenance_path} (líneas "
-              f"{', '.join(map(str, corruptas[:10]))}{' ...' if len(corruptas) > 10 else ''}): no se muestran. "
-              "Comprueba la integridad con `nutria procedencia verificar`.", file=sys.stderr)
+        _imprimir(sys.stderr, f"AVISO: {len(corruptas)} línea(s) corrupta(s) en {cfg.provenance_path} (líneas "
+                              f"{', '.join(map(str, corruptas[:10]))}{' ...' if len(corruptas) > 10 else ''}): no se "
+                              "muestran. Comprueba la integridad con `nutria procedencia verificar`.")
     _emit(args, list(events), "\n".join(f"{e.get('ts')} {str(e.get('actor')):<22} {str(e.get('action')):<18} "
                                         f"{json.dumps(e.get('inputs'), ensure_ascii=False)[:110]}" for e in events)
           or "(sin eventos)")

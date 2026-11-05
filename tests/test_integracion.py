@@ -240,3 +240,44 @@ def test_puntuar_registrar_aplica_las_anclas_de_p6_y_la_identidad_de_p1(project,
     # P1: un rol que no es evaluador no registra puntuaciones, aunque el fichero cumpla las anclas
     code, _, err = _run(capsys, ["--agente", "critico-red-team", "puntuar", "registrar", "--datos", str(justificado)])
     assert code == 3 and "Solo los evaluadores independientes" in err
+
+
+# ============================================================================ P4 + P1/P6: avisos con stderr cerrada
+def _sin_stderr(capsys, argv):
+    """Ejecuta la CLI con stderr cerrada al arrancar (sys.stderr None, como con `2>&-`)."""
+    saved, sys.stderr = sys.stderr, None
+    try:
+        return _run(capsys, argv)
+    finally:
+        sys.stderr = saved
+
+
+def test_avisos_del_ranking_solo_por_stderr(project, capsys):
+    """P6 avisa de las compuertas críticas sin resolver en el top-k; con --json el aviso va por stderr y stdout lleva
+    solo la lista JSON del ranking, también con stderr cerrada (contrato de P4)."""
+    _oportunidad(project)
+    for n in (1, 2, 3):
+        evaluador = f"evaluador-{n}"
+        code, _, _ = _run(capsys, ["--agente", evaluador, "puntuar", "registrar", "--datos",
+                                   str(_puntuaciones(project, evaluador))])
+        assert code == 0
+    argv = ["--agente", "director-cientifico", "--json", "puntuar", "ranking", "--sim", "200"]
+    code, out, err = _run(capsys, argv)
+    assert code == 0 and json.loads(out)[0]["opportunity_id"] == "O-0001" and "CRÍTICAS sin resolver" in err
+    code, out, _ = _sin_stderr(capsys, argv)
+    assert code == 0 and json.loads(out)[0]["opportunity_id"] == "O-0001"
+
+
+def test_aviso_de_integridad_de_la_procedencia_solo_por_stderr(project, capsys):
+    """P1 avisa en `procedencia` (listar) si la cadena no es íntegra; con --json stdout lleva solo la lista."""
+    _oportunidad(project)
+    path = project / "research" / "procedencia.jsonl"
+    lines = path.read_text("utf-8").splitlines()
+    evento = json.loads(lines[0])
+    evento["actor"] = "otro-actor"              # evento alterado por fuera de nutria
+    path.write_text("\n".join([json.dumps(evento, ensure_ascii=False), *lines[1:]]) + "\n", "utf-8")
+    argv = ["--agente", "director-cientifico", "--json", "procedencia"]
+    code, out, err = _run(capsys, argv)
+    assert code == 0 and isinstance(json.loads(out), list) and "no es íntegra" in err
+    code, out, _ = _sin_stderr(capsys, argv)
+    assert code == 0 and isinstance(json.loads(out), list)
