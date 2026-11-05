@@ -837,7 +837,7 @@ def report(model: FarmModel, n: int = 10000, seed: int = 42) -> str:
         value = sc[name]["neto"]
         lines.append(f"{name:<14}{f'P{q}':>10}{value:>16.2f}{'sí' if value > 0 else 'no':>12}")
     c = sc["valores_centrales"]
-    lines += ["", f"Valores centrales ({central_text(model)}): "
+    lines += ["", f"Valores centrales con la {central_text(model)}: "
                   f"beneficio {c['beneficio']:.2f} €; coste {c['coste']:.2f} €; neto {c['neto']:.2f} €; "
                   f"ROI (beneficio/coste) {c['roi']:.2f}"]
     neto, roi = mc["neto_por_animal"], mc["roi"]
