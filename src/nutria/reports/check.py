@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import re
 import sqlite3
@@ -79,7 +80,9 @@ SUPPORT_OK = ("respalda", "parcial")
 SUPPORT_VALUES = ("respalda", "parcial", "no_respalda", "no_verificable")
 PENDING_MARK = "[POR COMPLETAR]"
 DEFAULT_GATES = ("seguridad", "regulatoria", "analitica", "propiedad_intelectual", "destino_digestivo", "etica")
-MIN_ROW_WORDS = 4
+MIN_ROW_WORDS = 4          # palabras mínimas que una fila del Anexo A debe reproducir de su afirmación
+MIN_ROW_COVERAGE = 0.5     # ... y fracción mínima de las palabras de la afirmación
+MIN_FRAGMENT_WORDS = 2     # palabras mínimas de cada fragmento separado por «...»
 NO_REVIEWER = ("", "null", "none", "no", "pendiente", "~", "-", "false")
 REVIEW_CODE = "revision_humana"
 
@@ -380,8 +383,9 @@ def _status_in_body(doc: _Doc) -> StatusInfo | None:
     for i, line in enumerate(doc.lines):
         if doc.fence[i] or doc.in_front_matter(i):
             continue
-        m = re.match(r"^\s*(?:[-*>]\s*)*(?:\*\*|__)?estado(?:\*\*|__)?\s*:\s*(?:\*\*|__)?[\"']?(revisado|final)\b", line,
-                     re.IGNORECASE)
+        # Sin énfasis ni marcas de lista o cita: «**Estado:** final» o «- _estado_: final» también cuentan.
+        plain = re.sub(r"[*_`]", "", line)
+        m = re.match(r"^\s*(?:[-+*>#]\s*|\d+[.)]\s*)*estado\s*:\s*[\"']?(revisado|final)\b", plain, re.IGNORECASE)
         if m:
             return StatusInfo(m.group(1).lower(), True, "El estado debe ir en el front matter (bloque --- al principio "
                                                         "del documento), no en el cuerpo", i + 1)
@@ -656,6 +660,25 @@ class _Line:
     text: str
     labels: list[tuple[int, str, str]]   # (posición, nombre canónico, texto original)
     refs: list[tuple[int, str]]
+    tokens: list[tuple[str, str, int]] = field(default_factory=list)   # (tipo, valor, posición), en orden; las
+    #                                     fichas «label» corresponden una a una, en el mismo orden, a `labels`
+
+
+# Fichas de una línea, en orden: etiqueta, referencia, fin de frase o palabra (normalizada después).
+_TOKEN_RE = re.compile(
+    r"(?P<label>\[\s*(?i:pub|der|hip|sup|desc)\s*\]|[({]\s*(?:PUB|DER|HIP|SUP|DESC)\s*[)}])"
+    r"|(?P<ref>\[R\d+\])"
+    r"|(?P<stop>[.!?;:](?=\s|$))"
+    r"|(?P<word>[^\W_]+)")
+# Abreviaturas tras las que un punto no cierra la frase.
+_ABBREVIATIONS = {"al", "ej", "eg", "ie", "art", "arts", "fig", "figs", "tab", "vol", "num", "aprox", "approx", "cf",
+                  "vs", "dr", "dra", "sr", "sra", "pag", "pags", "cap"}
+_LINK_RE = re.compile(r"\[([^\[\]]*)\]\([^()\s]*\)")
+
+
+def _word_pieces(run: str) -> list[str]:
+    plain = unicodedata.normalize("NFKD", run).encode("ascii", "ignore").decode("ascii").lower()
+    return re.findall(r"[a-z0-9]+", plain)
 
 
 def _scan(line: str) -> _Line:
@@ -663,17 +686,38 @@ def _scan(line: str) -> _Line:
     # El énfasis y las etiquetas HTML no deben partir una etiqueta: «[P**UB**]» o «[P<b>UB</b>]» se ven como [PUB].
     text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
     text = re.sub(r"[*_~]", "", text)
-    labels = [(m.start(), (m.group(1) or m.group(2)).upper(), m.group(0)) for m in LABEL_RE.finditer(text)]
-    refs = [(m.start(), m.group(1)) for m in REF_RE.finditer(text)]
-    return _Line(text, labels, refs)
+    # Un enlace cuenta por su texto («[texto](url)» -> «texto»); el de una referencia sigue siendo la referencia.
+    text = _LINK_RE.sub(lambda m: (f"[{m.group(1)}]" if REF_RE.fullmatch(f"[{m.group(1)}]")
+                                   or LABEL_RE.fullmatch(f"[{m.group(1)}]") else m.group(1)), text)
+    tokens: list[tuple[str, str, int]] = []
+    labels: list[tuple[int, str, str]] = []
+    last_word = ""
+    for m in _TOKEN_RE.finditer(text):
+        kind, raw = m.lastgroup, m.group(0)
+        if kind == "word":
+            pieces = _word_pieces(raw)
+            tokens += [("word", piece, m.start()) for piece in pieces]
+            last_word = pieces[-1] if pieces else last_word
+            continue
+        if kind == "stop" and raw == "." and (last_word in _ABBREVIATIONS
+                                             or (len(last_word) == 1 and last_word.isalpha())):
+            continue   # «et al.», «p. ej.», «art.» o una inicial («D. Sauvant») no cierran la frase
+        if kind == "label":
+            name = re.search(r"(?i)pub|der|hip|sup|desc", raw).group(0).upper()
+            labels.append((m.start(), name, raw))
+            tokens.append(("label", name, m.start()))
+        elif kind == "ref":
+            tokens.append(("ref", raw[1:-1], m.start()))
+        else:
+            tokens.append(("stop", raw, m.start()))
+        last_word = ""
+    refs = [(pos, value) for kind, value, pos in tokens if kind == "ref"]
+    return _Line(text, labels, refs, tokens)
 
 
 def _norm_words(text: str) -> list[str]:
-    text = REF_RE.sub(" ", text)
-    text = LABEL_RE.sub(" ", text)
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
-    return re.findall(r"[a-z0-9]+", text)
+    """Palabras normalizadas (minúsculas, sin acentos, sin etiquetas ni [Rn], sin formato ni puntuación)."""
+    return [value for kind, value, _pos in _scan(text).tokens if kind == "word"]
 
 
 def _paragraphs(doc: _Doc, body: set[int]) -> list[list[int]]:
@@ -771,9 +815,14 @@ def _support_rows(doc: _Doc) -> tuple[list[SupportRow], list[Issue], bool, bool]
     return rows, issues, header, claim_col
 
 
-def _fragments(claim: str) -> list[list[str]]:
+def _fragments(claim: str) -> list[list[str]] | None:
+    """Fragmentos normalizados de la columna Afirmación (separados por «...» o «…»); None si alguno tiene menos de
+    MIN_FRAGMENT_WORDS palabras (un fragmento de una palabra encaja en cualquier sitio y no reproduce nada)."""
     parts = re.split(r"\[\s*(?:\.\.\.|…)\s*\]|\(\s*(?:\.\.\.|…)\s*\)|\.\.\.|…", claim)
-    return [w for w in (_norm_words(p) for p in parts) if w]
+    frags = [w for w in (_norm_words(p) for p in parts) if w]
+    if not frags or (len(frags) > 1 and any(len(f) < MIN_FRAGMENT_WORDS for f in frags)):
+        return None
+    return frags
 
 
 def _find(words: list[str], frag: list[str], start: int) -> list[int]:
@@ -781,25 +830,98 @@ def _find(words: list[str], frag: list[str], start: int) -> list[int]:
     return [k for k in range(start, len(words) - n + 1) if words[k:k + n] == frag]
 
 
-def _row_covers(claim: str, para_words: list[str], owners: list[int], target: int) -> bool:
-    """La fila cubre la afirmación si su texto aparece en el párrafo (fragmentos en orden) y solapa la línea."""
-    frags = _fragments(claim)
-    total = sum(len(f) for f in frags)
-    if not frags or total < min(MIN_ROW_WORDS, len(para_words)):
-        return False
-    for first in _find(para_words, frags[0], 0):
-        covered = list(range(first, first + len(frags[0])))
+@dataclass
+class _Claim:
+    line: int              # índice de la línea con la etiqueta [PUB]
+    refs: list[str]        # referencias de esa [PUB] (las de su segmento de línea)
+    words: list[str]       # palabras normalizadas del párrafo
+    span: set[int]         # posiciones (en `words`) de las palabras de la afirmación
+
+    @property
+    def needed(self) -> int:
+        n = len(self.span)
+        return min(n, max(MIN_ROW_WORDS, math.ceil(MIN_ROW_COVERAGE * n)))
+
+
+def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, list[list[str] | None]]
+            ) -> list[_Claim]:
+    """Afirmaciones [PUB] de un párrafo. La afirmación de una [PUB] son las palabras de su frase que van antes de la
+    etiqueta, desde el inicio de la frase o desde la etiqueta o [Rn] anterior; si son menos de MIN_ROW_WORDS se
+    añaden las que siguen hasta el final de la frase (o hasta su [Rn]); si la etiqueta abre la frase, son las que
+    siguen. Sin palabras, la frase entera y, si tampoco las hay, el párrafo."""
+    words: list[str] = []
+    events: list[tuple[str, str, int, int]] = []        # (tipo, valor, línea, posición en `words` o índice)
+    for j in paragraph:
+        label_no = 0
+        for kind, value, _pos in scans[j].tokens:
+            if kind == "word":
+                events.append(("word", value, j, len(words)))
+                words.append(value)
+            elif kind == "label":
+                events.append(("label", value, j, label_no))
+                label_no += 1
+            else:
+                events.append((kind, value, j, -1))
+    sentences: list[list[tuple[str, str, int, int]]] = [[]]
+    for ev in events:
+        if ev[0] == "stop":
+            sentences.append([])
+        else:
+            sentences[-1].append(ev)
+    out: list[_Claim] = []
+    for sent in sentences:
+        for k, (kind, value, line, label_no) in enumerate(sent):
+            if kind != "label" or value != "PUB":
+                continue
+            refs_by_label = pub_refs.get(line) or []
+            refs = refs_by_label[label_no] if label_no < len(refs_by_label) else None
+            if not refs:
+                continue          # [PUB] sin [Rn]: ya es un error; no hay respaldo que buscar
+            back: list[int] = []
+            b = k - 1
+            while b >= 0 and sent[b][0] in ("label", "ref"):
+                b -= 1
+            while b >= 0 and sent[b][0] == "word":
+                back.append(sent[b][3])
+                b -= 1
+            f = k + 1
+            while f < len(sent) and sent[f][0] in ("label", "ref"):
+                f += 1
+            forward: list[int] = []
+            while f < len(sent) and sent[f][0] == "word":
+                forward.append(sent[f][3])
+                f += 1
+            # Lo que sigue solo es de esta afirmación si lo que lo cierra no es otra etiqueta (otra afirmación).
+            closed_by_label = False
+            while f < len(sent) and sent[f][0] in ("label", "ref"):
+                closed_by_label = closed_by_label or sent[f][0] == "label"
+                f += 1
+            span = set(back)
+            if len(span) < MIN_ROW_WORDS and not closed_by_label:
+                span |= set(forward)
+            if not span:
+                span = {ev[3] for ev in sent if ev[0] == "word"} or set(range(len(words)))
+            out.append(_Claim(line, refs, words, span))
+    return out
+
+
+def _row_coverage(frags: list[list[str]], claim: _Claim) -> int:
+    """Palabras de la afirmación que reproduce la fila: sus fragmentos deben aparecer en orden en el párrafo."""
+    best = 0
+    words = claim.words
+    for first in _find(words, frags[0], 0):
+        covered = set(range(first, first + len(frags[0])))
         pos, ok = first + len(frags[0]), True
         for frag in frags[1:]:
-            hits = _find(para_words, frag, pos)
+            hits = _find(words, frag, pos)
             if not hits:
                 ok = False
                 break
-            covered += list(range(hits[0], hits[0] + len(frag)))
+            covered.update(range(hits[0], hits[0] + len(frag)))
             pos = hits[0] + len(frag)
-        if ok and any(owners[k] == target for k in covered):
-            return True
-    return False
+        if ok:
+            best = max(best, len(covered & claim.span))
+    return best
 
 
 # ============================================================================ comprobación sin red
@@ -840,7 +962,7 @@ def _registry_issues(conn, ref: str, entries: list[BibEntry], line: int, strict:
 
 def _review_issues(text: str, doc: _Doc, status: str | None, conn, path) -> list[Issue]:
     reviewer, problem = _reviewer_of(doc)
-    label = status or "estricto"
+    label = status if status in STRICT_STATUSES else "estricto"
     how = "una persona debe revisarlo y registrarlo con `nutria informe revisar <informe> --firma-humana NOMBRE`"
     if problem:
         return [Issue("error", problem, None, REVIEW_CODE)]
@@ -988,12 +1110,14 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     # ---- cuerpo: etiquetas, referencias, cifras
     used: dict[str, int] = {}
     pub_lines: list[tuple[int, list[str]]] = []
+    pub_refs_by_label: dict[int, list[list[str] | None]] = {}   # línea -> refs de cada etiqueta (None si no es PUB)
+    scans: dict[int, _Line] = {}
     unlabeled: list[int] = []
     for i in sorted(body):
         line = doc.lines[i]
         if not line.strip():
             continue
-        scan = _scan(line)
+        scan = scans[i] = _scan(line)
         for _pos, ref in scan.refs:
             used.setdefault(ref, i + 1)
         for m in BAD_LABEL_RE.finditer(scan.text):
@@ -1013,14 +1137,17 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         if scan.labels:
             first_pos = scan.labels[0][0]
             prefix = [r for p, r in scan.refs if p < first_pos]
+            by_label: list[list[str] | None] = []
             for k, (pos, name, _raw) in enumerate(scan.labels):
                 end = scan.labels[k + 1][0] if k + 1 < len(scan.labels) else len(scan.text)
-                seg = [r for p, r in scan.refs if pos <= p < end] + (prefix if k == 0 else [])
+                seg = list(dict.fromkeys([r for p, r in scan.refs if pos <= p < end] + (prefix if k == 0 else [])))
+                by_label.append(seg if name == "PUB" else None)
                 if name == "PUB":
                     if not seg:
                         issues.append(Issue("error", "Afirmación [PUB] sin referencia [Rn] (cada [PUB] necesita su "
                                                      "propio [Rn] antes de la etiqueta siguiente)", i + 1))
                     pub_refs += seg
+            pub_refs_by_label[i] = by_label
         if pub_refs:
             pub_lines.append((i, list(dict.fromkeys(pub_refs))))
         if any(name == "DER" for _p, name, _r in scan.labels) and not re.search(
@@ -1084,45 +1211,40 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         if row.value not in SUPPORT_VALUES:
             issues.append(Issue("error", f"Anexo A: respaldo '{row.raw_value}' no válido para {', '.join(row.refs)} "
                                          f"(usa {', '.join(SUPPORT_VALUES)})", row.line))
-    paras = _paragraphs(doc, body)
-    para_of = {i: p for p in paras for i in p}
-    words_cache: dict[int, tuple[list[str], list[int]]] = {}
+    frags_of = {r.line: _fragments(r.claim) for r in rows}
+    for r in rows:
+        if r.value in SUPPORT_VALUES and frags_of[r.line] is None:
+            issues.append(Issue("aviso", f"Fila del Anexo A ({', '.join(r.refs)}): la columna Afirmación está vacía o "
+                                         f"tiene fragmentos de menos de {MIN_FRAGMENT_WORDS} palabras entre «...»: no "
+                                         "reproduce ninguna afirmación", r.line))
     used_rows: set[int] = set()
-    for i, refs in pub_lines:
-        para = para_of.get(i, [i])
-        key = para[0]
-        if key not in words_cache:
-            words, owners = [], []
-            for j in para:
-                w = _norm_words(_drop_term_spans(doc.lines[j]))
-                words += w
-                owners += [j] * len(w)
-            words_cache[key] = (words, owners)
-        words, owners = words_cache[key]
-        target = i
-        if i not in owners:
-            before = [j for j in para if j < i and j in owners]
-            after = [j for j in para if j > i and j in owners]
-            target = before[-1] if before else (after[0] if after else i)
-        for ref in refs:
-            matching = [r for r in rows if ref in r.refs and _row_covers(r.claim, words, owners, target)]
-            for r in matching:
-                used_rows.add(r.line)
-            values = {r.value for r in matching if r.value in SUPPORT_VALUES}
-            where = ", ".join(str(r.line) for r in matching)
-            if "no_respalda" in values:
-                issues.append(Issue("error", f"{ref} NO respalda la afirmación de la línea {i + 1} (Anexo A, fila "
-                                             f"{where})", i + 1))
-            elif len(values) > 1:
-                issues.append(Issue("error", f"Filas contradictorias del Anexo A ({where}) para {ref} y la afirmación "
-                                             f"de la línea {i + 1}: {', '.join(sorted(values))}", i + 1))
-            elif values == {"no_verificable"}:
-                issues.append(Issue(sev_strict, f"Respaldo de {ref} no verificable: no puede sostener la afirmación "
-                                                f"[PUB] de la línea {i + 1}", i + 1))
-            elif not values:
-                issues.append(Issue(sev_strict, f"Sin comprobación de respaldo de {ref} para la afirmación de la línea "
-                                                f"{i + 1}: el Anexo A necesita una fila de {ref} cuya columna "
-                                                "Afirmación reproduzca esa afirmación", i + 1))
+    for para in _paragraphs(doc, body):
+        if not any(pub_refs_by_label.get(j) for j in para):
+            continue
+        for claim in _claims(para, scans, pub_refs_by_label):
+            i = claim.line
+            for ref in claim.refs:
+                matching = [r for r in rows if ref in r.refs and frags_of[r.line]
+                            and _row_coverage(frags_of[r.line], claim) >= max(1, claim.needed)]
+                for r in matching:
+                    used_rows.add(r.line)
+                values = {r.value for r in matching if r.value in SUPPORT_VALUES}
+                where = ", ".join(str(r.line) for r in matching)
+                if "no_respalda" in values:
+                    issues.append(Issue("error", f"{ref} NO respalda la afirmación de la línea {i + 1} (Anexo A, fila "
+                                                 f"{where})", i + 1))
+                elif len(values) > 1:
+                    issues.append(Issue("error", f"Filas contradictorias del Anexo A ({where}) para {ref} y la "
+                                                 f"afirmación de la línea {i + 1}: {', '.join(sorted(values))}", i + 1))
+                elif values == {"no_verificable"}:
+                    issues.append(Issue(sev_strict, f"Respaldo de {ref} no verificable: no puede sostener la "
+                                                    f"afirmación [PUB] de la línea {i + 1}", i + 1))
+                elif not values:
+                    issues.append(Issue(sev_strict, f"Sin comprobación de respaldo de {ref} para la afirmación de la "
+                                                    f"línea {i + 1}: el Anexo A necesita una fila de {ref} cuya columna "
+                                                    "Afirmación reproduzca esa afirmación (al menos "
+                                                    f"{max(1, claim.needed)} de sus {len(claim.span)} palabras, en "
+                                                    "orden)", i + 1))
     for r in rows:
         if r.line in used_rows or r.value not in SUPPORT_VALUES:
             continue
