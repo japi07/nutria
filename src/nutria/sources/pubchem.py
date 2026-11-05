@@ -56,8 +56,9 @@ def _collect_strings(node, wanted: str, out: list[str]) -> None:
 # H: «Not Classified», «Reported as not meeting GHS hazard criteria by 1197 of 1201 companies...», «Of the 31
 # notification(s) provided by ... with hazard statement code(s):» o la nota sobre los porcentajes.
 _H_CODE = re.compile(r"^\s*(?:EU)?H\d{3}[A-Za-z]{0,2}(?:\s*\+\s*(?:EU)?H\d{3}[A-Za-z]{0,2})*(?![0-9])")
-# Notificaciones de que la sustancia no se clasifica (no son frases H ni equivalen a «sin peligro»).
-_NOT_CLASSIFIED = re.compile(r"\bnot\s+classified\b|not\s+meeting\s+(?:the\s+)?GHS\s+hazard\s+criteria", re.I)
+# Notificaciones de que la sustancia no se clasifica, que no son frases H ni equivalen a «sin peligro» («Not
+# Classified», «Reported as not meeting GHS hazard criteria...», «does not meet the criteria for classification»).
+_NOT_CLASSIFIED = re.compile(r"\bnot\s+classified\b|\bnot\s+meet(?:s|ing)?\b[^.;]{0,40}?\bcriteria\b", re.I)
 
 
 def is_hazard_statement(text: str) -> bool:

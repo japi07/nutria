@@ -2004,7 +2004,8 @@ CODIGOS_SALIDA = {
                                     "`extraccion comparar`, sello no válido, referencia, lote de referencias o informe "
                                     "que no supera la verificación, búsqueda o consulta incompleta (alguna página o "
                                     "parte falló), caché con copias no válidas o importación con entradas rechazadas, "
-                                    "comprobaciones esenciales de `doctor` fallidas"),
+                                    "comprobaciones esenciales de `doctor` fallidas, `llm preguntar` sin ninguna "
+                                    "respuesta o con algún modelo que falló"),
     SALIDA_ENTRADA: ("entrada", "entrada no válida o condición previa no cumplida: argumentos, fichero inexistente o "
                                 "inaccesible (directorio, permisos), JSON o CSV fuera de formato, configuración no "
                                 "válida, proyecto sin inicializar, orden no permitida para el rol del agente"),

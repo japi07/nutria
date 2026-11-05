@@ -971,6 +971,8 @@ GHS_OLD_FORMAT = ["Reported as not meeting GHS hazard criteria by 4 of 1203 comp
     ([("GHS Hazard Statements", ["Not Classified"]), ("ECHA C&L Notifications Summary", [GHS_NOT_MEETING])],
      pubchem.GHS_SIN_FRASES, [], ["Not Classified", GHS_NOT_MEETING]),
     ([("GHS Hazard Statements", [GHS_NOT_MEETING])], pubchem.GHS_SIN_FRASES, [], [GHS_NOT_MEETING]),
+    ([("GHS Hazard Statements", ["The substance does not meet the criteria for classification"])],
+     pubchem.GHS_SIN_FRASES, [], ["The substance does not meet the criteria for classification"]),
     ([("Signal", ["Warning"]), ("GHS Hazard Statements", GHS_OLD_FORMAT)], pubchem.GHS_CON_FRASES,
      GHS_OLD_FORMAT[2:6], GHS_OLD_FORMAT[:1]),
     # Dos referencias que discrepan: una notifica H315 y otra «Not Classified».
