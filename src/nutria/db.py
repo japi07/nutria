@@ -483,7 +483,7 @@ amplio|amplia|amplios|amplias|rango{,s}|espectro|sin|restriccion{,es}|distincion
 especie{,s}|etapa{,s}|fase{,s}|estado{,s}|estadio{,s}|raza{,s}|animal{,es}|ganado{,s}|ganaderia{,s}|edad{,es}
 categoria{,s}|tipo{,s}|sexo{,s}|clase{,s}|grupo{,s}|individuo{,s}|ejemplar{,es}|cabeza{,s}|poblacion{,es}|momento{,s}
 periodo{,s}|ciclo{,s}|condicion{,es}|situacion{,es}|caso{,s}|explotacion{,es}|sistema{,s}|organismo{,s}|ser{,es}|vivo{,s}
-mamifero{,s}|vertebrado{,s}|invertebrado{,s}|vida|ano{,s}
+mamifero{,s}|vertebrado{,s}|invertebrado{,s}|vida|ano{,s}|sp|spp|ssp|animalia|mammalia
 ganader{o,a,os,as}|domestic{o,a,os,as}|pecuari{o,a,os,as}|zootecnic{o,a,os,as}|productiv{o,a,os,as}
 el|la|los|las|lo|un|una|unos|unas|de|del|y|e|o|u|ni|en|a|al|con|para|por|su|sus|segun
 all|any|every|each|various|several|many|mixed|different|other{,s}|generic|common|typical|standard|whole|entire|complete
@@ -505,6 +505,7 @@ farm animal{,s}
 _DESCRIPTOR_TEMPLATES = """
 adult{o,a,os,as}|joven{,es}|san{o,a,os,as}|enferm{o,a,os,as}|mach{o,os}|hembra{,s}|reproductor{,es,a,as}|cri{a,as}
 recien|nacid{o,a,os,as}|gestante{,s}|lactante{,s}|experimental{,es}|laboratorio|modelo{,s}|sujeto{,s}|cohorte{,s}
+castrad{o,a,os,as}|esterilizad{o,a,os,as}|destetad{o,a,os,as}|lechal{,es}|engorde|cebo|recria
 adult{,s}|young|healthy|sick|male{,s}|female{,s}|breeding|newborn{,s}|laboratory|lab|model{,s}|subject{,s}
 """
 # Caracteres que no se ven y no tienen categoría de formato o de control (rellenos del hangul, braille en blanco...).
