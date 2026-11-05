@@ -24,9 +24,9 @@ sys.path.insert(0, str(ROOT / "src"))
 MD_SUFFIXES = (".md", ".markdown")
 
 
-def block(reason: str) -> None:
+def block(reason: str, code: int = 0) -> None:
     print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
-    sys.exit(0)
+    sys.exit(code)
 
 
 def _variants(raw_path: str) -> list[Path]:
@@ -124,8 +124,12 @@ def main() -> None:
     except SystemExit:
         raise
     except ImportError as exc:
+        # Con run_hook.sh (NUTRIA_HOOK_RUNNER=1), el código 3 le pide probar el siguiente intérprete (a este le faltan
+        # dependencias); si ninguno funciona, run_hook.sh bloquea con este mismo mensaje. Ejecutado directamente,
+        # bloquea con código 0 (Claude Code solo atiende la decisión "block" con código 0).
         block(f"Hook de verificación no operativo ({exc}). Instala el proyecto con `pip install -e .` en el entorno "
-              "que usa Claude Code (scripts/hooks/run_hook.sh busca .venv).")
+              "que usa Claude Code (scripts/hooks/run_hook.sh busca .venv).",
+              3 if os.environ.get("NUTRIA_HOOK_RUNNER") == "1" else 0)
     except Exception as exc:  # noqa: BLE001 - falla en cerrado
         block(f"El hook de verificación falló al revisar {target.name}: {exc.__class__.__name__}: {exc}")
 

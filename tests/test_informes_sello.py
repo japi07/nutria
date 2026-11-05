@@ -454,13 +454,26 @@ def test_pub_references_must_be_registered_verified_sources(project):
 
 # ============================================================================ D10-1: esqueleto y mensajes
 def test_skeleton_stamp_does_not_look_like_a_guarantee(project, online, capsys):
+    # D10-1: el esqueleto de `informe nuevo` no obtiene un «Sello válido», tampoco sin red
     _opportunity(project)
     path = _skeleton(project)
+    for prefix in ([], ["--offline"]):
+        capsys.readouterr()
+        assert main(prefix + ["informe", "comprobar", str(path), "--online", "--sellar"]) == 1
+        out = _out(capsys)
+        assert "no había referencias que verificar" in out and "Sello válido" not in out
+        assert "Sello guardado, pero NO es válido: Documento por completar" in out
+        assert "verificadas en línea" not in out
+        assert main(["informe", "sello", str(path)]) == 1
+        assert "borrador incompleto" in _out(capsys)
+    # un documento completo sin referencias sí se sella, y el sello dice que no había nada que verificar
+    plan = project / "research" / "planes" / "P.md"
+    plan.write_text("---\nestado: borrador\n---\n# Plan\n\nPaso 1 [HIP].\n\n## Referencias\n\nNinguna.\n", "utf-8")
     capsys.readouterr()
-    assert main(["informe", "comprobar", str(path), "--online", "--sellar"]) == 0
-    out = _out(capsys)
-    assert "no había referencias que verificar" in out and "por completar" in out
-    assert "verificadas en línea" not in out.split("Sello guardado")[0]
+    assert main(["verificar", str(plan), "--sellar"]) == 0
+    assert "Sello válido" in _out(capsys)
+    ok, msg = chk.stamp_status(plan)
+    assert ok and "no había referencias que verificar" in msg and "documento sin estructura de informe" in msg
     final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
     errors = _errors(final, conn=_conn(), path=path)
     assert any("[POR COMPLETAR]" in e for e in errors)

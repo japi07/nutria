@@ -1010,6 +1010,60 @@ def _mentions_gate(gate: str, plain_line: str) -> bool:
     return re.search(rf"\b{re.escape(_plain(gate))}\b", plain_line) is not None
 
 
+_GATE_STATE_RE = re.compile(r"\b(superada|bloqueada|no resuelta)\b")
+
+
+def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[str, str, int]]:
+    """Estados de compuerta que declara la sección 14: [(compuerta, estado, línea)]. Se leen de las filas de tabla
+    cuya primera celda es la compuerta (el estado es el primero que aparece después, como en la tabla que genera
+    `nutria informe nuevo`) y de las líneas que dicen «compuerta» (el primer estado tras el nombre)."""
+    out = []
+    for idx, line in lines:
+        stripped = line.strip().lstrip(">").strip()
+        if stripped.startswith("|"):
+            cells = [_plain(c).strip("` ") for c in _cells(stripped)]
+            gate = next((g for g in gate_ids if cells and cells[0] == _plain(g)), None)
+            if gate:
+                m = _GATE_STATE_RE.search(" | ".join(cells[1:]))
+                if m:
+                    out.append((gate, m.group(1).replace(" ", "_"), idx))
+            continue
+        plain = _plain(line)
+        if "compuerta" not in plain:
+            continue
+        for gate in gate_ids:
+            gm = re.search(rf"\b{re.escape(_plain(gate))}\b", plain)
+            if gm:
+                m = _GATE_STATE_RE.search(plain, gm.end())
+                if m:
+                    out.append((gate, m.group(1).replace(" ", "_"), idx))
+    return out
+
+
+def _gate_registry_issues(conn, doc: _Doc, lines: list[tuple[int, str]], gate_ids, sev: str) -> list[Issue]:
+    """La sección 14 no puede declarar para una compuerta un estado distinto del efectivo en el registro."""
+    fields, _ = _fm_fields(doc)
+    opp_id = next((v for _, v, p in fields.get("oportunidad", []) if v and not p), None)
+    if not opp_id:
+        return []
+    from .. import db
+    try:
+        if db.get_opportunity(conn, opp_id) is None:
+            return [Issue(sev, f"La oportunidad {opp_id} del front matter no está en el registro: no se puede contrastar "
+                               "el estado de las compuertas de la sección 14")]
+        effective = db.effective_gates(conn, opp_id, list(gate_ids))
+    except (sqlite3.Error, db.RegistryError) as exc:
+        return [Issue(sev, f"No se pudo leer el estado de las compuertas de {opp_id} en el registro ({exc})")]
+    out = []
+    for gate, stated, idx in _stated_gate_states(lines, gate_ids):
+        real = effective.get(gate)
+        if real and stated != real:
+            out.append(Issue(sev, f"La sección 14 dice «{stated}» para la compuerta {gate}, pero su estado efectivo en "
+                                  f"el registro de {opp_id} es «{real}» («superada» solo cuenta con firma humana; una "
+                                  "propuesta «bloqueada» actúa de inmediato): actualiza la sección", idx + 1))
+    return out
+
+
 def _pending_and_empty(doc: _Doc, numbered: dict[int, list[int]], require_sections: bool
                        ) -> tuple[dict[str, int], list[tuple[int, int]]]:
     """({apartado con [POR COMPLETAR]: primera línea}, [(sección obligatoria vacía, línea)])."""
@@ -1278,6 +1332,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         if missing:
             issues.append(Issue(sev_strict, "La sección 14 no recoge el estado (superada, bloqueada o no_resuelta) de "
                                             f"las compuertas: {', '.join(missing)}", start + 1))
+        if conn is not None:
+            numbered_content = [(j, doc.lines[j]) for j in range(start + 1, doc.section_end(start, 2))]
+            issues += _gate_registry_issues(conn, doc, numbered_content, gate_ids, sev_strict)
     if require_sections and numbered.get(7) and is_ruminant(_species(doc)):
         start = numbered[7][0]
         content = [doc.lines[j] for j in range(start + 1, doc.section_end(start, 2))]
@@ -1628,17 +1685,20 @@ def stamp_status(report: Path | str, conn=None) -> tuple[bool, str]:
         return False, (f"El informe tiene {len(rerun)} error(es) al volver a comprobarlo (p. ej.: {rerun[0].message}): "
                        "corrígelo y vuelve a sellar")
     info = status_info(current)
+    # Un borrador por completar (p. ej. el esqueleto de `informe nuevo`) no tiene sello válido: no hay nada que
+    # garantizar todavía (en revisado o final los marcadores ya son errores de la comprobación anterior).
+    n_pending, empty = pending_summary(current, require_sections=structure)
+    if n_pending or empty:
+        what = [f"{n_pending} apartado(s) con {PENDING_MARK}"] if n_pending else []
+        what += [f"secciones vacías: {', '.join(str(n) for n in empty)}"] if empty else []
+        return False, (f"Documento por completar ({'; '.join(what)}): el sello solo registra la comprobación de un "
+                       "borrador incompleto y no vale como sello del informe; complétalo y vuelve a sellar")
     total = (data.get("resumen") or {}).get("total", 0)
     refs = ("no había referencias que verificar" if not total else
             f"{(data.get('resumen') or {}).get('verificadas', 0)} de {total} referencia(s) verificadas en línea "
             "(existencia, correspondencia con la cita y retractación)")
     parts = [f"estado '{info.value or 'sin estado'}'", refs,
              "estructura de informe comprobada" if structure else "documento sin estructura de informe"]
-    if structure and not info.strict:
-        n_pending, empty = pending_summary(current)
-        if n_pending or empty:
-            parts.append(f"borrador por completar ({n_pending} apartado(s) con {PENDING_MARK}"
-                         + (f", {len(empty)} sección(es) vacías" if empty else "") + ")")
     if info.strict:
         parts.append(f"revisión humana registrada de {human_reviewer(current)}")
     return True, (f"Sello válido ({data.get('fecha')}): " + "; ".join(parts) + f"; {data.get('avisos', 0)} aviso(s). "
