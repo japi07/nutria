@@ -1170,6 +1170,61 @@ def test_a_response_that_is_not_a_version_is_neither_cached_nor_recorded(proj, r
     assert sum("database/version" in c["url"] for c in router.calls) == 2
 
 
+def test_string_version_that_is_not_a_version_is_neither_cached_nor_recorded(proj, router, capsys):
+    # D7-15 y D3-16 (mutación R22 de la revisión): la versión de STRING se valida antes de guardarla en la caché; si no
+    # se guardó, la orden siguiente la vuelve a pedir y registra la buena.
+    router.add(r"version-12-0\.string-db\.org/api/json/version", (200, [{"string_version": "{}"}]))
+    router.add(r"version-12-0\.string-db\.org/api/json/network", (200, []))
+    code, out, _ = run(capsys, ["--json", "red", "PPARA", "CPT1A"])
+    data = json.loads(out)
+    assert code == 0 and not {"version", "version_no_reconocida", "version_consultada"} & set(data["fuente"])
+    assert any("STRING respondió sin una versión reconocible" in a for a in data["avisos"])
+    assert "version" not in events(proj, "red_string")[-1]["outputs"]["fuente"]
+    router.add(r"version-12-0\.string-db\.org/api/json/version", (200, [{"string_version": "12.0"}]))
+    code, out, _ = run(capsys, ["--json", "red", "PPARA", "CPT1A"])
+    assert code == 0 and json.loads(out)["fuente"]["version"] == "12.0"
+    assert sum("/json/version" in c["url"] for c in router.calls) == 2
+    assert events(proj, "red_string")[-1]["outputs"]["fuente"]["version"] == "12.0"
+
+
+def test_proteina_cli_checks_the_uniprot_release_header(proj, router, capsys):
+    # D7-15 (mutación R21 de la revisión): en `proteina`, la cabecera X-UniProt-Release se comprueba como las demás
+    # versiones: si no tiene la forma esperada, se avisa y no se registra (ni como versión ni en bruto).
+    router.add(r"rest\.uniprot\.org/uniprotkb/search", (200, {"results": []},
+                                                        {"X-UniProt-Release": "<html>error</html>",
+                                                         "X-UniProt-Release-Date": "15-Oct-2025"}))
+    code, out, _ = run(capsys, ["--json", "proteina", "gene:PPARA"])
+    data = json.loads(out)
+    assert code == 0 and data["fuente"] == {"nombre": "UniProtKB"}
+    assert any("UniProt (cabecera X-UniProt-Release) respondió sin una versión reconocible" in a for a in data["avisos"])
+    assert events(proj, "proteina")[-1]["outputs"]["fuente"] == {"nombre": "UniProtKB"}
+    router.add(r"rest\.uniprot\.org/uniprotkb/search", (200, {"results": []}, {"X-UniProt-Release": "2025_04",
+                                                                              "X-UniProt-Release-Date": "15-Oct-2025"}))
+    code, out, _ = run(capsys, ["--json", "proteina", "gene:CPT1A"])
+    assert code == 0 and json.loads(out)["fuente"] == {"nombre": "UniProtKB", "version": "2025_04",
+                                                       "fecha_publicacion": "15-Oct-2025"}
+
+
+def test_release_dates_and_addresses_are_checked_with_the_version():
+    # D7-15 (mutación R23 de la revisión): la fecha de publicación (ChEMBL, UniProt) y la dirección estable (STRING)
+    # solo se registran con una versión reconocida y si tienen la forma esperada.
+    good = chembl.parse_release({"chembl_db_version": "ChEMBL_35", "chembl_release_date": "2024-12-01"})
+    assert good == {"version": "ChEMBL_35", "fecha_publicacion": "2024-12-01"}
+    for date in ("<script>alert(1)</script>", "ayer", "", None, 20241201):
+        found = chembl.parse_release({"chembl_db_version": "ChEMBL_35", "chembl_release_date": date})
+        assert found == {"version": "ChEMBL_35"}, date
+    assert chembl.parse_release({"chembl_db_version": "<html>", "chembl_release_date": "2024-12-01"}) == {
+        "version_no_reconocida": "<html>"}
+    found = uniprot.parse_release({"X-UniProt-Release": "2025_04", "X-UniProt-Release-Date": "<script>x</script>"})
+    assert found == {"version": "2025_04"}
+    assert uniprot.parse_release({"X-UniProt-Release": "{}", "X-UniProt-Release-Date": "15-Oct-2025"}) == {
+        "version_no_reconocida": "{}"}
+    found = stringdb.parse_version([{"string_version": "12.0", "stable_address": "javascript:alert(1)"}])
+    assert found == {"version": "12.0"}
+    assert stringdb.parse_version([{"string_version": "{}", "stable_address": "https://version-12-0.string-db.org"}]) \
+        == {"version_no_reconocida": "{}"}
+
+
 def test_version_from_another_date_than_cached_results_is_flagged(proj, router, capsys):
     # La versión se pide aparte (TTL de 1 día): si los resultados salen de una copia de la caché de otra fecha, la
     # versión puede no ser la suya y se avisa.
@@ -1386,6 +1441,39 @@ def test_llm_cli_offline_omits_models(proj, router, capsys, monkeypatch):
     monkeypatch.setattr(requests, "post", post)
     code, out, _ = run(capsys, ["llm", "preguntar", "--rol", "critico", "--prompt", "hola"])
     assert code == cli.SALIDA_OK and "opinión" in out and sent == ["http://localhost:11434/v1/chat/completions"]
+
+
+def test_llm_evaluar_cli_has_the_same_exit_codes_as_preguntar(proj, router, capsys, monkeypatch):
+    # D9-16 y tabla de D10-8 (residuo de la ronda 2): `llm evaluar` sin ningún resultado (todos omitidos, p. ej. con
+    # --offline) o con algún modelo que falló sale con 1, como `llm preguntar`; los fallos se cuentan por modelo.
+    (proj / "config").mkdir(exist_ok=True)
+    (proj / "config" / "modelos.toml").write_text(MODELS, "utf-8")
+    bank = proj / "banco.jsonl"
+    bank.write_text(json.dumps({"id": "q1", "pregunta": "¿2+2?", "respuesta_esperada": "4", "tipo": "numerica"}) + "\n",
+                    "utf-8")
+    monkeypatch.setattr(requests, "post", lambda *a, **k: pytest.fail("petición en modo offline"))
+    code, out, _ = run(capsys, ["--offline", "--json", "llm", "evaluar", str(bank), "--rol", "critico"])
+    assert code == cli.SALIDA_RESULTADO and json.loads(out)["resultados"] == {} and not router.calls
+    sent = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        sent.append(url)
+        if "example.org" in url:
+            raise requests.exceptions.ConnectionError(f"sin conexión ({SECRET})")
+        resp = Resp(200, {"choices": [{"message": {"content": "4"}}]}, url=url)
+        resp.raise_for_status = lambda: None
+        resp.json = lambda: {"choices": [{"message": {"content": "4"}}]}
+        return resp
+
+    monkeypatch.setattr(requests, "post", post)
+    code, out, _ = run(capsys, ["--json", "llm", "evaluar", str(bank), "--modelo", "local1"])
+    data = json.loads(out)
+    assert code == cli.SALIDA_OK and data["resultados"]["local1"]["aciertos"] == 1 and "errores" not in data
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)                       # el modelo externo se consulta y falla
+    code, out, _ = run(capsys, ["--json", "llm", "evaluar", str(bank), "--rol", "critico"])
+    data = json.loads(out)
+    assert code == cli.SALIDA_RESULTADO and data["errores"] == {"externo": 1} and data["resultados"]["local1"]["total"] == 1
+    assert SECRET not in out and len(sent) == 3
 
 
 # ============================================================================ doctor (D7-14, D10-12, D9-16)
@@ -1619,6 +1707,19 @@ def test_errors_with_json_are_structured_and_codes_are_coherent(proj, router, ca
     assert run(capsys, ["oportunidad", "nueva", "--datos", "o.json"])[0] == 0
     got, out, err = run(capsys, ["--json", "oportunidad", "estado", "O-0001", "en_validacion", "--motivo", "x"])
     _assert_json_error(out, err, cli.SALIDA_REGISTRO, "registro")
+
+
+def test_json_errors_also_reach_stderr_as_text(proj, router, capsys):
+    # Regresión de la ronda 2 al fusionar con P5: con --json, el error sale como JSON por stdout (solo el objeto) Y
+    # en texto por stderr, donde lo buscan las personas y las pruebas escritas antes de la salida en JSON.
+    cases = [(["--json", "meta", "analizar", "noexiste.csv"], cli.SALIDA_ENTRADA, "Error: "),
+             (["--json", "oportunidad", "ver", "O-9999"], cli.SALIDA_REGISTRO, "Error de registro: "),
+             (["--json", "buscar", "pubmed", "x"], cli.SALIDA_RED, "Error de red: "),
+             (["--json", "buscar", "pubmed"], cli.SALIDA_ENTRADA, "error: ")]                   # argparse
+    for argv, code, prefix in cases:
+        got, out, err = run(capsys, argv)
+        payload = json.loads(out)
+        assert got == code == payload["codigo"] and prefix + payload["error"] in err, (argv, err)
 
 
 def test_a_missing_registry_identifier_has_the_same_code_in_every_order(proj, capsys):
@@ -2065,6 +2166,67 @@ def test_a_closed_pipe_has_its_own_code_and_no_traceback(tmp_path):
     assert proc.wait(timeout=60) == cli.SALIDA_TUBERIA == 141
     assert "Traceback" not in err and "Exception ignored" not in err and "BrokenPipe" not in err
     assert cli.CODIGOS_SALIDA[cli.SALIDA_TUBERIA][0] == "tuberia"
+
+
+def _nutria_into_a_closed_pipe(argv, cwd, unbuffered):
+    """`python -m nutria argv` con stdout conectada a una tubería cuyo lector ya la cerró antes de leer nada (como
+    `| true` cuando `true` termina primero), de forma determinista: (código, stderr)."""
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env["PYTHONPATH"] = str(ROOT / "src")
+    if unbuffered:
+        env["PYTHONUNBUFFERED"] = "1"
+    try:
+        proc = subprocess.run([sys.executable, "-m", "nutria", *argv], stdout=write_end, stderr=subprocess.PIPE,
+                              env=env, cwd=cwd, timeout=120)
+    finally:
+        os.close(write_end)
+    return proc.returncode, proc.stderr.decode("utf-8", "replace")
+
+
+@pytest.mark.parametrize("unbuffered", [False, True], ids=["con_bufer", "sin_bufer"])
+def test_a_reader_that_closes_before_reading_gets_a_code_from_the_table(proj, unbuffered):
+    # D10-8 (residuo de la ronda 2): quien lee cierra la tubería antes de leer nada. Una salida pequeña da 141 sin
+    # «Exception ignored ... BrokenPipeError» (antes, 120); un error, con --json o sin él, conserva su código y su
+    # texto por stderr, sin traza (antes, con --json: traza y código 1).
+    noise = ("Traceback", "Exception ignored", "BrokenPipe")
+    code, err = _nutria_into_a_closed_pipe(["procedencia", "--ultimas", "3"], proj, unbuffered)
+    assert code == cli.SALIDA_TUBERIA and not any(n in err for n in noise), err
+    code, err = _nutria_into_a_closed_pipe(["--json", "procedencia"], proj, unbuffered)
+    assert code == cli.SALIDA_TUBERIA and not any(n in err for n in noise), err
+    for argv in (["--json", "oportunidad", "ver", "O-9999"], ["oportunidad", "ver", "O-9999"]):
+        code, err = _nutria_into_a_closed_pipe(argv, proj, unbuffered)
+        assert code == cli.SALIDA_REGISTRO and "No existe O-9999" in err, (argv, err)
+        assert not any(n in err for n in noise), (argv, err)
+    code, err = _nutria_into_a_closed_pipe(["--json", "buscar", "pubmed"], proj, unbuffered)      # error de uso
+    assert code == cli.SALIDA_ENTRADA and "consulta" in err and not any(n in err for n in noise), err
+    # La ayuda: con búfer, 141; sin búfer, argparse descarta él mismo el error de escritura y sale con 0.
+    code, err = _nutria_into_a_closed_pipe(["--help"], proj, unbuffered)
+    assert code == (cli.SALIDA_OK if unbuffered else cli.SALIDA_TUBERIA) and not any(n in err for n in noise), err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="cierra descriptores con sh")
+def test_closed_standard_streams_do_not_mix_errors_into_the_json_output(proj):
+    # Con stderr cerrada desde el arranque (`2>&-`), el texto del error no acaba en stdout mezclado con el JSON
+    # (print(file=None) escribe en stdout); con stdout cerrada (`>&-`), sin traza y con el código de la orden.
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+
+    def nutria_with_closed(redirection, *argv):
+        return subprocess.run(["sh", "-c", f'exec "$@" {redirection}', "sh", sys.executable, "-m", "nutria", *argv],
+                              capture_output=True, env=env, cwd=proj, timeout=120)
+
+    proc = nutria_with_closed("2>&-", "--json", "oportunidad", "ver", "O-9999")
+    assert proc.returncode == cli.SALIDA_REGISTRO
+    assert json.loads(proc.stdout.decode("utf-8")) == {"error": "No existe O-9999", "codigo": 3, "tipo": "registro"}
+    proc = nutria_with_closed("2>&-", "--json", "buscar", "pubmed")
+    assert proc.returncode == cli.SALIDA_ENTRADA and json.loads(proc.stdout.decode("utf-8"))["tipo"] == "entrada"
+    for argv, expected in ((["procedencia"], cli.SALIDA_OK), (["oportunidad", "ver", "O-9999"], cli.SALIDA_REGISTRO),
+                           (["--json", "oportunidad", "ver", "O-9999"], cli.SALIDA_REGISTRO)):
+        proc = nutria_with_closed(">&-", *argv)
+        err = proc.stderr.decode("utf-8", "replace")
+        assert proc.returncode == expected and "Traceback" not in err, (argv, err)
+        assert expected == cli.SALIDA_OK or "No existe O-9999" in err
 
 
 def test_a_failing_chembl_strategy_does_not_hide_the_others(proj, router, capsys):

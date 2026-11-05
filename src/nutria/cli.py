@@ -2021,7 +2021,8 @@ CODIGOS_SALIDA = {
     SALIDA_INTERNO: ("interno", "error interno inesperado (fallo del programa; NUTRIA_DEPURAR=1 muestra la traza)"),
     SALIDA_INTERRUMPIDA: ("interrumpida", "orden interrumpida (Ctrl+C)"),
     SALIDA_TUBERIA: ("tuberia", "quien leía la salida la cerró antes de que terminara (p. ej. `| head`): la salida "
-                                "no llegó entera; no se imprime ningún error"),
+                                "no llegó entera; no se imprime ningún error (si la orden ya había fallado, el código "
+                                "es el de su error, con su texto por stderr)"),
 }
 
 
@@ -2100,17 +2101,24 @@ def _silenciar(stream) -> None:
 
 
 def _vaciar_stdout() -> bool:
-    """Vacía stdout; False (y stdout silenciada) si quien la leía ya la había cerrado (p. ej. `| head` o `| true`)."""
+    """Vacía stdout; False (y stdout silenciada) si quien la leía ya la había cerrado (p. ej. `| head` o `| true`).
+    Una stdout cerrada desde el arranque (`>&-`, sys.stdout None) no es una tubería rota: Python descarta lo impreso."""
+    if sys.stdout is None:
+        return True
     try:
         sys.stdout.flush()
     except BrokenPipeError:
         _silenciar(sys.stdout)
         return False
+    except (OSError, ValueError):   # flujo cerrado o inutilizable: nada que vaciar ni dónde informar
+        return True
     return True
 
 
 def _imprimir(stream, texto: str) -> bool:
     """Imprime una línea en `stream` y la vacía; False, sin traza, si quien la leía ya había cerrado la tubería."""
+    if stream is None:   # flujo cerrado al arrancar (p. ej. `2>&-`): print(file=None) escribiría en stdout
+        return False
     try:
         print(texto, file=stream, flush=True)
     except BrokenPipeError:
@@ -2161,6 +2169,9 @@ def _parse_args(parser, argv: list[str]):
         if not _vaciar_stdout() and exc.code in (0, None):
             raise SystemExit(SALIDA_TUBERIA) from None
         raise
+    except BrokenPipeError:   # la ayuda, sin búfer (PYTHONUNBUFFERED=1), a una tubería ya cerrada
+        _silenciar(sys.stdout)
+        raise SystemExit(SALIDA_TUBERIA) from None
 
 
 def _parse_args_json(parser, argv: list[str]):
@@ -2178,7 +2189,7 @@ def _parse_args_json(parser, argv: list[str]):
                                              ensure_ascii=False))
         raise
     finally:
-        if buffer.getvalue():
+        if buffer.getvalue() and sys.stderr is not None:
             try:
                 sys.stderr.write(buffer.getvalue())
                 sys.stderr.flush()
