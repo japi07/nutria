@@ -1749,13 +1749,15 @@ def cmd_puntuar(args, cfg) -> int:
     for o in registry.list_opportunities(conn):
         if o["status"] == "descartada":
             continue
-        # Cada evaluador cuenta por su identidad normalizada (`normalize_rater`): las puntuaciones registradas antes de
-        # normalizarla con variantes del mismo nombre (mayúsculas, espacios, guiones tipográficos, caracteres
-        # invisibles) son de un solo evaluador, y de cada criterio vale la última que registró.
+        # Cada evaluador cuenta por su identidad normalizada (`normalize_rater`, y comparada sin signos con `actor_key`,
+        # como las identidades de los extractores): las puntuaciones registradas antes de normalizarla con variantes
+        # del mismo nombre (mayúsculas, espacios, guiones o guiones bajos, caracteres invisibles) son de un solo
+        # evaluador, y de cada criterio vale la última que registró.
         por_evaluador: dict[tuple[str, str], dict] = {}
         for s in sorted(registry.list_scores(conn, o["id"]), key=lambda r: (r.get("created_at") or "", r["id"])):
             quien = registry.normalize_rater(s["rater"])
-            por_evaluador[(quien, s["criterion"])] = {"rater": quien, "criterion": s["criterion"], "value": s["value"],
+            clave = registry.actor_key(quien) or quien
+            por_evaluador[(clave, s["criterion"])] = {"rater": quien, "criterion": s["criterion"], "value": s["value"],
                                                       "low": s["low"], "high": s["high"]}
         scores = sorted(por_evaluador.values(), key=lambda r: (r["criterion"], r["rater"]))
         gates = registry.effective_gates(conn, o["id"], rubric.gate_ids)

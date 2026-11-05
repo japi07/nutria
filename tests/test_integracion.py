@@ -583,7 +583,7 @@ def test_coord_ranking_cuenta_evaluadores_normalizados_en_registros_antiguos(pro
     _oportunidad(project)
     conn = sqlite3.connect(load_config().db_path)
     try:
-        for n, rater in enumerate(("Evaluador-1", "evaluador-1 ", "evaluador-2")):
+        for n, rater in enumerate(("Evaluador-1", "evaluador-1 ", "evaluador_1", "evaluador-2")):
             conn.execute("INSERT INTO scores (opportunity_id, rater, criterion, value, low, high, created_at) "
                          "VALUES ('O-0001', ?, 'evidencia', ?, 0, 1, ?)", (rater, 0.25 * (n + 1), f"2026-01-0{n + 1}"))
         conn.commit()
