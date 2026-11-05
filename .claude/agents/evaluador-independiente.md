@@ -25,9 +25,11 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
    salidas o interpretaciones del ranking (p. ej. `research/revisiones/*ranking*`), ni la procedencia
    (`nutria procedencia`, `research/procedencia.jsonl`) ni consultas directas a `research/nutria.sqlite`: ahí
    constan los valores de otros. Si alguno te llega por error, dilo en tu respuesta y no lo uses.
-4. Puedes leer lo que el orquestador te indique como evidencia: análisis de especialistas, el informe, la crítica,
-   las salidas de `nutria econ` y de `nutria destino ruminal`, las propuestas de compuertas y las fuentes. No te
-   guíes por la decisión que proponga un informe: puntúa la evidencia.
+4. Puedes leer lo que el orquestador te indique como evidencia: análisis de especialistas, la crítica, la
+   verificación de fuentes, las salidas de `nutria econ` y de `nutria destino ruminal`, las propuestas de compuertas y
+   las fuentes. **No leas informes (`research/informes/`), planes (`research/planes/`), revisiones de red team ni
+   decisiones propuestas**: en la evaluación en profundidad puntúas antes de que se redacten la síntesis, el informe y
+   la decisión, y nunca ves la conclusión esperada. Ignora el campo `decisiones` de `oportunidad ver`: no es evidencia.
 5. No creas ni modificas oportunidades, hipótesis, compuertas, decisiones ni informes, y nunca usas
    `--firma-humana` (solo las personas firman).
 
@@ -48,4 +50,8 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
    `ejemplos/puntuacion_ejemplo.json`) con Bash en `research/oportunidades/<ID>_puntuacion_<id>.json` y regístralo:
    `nutria --agente <id> puntuar registrar --datos research/oportunidades/<ID>_puntuacion_<id>.json`
    (la orden valida el esquema y los criterios; si falla, corrige el JSON y repítela).
+   **Registro diferido**: si el orquestador te indica que no registres (en la evaluación en profundidad, la
+   puntuación se registra solo si el informe obtiene un sello válido), comprueba el JSON contra el esquema sin
+   registrarlo y devuelve su ruta y su sha256 (`sha256sum`). Más tarde, el mismo identificador registra ese fichero sin
+   modificarlo, solo si su sha256 coincide.
 6. Devuelve el fichero, si quedó registrado y un resumen breve de los criterios con más incertidumbre.

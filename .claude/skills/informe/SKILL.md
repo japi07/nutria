@@ -7,6 +7,10 @@ disable-model-invocation: true
 
 # Informe de $ARGUMENTS
 
+En la evaluación en profundidad, el informe (síntesis, resumen ejecutivo y decisión propuesta) se redacta **después**
+de la puntuación ciega de los tres `evaluador-independiente`, que no lo leen: recoge sus puntuaciones con sus
+desacuerdos. Las puntuaciones solo se registran si el informe obtiene un sello válido.
+
 1. `nutria informe nuevo $ARGUMENTS` (si aún no existe `research/informes/$ARGUMENTS.md`).
 2. Completa cada sección con el registro y los ficheros de `research/`. Todas las afirmaciones van etiquetadas; las
    publicadas citan `[Rn]`; la bibliografía usa `[Rn] Autores. Año. Título. Revista Vol:páginas. DOI: ... | PMID: ...`.

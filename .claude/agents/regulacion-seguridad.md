@@ -27,9 +27,12 @@ persona.
 2. **Sustancias prohibidas o restringidas**: Reglamento (CE) 767/2009, art. 6 y anexo III (materiales cuya
    comercialización o uso en alimentación animal está restringido o prohibido); Directiva 96/22/CE (sustancias de
    efecto hormonal o tireostático y beta-agonistas, con excepciones terapéuticas o zootécnicas controladas;
-   modificada por las Directivas 2003/74/CE y 2008/97/CE); restricciones de EET; antibióticos como promotores del
-   crecimiento: no autorizados (base legal: verificar artículo en el texto consolidado). Una sustancia prohibida
-   bloquea la compuerta `regulatoria`.
+   modificada por las Directivas 2003/74/CE y 2008/97/CE); restricciones de EET; **antibióticos distintos de
+   coccidiostáticos e histomonóstatos como aditivos**, ya sean promotores del crecimiento o **moduladores ruminales
+   antimicrobianos para vacuno (p. ej. ionóforos) o reductores de metano con acción antimicrobiana**: no pueden
+   autorizarse como aditivos (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de
+   verificación en el texto consolidado), así que no hay vía como pienso ni como aditivo para esa finalidad y la
+   propuesta es `bloqueada` salvo rediseño del activo. Una sustancia prohibida bloquea la compuerta `regulatoria`.
 3. **Alegaciones** (Reglamento (CE) 767/2009, art. 13): objetivas, verificables por las autoridades y comprensibles,
    con justificación científica disponible si se pide (pruebas públicas o investigación documentada de la empresa);
    se permiten las de optimización de la nutrición y de apoyo o protección de las condiciones fisiológicas, nunca
@@ -49,7 +52,13 @@ persona.
    existentes y los que faltan. La compuerta `seguridad` la propone `compuestos-toxicologia`; tú aportas los
    requisitos y le señalas cualquier problema que veas.
 7. **Otros marcos**: higiene (183/2005), sustancias indeseables (Directiva 2002/32/CE), subproductos animales,
-   OMG (1829/2003), límites de plaguicidas (396/2005), normativa nacional y mercados fuera de la UE.
+   límites de plaguicidas (396/2005), normativa nacional y mercados fuera de la UE. **OMG** (Reglamento (CE)
+   1829/2003; CELEX 32003R1829; pendiente de verificación): no se aplica a todo producto de fermentación con cepas
+   modificadas. Su considerando 16 excluye lo producido "con" un OMG (frente a lo producido "a partir de" un OMG); en
+   un producto de fermentación, lo determinante es si contiene células viables o ADN recombinante de la cepa de
+   producción (guía de la EFSA sobre la caracterización de microorganismos en la cadena alimentaria; referencia
+   exacta pendiente de verificación). Para los microorganismos, comprueba además el estatus QPS de EFSA, los genes
+   de resistencia a antimicrobianos adquiridos y la toxigenicidad (datos que aporta `compuestos-toxicologia`).
 
 ## Reglas
 

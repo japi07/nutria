@@ -1,6 +1,6 @@
 ---
 name: mision-1
-description: Primera misión exploratoria paso a paso con revisión humana entre fases. Construye el mapa de problemas, genera al menos 10 oportunidades, hace el triage con las seis compuertas y la puntuación ciega por evaluadores independientes, y redacta planes computacionales para las oportunidades que elija una persona.
+description: Primera misión exploratoria paso a paso con revisión humana entre fases. Construye el mapa de problemas, genera al menos 10 oportunidades (al menos 6 en rumiantes) sin duplicar las registradas, hace el triage con las seis compuertas y la puntuación ciega por evaluadores independientes de las no bloqueadas, y redacta planes computacionales, criticados con la lista de validación y con la compuerta ética repropuesta, para las oportunidades que elija una persona.
 argument-hint: "[foco opcional, p. ej. vacuno lechero en transición]"
 disable-model-invocation: true
 ---
@@ -14,16 +14,27 @@ otras especies.
 Esta misión es una **revisión de alcance con exploración de horizonte** (no una revisión sistemática). Su producto
 son oportunidades priorizadas e hipótesis falsables, no efectos demostrados.
 
-El workflow `mision-1-auto` (lánzalo por su nombre con la herramienta Workflow) ejecuta las mismas fases, una por invocación y con un punto de control humano entre
-ellas: `{"fase": "mapa"}` (por defecto) → `{"fase": "oportunidades", "problemas": [...aprobados por una persona...]}`
-→ `{"fase": "planes", "seleccion": ["O-xxxx", ...]}`. Cada entregable (mapa, ranking, planes) pasa por
-`verificador-citas` (`nutria verificar <md>`) antes de presentarse.
+El workflow `mision-1-auto` (no es una orden con `/`: lánzalo por su nombre con la herramienta Workflow) ejecuta las
+mismas fases, una por invocación y con un punto de control humano entre ellas: `{"fase": "mapa"}` (por defecto) →
+`{"fase": "oportunidades", "problemas": [...aprobados por una persona...]}` → `{"fase": "planes", "seleccion": ["O-xxxx", ...]}`.
+Cada fase empieza con el paso 0. Cada entregable (mapa, ranking, planes) pasa por `verificador-citas`
+(`nutria verificar <md>`) antes de presentarse, y la verificación solo cuenta como completa si lo dice la salida de
+`nutria`. Requiere Claude Code con la herramienta Workflow (comprobado con la versión 2.1.318 del binario nativo; el
+paquete npm `@anthropic-ai/claude-code` 2.1.42 no la incluye).
 
-## Paso 0. Preparación
+Topes del workflow (cada uno falla con un mensaje claro si se supera): como máximo 8 problemas aprobados
+(`"max_problemas"`, hasta 12); `"n_oportunidades"` (12 por defecto, como máximo 24) es a la vez el objetivo y el tope
+de oportunidades que se registran; como máximo 3 oportunidades por generador y 2 rondas extra.
+
+## Paso 0. Preparación (en cada fase)
 
 1. `nutria doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás.
-2. `nutria estado`. No dupliques oportunidades ya registradas.
-3. Lee `docs/PROMPT_MAESTRO_v2.md` §18 (primera misión).
+2. `nutria estado`. No dupliques oportunidades ya registradas: compara los títulos normalizados con los de
+   `lista_oportunidades` (el workflow no genera, comprueba ni registra de nuevo una oportunidad con el mismo título
+   normalizado, y sin el registro no continúa la fase "oportunidades").
+3. Fecha de la ejecución (`"fecha"` o la del sistema): va en los nombres de fichero, que no se pisan entre
+   ejecuciones.
+4. Lee `docs/PROMPT_MAESTRO_v2.md` §18 (primera misión).
 
 ## Paso 1 (M1a, fase "mapa"). Mapa de problemas
 
@@ -40,10 +51,10 @@ Lanza en paralelo, de forma independiente:
 Cada uno devuelve problemas con: especie y etapa, carga (incidencia o coste con fuente, o `[DESC]`), **soluciones
 actuales y su eficacia documentada**, brecha, mecanismos implicados y fuentes.
 
-`director-cientifico` consolida en `research/revisiones/M1a_mapa_problemas.md`: une duplicados, prioriza por carga ×
-necesidad no cubierta (justificado), conserva los desacuerdos y **conserva las soluciones actuales de cada problema**
-(los generadores las necesitan para no proponer lo que ya existe). `verificador-citas` ejecuta
-`nutria verificar research/revisiones/M1a_mapa_problemas.md`.
+`director-cientifico` consolida en `research/revisiones/M1a_mapa_problemas_<fecha>.md` (sin sobrescribir un mapa
+anterior): une duplicados, prioriza por carga × necesidad no cubierta (justificado), conserva los desacuerdos y
+**conserva las soluciones actuales de cada problema** (los generadores las necesitan para no proponer lo que ya
+existe). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1a_mapa_problemas_<fecha>.md`.
 
 **Punto de control humano**: presenta el mapa y su verificación; una persona aprueba la lista de problemas (o ajusta
 el foco) antes de continuar.
@@ -53,18 +64,22 @@ el foco) antes de continuar.
 - Genera con la skill `hipotesis` (conexiones entre disciplinas, descubrimiento basado en literatura ABC,
   contradicciones entre estudios, reposicionamiento desde otras especies o la nutrición humana, combinaciones con
   mecanismos complementarios). Reparte la generación entre `fisiologia-bioquimica`, `compuestos-toxicologia` y
-  `nutricion-formulacion`, y pasa a cada generador el problema aprobado con sus soluciones actuales.
+  `nutricion-formulacion`, y pasa a cada generador el problema aprobado con sus soluciones actuales. Cada hipótesis
+  sale completa del generador, con su efecto mínimo relevante y su criterio de falsación: nadie los completa después.
 - Requisitos: ≥ 10 oportunidades, ≥ 6 en rumiantes; cada una con problema, mecanismo, candidatos, tipo de producto,
-  evidencia resumida con etiquetas, lagunas e hipótesis falsables.
+  evidencia resumida con etiquetas, lagunas e hipótesis falsables. Si faltan oportunidades en rumiantes, genera más
+  (solo para los problemas de rumiantes y dentro del tope); si no es posible, avísalo.
 - **Novedad**: `investigador-bibliografico` (literatura) y `economia-mercado-pi` (productos y patentes) comprueban
-  cada una. Reformula o descarta lo que ya exista sin diferenciación, con motivo.
-- Registra: JSON en `research/oportunidades/` y `nutria --agente <agente> oportunidad nueva --datos <f>`; hipótesis
-  con `nutria hipotesis nueva`.
+  cada una. Si cualquiera de los dos la da por existente, se reformula o se descarta, con motivo; si falta una de las
+  dos comprobaciones, no se registra.
+- Registra cada oportunidad el agente que la generó: JSON en `research/oportunidades/M1_<fecha>_<título normalizado>.json`
+  (sin sobrescribir ficheros existentes) y `nutria --agente <generador> oportunidad nueva --datos <f>`; hipótesis
+  con `nutria hipotesis nueva` en `research/hipotesis/M1_<fecha>_<título normalizado>_H<n>.json`.
 
 ## Paso 3 (M1c, fase "oportunidades"). Triage, crítica y puntuación ciega
 
-Para cada oportunidad, en paralelo, cada especialista **propone** su compuerta y la registra sin `--firma-humana`
-(`nutria --agente <rol> puntuar compuerta <ID> <compuerta> <estado> --motivo "..."`):
+Para cada oportunidad, en paralelo, cada especialista **propone** la compuerta de la que es propietario y la registra
+sin `--firma-humana` (`nutria --agente <rol> puntuar compuerta <ID> <compuerta> <estado> --motivo "..."`):
 - `regulacion-seguridad`: clasificación y vía (skill `triage-regulatorio`) → `regulatoria`;
 - `compuestos-toxicologia`: seguridad → `seguridad`;
 - `fisiologia-bioquimica`: destino digestivo con `nutria destino ruminal` → `destino_digestivo`;
@@ -74,16 +89,19 @@ Para cada oportunidad, en paralelo, cada especialista **propone** su compuerta y
 - `sostenibilidad-bienestar`: impacto, bienestar y ética de la validación → `etica`;
 - `critico-red-team`: intento de refutación, sin ver puntuaciones.
 
-Una propuesta `bloqueada` actúa de inmediato; `superada` no cuenta hasta que la firme una persona.
+Una propuesta `bloqueada` actúa de inmediato; `superada` no cuenta hasta que la firme una persona. Después se leen las
+compuertas efectivas del registro (`nutria oportunidad ver <ID> --sin-puntuaciones --json`): **una oportunidad con
+alguna compuerta propuesta o efectiva `bloqueada` no se puntúa**; se informa como bloqueada con su motivo. Si no se
+pueden leer sus compuertas, tampoco se puntúa (falla en cerrado).
 
-Después, **tres `evaluador-independiente`** por oportunidad, con identificadores distintos (`evaluador-1`,
-`evaluador-2`, `evaluador-3`) y, si es posible, modelos distintos, cada uno sin ver las puntuaciones de los demás:
-puntúan los 9 criterios con la skill `puntuacion` y lo registran (`nutria --agente <id> puntuar registrar`).
+Las demás las puntúan **tres `evaluador-independiente`** por oportunidad, con identificadores distintos
+(`evaluador-1`, `evaluador-2`, `evaluador-3`) y, si es posible, modelos distintos, cada uno sin ver las puntuaciones de
+los demás: puntúan los 9 criterios con la skill `puntuacion` y lo registran (`nutria --agente <id> puntuar registrar`).
 
 Ranking (lo ejecuta el orquestador, no un evaluador): `nutria puntuar ranking --perfil recomendado --sim 5000` y
-`--perfil original`. Guarda ambas salidas e interprétalas en `research/revisiones/M1_ranking.md` (estados APTA,
+`--perfil original`. Guarda ambas salidas e interprétalas en `research/revisiones/M1_ranking_<fecha>.md` (estados APTA,
 CONDICIONAL, BLOQUEADA, INCOMPLETA, INSUFICIENTE; robustez frente a los pesos; desacuerdos; compuertas pendientes de
-firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ranking.md`.
+firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ranking_<fecha>.md`.
 
 ## Paso 4 (M1d, fase "planes"). Selección y planes
 
@@ -91,18 +109,24 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
    desacuerdos y compuertas pendientes.
 2. **Punto de control humano**: la selección la decide una persona, que la firma en su terminal
    (`nutria decision registrar --entidad <ID> --decision "seleccionada M1" --motivo "..." --firma-humana "<nombre>"`).
-3. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md`: pregunta PECO; protocolo
+3. Antes de cada plan, lee las compuertas efectivas del registro: si alguna está `bloqueada`, no se redacta el plan.
+4. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md`: pregunta PECO; protocolo
    de revisión sistemática (PRISMA 2020); datos a extraer; análisis estadísticos; modelos y simulaciones justificados
    por la decisión que informan; evaluación regulatoria y económica; criterios de descarte; plan de validación
    in vitro → ex vivo → in vivo (solo diseño) con la lista de validación del director; cronograma y responsables.
-4. `critico-red-team` revisa cada plan; `director-cientifico` incorpora las correcciones; `verificador-citas`
-   ejecuta `nutria verificar research/planes/<ID>.md`.
+5. `critico-red-team` revisa cada plan **con la misma lista de validación**, punto por punto (donantes o matadero,
+   Directiva 2010/63/UE, in situ como in vivo, guía FEEDAP, BPL, potencia, registro previo, notificación a EFSA,
+   duración de los ensayos frente a la adaptación de la microbiota); `director-cientifico` incorpora las correcciones.
+6. Con el diseño experimental ya escrito (F10), `sostenibilidad-bienestar` **vuelve a proponer la compuerta `etica`**
+   sobre ese diseño, y `verificador-citas` ejecuta `nutria verificar research/planes/<ID>.md`.
 
 ## Entregables
 
-- `research/revisiones/M1a_mapa_problemas.md` (verificado)
-- ≥ 10 oportunidades e hipótesis registradas, con las seis compuertas propuestas y puntuaciones de 3 evaluadores
-- `research/revisiones/M1_ranking.md` (verificado)
-- Planes en `research/planes/` para las oportunidades elegidas, revisados por el crítico y verificados
+- `research/revisiones/M1a_mapa_problemas_<fecha>.md` (verificado)
+- ≥ 10 oportunidades (≥ 6 en rumiantes) e hipótesis registradas, sin duplicar las existentes, con las seis compuertas
+  propuestas y puntuaciones de 3 evaluadores en las no bloqueadas
+- `research/revisiones/M1_ranking_<fecha>.md` (verificado)
+- Planes en `research/planes/` para las oportunidades elegidas, revisados por el crítico con la lista de validación,
+  con la compuerta ética repropuesta sobre su diseño y verificados
 - Resumen final: qué se encontró, qué se descartó y por qué, qué falta, qué agentes fallaron y qué decisiones
   humanas quedan pendientes (firmas de compuertas, selección, revisión de informes)

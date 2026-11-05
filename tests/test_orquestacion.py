@@ -171,7 +171,7 @@ def test_regulacion_seguridad_applies_verified_facts():  # D1-6, D5-1..D5-6, D5-
     for fragment in ("art. 4", "**alegación**", "**y también por función**", "farmacológica, inmunológica o metabólica",
                      "anexo I del Reglamento (CE) 1831/2003", "vitaminas, compuestos de oligoelementos, aminoácidos y urea",
                      "art. 6 y anexo III", "Directiva 96/22/CE", "2003/74/CE", "2008/97/CE", "restricciones de EET",
-                     "promotores del crecimiento", "verificar artículo", "art. 13", "art. 32a", "art. 32b",
+                     "promotores del crecimiento", "art. 11, apartado 2", "art. 13", "art. 32a", "art. 32b",
                      "10.2903/j.efsa.2024.8856", "2024/2899", "estabilizadores de las condiciones fisiológicas",
                      "otros aditivos tecnológicos", "puntuar compuerta <ID> regulatoria"):
         assert fragment in text, fragment
@@ -295,7 +295,7 @@ def test_triage_regulatorio_order_and_verified_facts():  # D1-6, D5-1..D5-6, D5-
                      "anexo I del Reglamento (CE) 1831/2003", "vitaminas, compuestos de oligoelementos, aminoácidos y urea",
                      "767/2009, art. 6 y anexo III", "semillas tratadas con fitosanitarios tras la cosecha",
                      "Directiva 96/22/CE", "2003/74/CE", "2008/97/CE", "restricciones de EET",
-                     "antibióticos como promotores del crecimiento", "verificar artículo", "2019/1381", "art. 32a",
+                     "antibióticos como promotores del crecimiento", "art. 11, apartado 2", "2019/1381", "art. 32a",
                      "art. 32b", "27-03-2021", "EFSA J 2024;22(7):e8856", "6-6-2024", "1-12-2024",
                      "10.2903/j.efsa.2018.5274", "2024/2899", "(Na + K) − (Cl + S)", "13.1", "13.2", "13.3.a",
                      "estabilizadores de las condiciones fisiológicas", "otros aditivos tecnológicos"):
@@ -347,8 +347,9 @@ def test_oportunidad_skill_starts_with_quick_discard():
 def test_mision1_skill_matches_workflow_phases():  # D2-6, D1-5, D1-9
     text = _norm(_skill("mision-1"))
     for fragment in ('{"fase": "mapa"}', '"fase": "oportunidades", "problemas"', '"fase": "planes", "seleccion"',
-                     "**conserva las soluciones actuales de cada problema**", "nutria verificar research/revisiones/M1a_mapa_problemas.md",
-                     "nutria verificar research/revisiones/M1_ranking.md", "nutria verificar research/planes/<ID>.md",
+                     "**conserva las soluciones actuales de cada problema**",
+                     "nutria verificar research/revisiones/M1a_mapa_problemas_<fecha>.md",
+                     "nutria verificar research/revisiones/M1_ranking_<fecha>.md", "nutria verificar research/planes/<ID>.md",
                      "**tres `evaluador-independiente`**", "9 criterios", "`destino_digestivo`"):
         assert fragment in text, fragment
     assert "8 criterios" not in text
@@ -356,7 +357,7 @@ def test_mision1_skill_matches_workflow_phases():  # D2-6, D1-5, D1-9
 
 def test_red_team_skill_quorum_and_cross_family():
     text = _norm(_skill("red-team"))
-    for fragment in ("`sin_quorum`", "`sostenida` solo con 2 o más `sostenida` y ninguna `refutada`",
+    for fragment in ("`sin_quorum`", "`sostenida` solo con 2 o más `sostenida`, ninguna `refutada` y el enfoque de fuentes en `sostenida`",
                      "nutria llm modelos --json", "nutria llm preguntar --rol critico --archivo <fichero>",
                      "sensibilidad por defecto es `confidencial`"):
         assert fragment in text, fragment
@@ -399,31 +400,40 @@ def test_workflow_logs_agent_estimate(nombre):  # D10-3
     assert out["resultado"]["fallos"]["total"] == 0
 
 
-def _opp(titulo):
-    return {"titulo": titulo, "problema": "P1", "especie": "vacuno lechero", "etapa": "transición", "mecanismo": "m",
-            "candidatos": ["c"], "tipo_producto": "aditivo", "evidencia_resumen": "e", "diferenciacion": "d",
-            "lagunas": ["l"], "hipotesis": ["h"]}
+def _opp(titulo, especie=None):
+    """Oportunidad generada (M1b) construida a partir de los ejemplos de ejemplos/*.json."""
+    base = _ejemplo("oportunidad_ejemplo")
+    hip = _ejemplo("hipotesis_ejemplo")
+    return {"titulo": titulo, "problema": "P1", "especie": especie or base["especie"], "etapa": base["etapa"],
+            "mecanismo": base["mecanismo"], "candidatos": base["candidatos"], "tipo_producto": base["tipo_producto"],
+            "evidencia_resumen": base["evidencia_resumen"], "diferenciacion": "d", "lagunas": base["lagunas"],
+            "hipotesis": [{"enunciado": hip["titulo"], "efecto_minimo_relevante": hip["efecto_minimo_relevante"],
+                           "criterio_falsacion": hip["criterio_falsacion"], "variables": hip["variables"]}]}
 
 
 @requires_node
-def test_mision1_default_phase_is_map_and_stops():  # D2-6, D1-5, D1-9
+def test_mision1_default_phase_is_map_and_stops():  # D2-6, D1-5, D1-9, D2-15
     reglas = [{"label": "M1a:consolidacion", "respuesta": {
         "prioritarios": [{"id": "P1", "titulo": "Lipidosis hepática", "especie": "vacuno lechero", "etapa": "transición",
                           "justificacion": "j", "mecanismos": ["movilización lipídica"], "soluciones_actuales": "SOLUCIONES-P1"}],
-        "archivo": "research/revisiones/M1a_mapa_problemas.md"}}]
-    out = run_workflow("mision-1-auto", None, reglas)
+        "archivo": "research/revisiones/M1a_mapa_problemas_2026-11-04.md"}}]
+    out = run_workflow("mision-1-auto", {"fecha": "2026-11-04"}, reglas)
     res = out["resultado"]
-    assert res["fase"] == "mapa"
-    assert out["fases"] == ["Mapa de problemas"]
-    assert labels(out)[-1] == "verificacion:M1a"
+    assert res["fase"] == "mapa" and res["fecha"] == "2026-11-04"
+    assert out["fases"] == ["Preparación", "Mapa de problemas"]
+    assert labels(out)[0] == "paso0" and labels(out)[-1] == "verificacion:M1a"
     assert not any(l.startswith(("M1b", "registro", "triage", "puntuacion", "ranking", "plan")) for l in labels(out))
     verificacion = call(out, "verificacion:M1a")
     assert verificacion["agentType"] == "verificador-citas"
-    assert "nutria --agente verificador-citas verificar research/revisiones/M1a_mapa_problemas.md" in verificacion["prompt"]
+    assert ("nutria --agente verificador-citas --json verificar research/revisiones/M1a_mapa_problemas_2026-11-04.md"
+            in verificacion["prompt"])
     consolidacion = call(out, "M1a:consolidacion")
+    assert "research/revisiones/M1a_mapa_problemas_2026-11-04.md" in consolidacion["prompt"]
     assert "soluciones_actuales" in consolidacion["schema"]["properties"]["prioritarios"]["items"]["required"]
     assert res["problemas"][0]["soluciones_actuales"] == "SOLUCIONES-P1"
-    assert '"fase": "oportunidades"' in res["siguiente"]
+    assert '"fase": "oportunidades"' in res["siguiente"] and "herramienta Workflow" in res["siguiente"]
+    # la verificación la decide la salida literal de nutria: la respuesta mínima del arnés no es interpretable
+    assert res["verificacion_citas"]["completa"] is False
 
 
 @requires_node
@@ -441,32 +451,48 @@ def test_mision1_phases_require_human_inputs(args, mensaje):  # D2-6
 
 
 @requires_node
-def test_mision1_opportunities_phase_runs_until_ranking():  # D2-6, D1-9, D5-10, D8-8, D2-1..D2-3, D1-5
+def test_mision1_opportunities_phase_runs_until_ranking(project, capsys):  # D2-6, D1-9, D5-10, D8-8, D2-1..D2-3, D1-5, D2-18
+    _registrar_oportunidades(project, capsys, 2)
     problemas = [{"id": "P1", "titulo": "Lipidosis hepática en el periodo de transición", "especie": "vacuno lechero",
                   "etapa": "transición", "mecanismos": ["movilización lipídica"], "soluciones_actuales": "SOLUCIONES-P1"}]
-    novedad = {"veredicto": "nueva", "literatura": "l", "patentes": "p", "productos": "x"}
+    novedad_lit = {"veredicto": "nueva", "literatura": "l"}
+    novedad_mer = {"veredicto": "nueva", "productos": "x", "patentes": "p"}
     reglas = [
+        _regla_paso0(project, capsys),
         {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B"), _opp("Oportunidad C")]}},
-        {"label": "M1b:novedad:P1.3", "respuesta": {**novedad, "veredicto": "existente"}},
-        {"labelPrefix": "M1b:novedad", "respuesta": novedad},
+        {"label": "M1b:novedad-mercado:P1.3", "respuesta": {**novedad_mer, "veredicto": "existente"}},
+        {"labelPrefix": "M1b:novedad-literatura", "respuesta": novedad_lit},
+        {"labelPrefix": "M1b:novedad-mercado", "respuesta": novedad_mer},
         {"label": "registro:1", "respuesta": {"id": "O-0001"}},
         {"label": "registro:2", "respuesta": {"id": "O-0002"}},
+        {"label": "compuertas-registro:M1c:O-0001", "respuesta": _ver(capsys, "O-0001")},
+        {"label": "compuertas-registro:M1c:O-0002", "respuesta": _ver(capsys, "O-0002")},
         {"label": "puntuacion:evaluador-3:O-0001", "respuesta": None},
         {"label": "ranking", "respuesta": {"top": [{"id": "O-0001", "titulo": "A", "motivo": "m"}],
-                                           "archivo": "research/revisiones/M1_ranking.md", "resumen": "r"}},
+                                           "archivo": "research/revisiones/M1_ranking_2026-11-04.md", "resumen": "r"}},
     ]
-    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": problemas, "n_oportunidades": 2}, reglas)
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": problemas, "n_oportunidades": 2,
+                                         "fecha": "2026-11-04"}, reglas)
     ls = labels(out)
+    assert ls[0] == "paso0"
     assert "SOLUCIONES-P1" in call(out, "M1b:gen:P1")["prompt"]
     assert not any(":r1" in l for l in ls), "no hacen falta rondas extra"
     assert not any(l.startswith(("M1a", "plan:", "critica-plan")) for l in ls)
+    for j in (1, 2, 3):  # novedad: literatura (investigador-bibliografico) y productos y patentes (economia-mercado-pi)
+        assert call(out, f"M1b:novedad-literatura:P1.{j}")["agentType"] == "investigador-bibliografico"
+        assert call(out, f"M1b:novedad-mercado:P1.{j}")["agentType"] == "economia-mercado-pi"
+    registro = call(out, "registro:1")
+    assert registro["agentType"] == "fisiologia-bioquimica"  # lo registra quien lo generó, no el director
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a.json" in registro["prompt"]
+    assert "nutria --agente fisiologia-bioquimica oportunidad nueva" in registro["prompt"]
     for opp_id in ("O-0001", "O-0002"):
         for agente, compuerta in COMPUERTA_DE.items():
             triage = call(out, f"triage:{compuerta}:{opp_id}")
             assert triage["agentType"] == agente
-            assert f"puntuar compuerta {opp_id} {compuerta}" in triage["prompt"]
+            assert f"nutria --agente {agente} puntuar compuerta {opp_id} {compuerta}" in triage["prompt"]
             assert "sin --firma-humana" in triage["prompt"]
         assert call(out, f"critica:{opp_id}")["agentType"] == "critico-red-team"
+        assert ls.index(f"compuertas-registro:M1c:{opp_id}") < ls.index(f"puntuacion:evaluador-1:{opp_id}")
     econ = call(out, "triage:propiedad_intelectual:O-0001")["prompt"]
     assert "nutria econ ganadero" in econ and "research/datos/O-0001/" in econ
     puntuaciones = [c for c in out["llamadas"] if c["label"].startswith("puntuacion:")]
@@ -480,10 +506,10 @@ def test_mision1_opportunities_phase_runs_until_ranking():  # D2-6, D1-9, D5-10,
     assert ls.index("ranking") < ls.index("verificacion:ranking")
     verificacion = call(out, "verificacion:ranking")
     assert verificacion["agentType"] == "verificador-citas"
-    assert "verificar research/revisiones/M1_ranking.md" in verificacion["prompt"]
+    assert "verificar research/revisiones/M1_ranking_2026-11-04.md" in verificacion["prompt"]
     res = out["resultado"]
     assert [o["id"] for o in res["oportunidades"]] == ["O-0001", "O-0002"]
-    assert res["no_registradas"] == [{"titulo": "Oportunidad C", "motivo": "existente sin diferenciación"}]
+    assert res["no_registradas"] == [{"titulo": "Oportunidad C", "motivo": "existente sin diferenciación", "reformulacion": None}]
     assert res["fallos"]["total"] == 1 and res["fallos"]["detalle"][0]["agente"] == "puntuacion:evaluador-3:O-0001"
     ev3 = next(e for e in res["oportunidades"][0]["evaluadores"] if e["id"] == "evaluador-3")
     assert ev3 == {"id": "evaluador-3", "modelo": "opus", "reintento": True, "registrado": True}
@@ -491,8 +517,8 @@ def test_mision1_opportunities_phase_runs_until_ranking():  # D2-6, D1-9, D5-10,
 
 
 @requires_node
-def test_mision1_extra_rounds_respect_budget():  # D10-3
-    reglas = [{"labelPrefix": "M1b:gen", "respuesta": {"oportunidades": []}}]
+def test_mision1_extra_rounds_respect_budget(project, capsys):  # D10-3
+    reglas = [_regla_paso0(project, capsys), {"labelPrefix": "M1b:gen", "respuesta": {"oportunidades": []}}]
     args = {"fase": "oportunidades", "problemas": ["Problema sin oportunidades"]}
     sin_limite = run_workflow("mision-1-auto", args, reglas)
     assert [l for l in labels(sin_limite) if l.startswith("M1b:gen")] == ["M1b:gen:P1", "M1b:gen:P1:r1", "M1b:gen:P1:r2"]
@@ -502,56 +528,69 @@ def test_mision1_extra_rounds_respect_budget():  # D10-3
 
 
 @requires_node
-def test_mision1_plans_phase_includes_validation_checklist_and_citation_check():  # D2-6, D1-12, D1-5
+def test_mision1_plans_phase_includes_validation_checklist_and_citation_check(project, capsys):  # D2-6, D1-12, D1-5
+    _registrar_oportunidades(project, capsys, 7)
     reglas = []
     for opp_id in ("O-0003", "O-0007"):
         plan = {"archivo": f"research/planes/{opp_id}.md", "resumen": "r", "seleccion_firmada": True}
-        reglas += [{"label": f"plan:{opp_id}", "respuesta": plan}, {"label": f"revision-plan:{opp_id}", "respuesta": plan}]
+        reglas += [{"label": f"plan:{opp_id}", "respuesta": plan}, {"label": f"revision-plan:{opp_id}", "respuesta": plan},
+                   {"label": f"compuertas-registro:planes:{opp_id}", "respuesta": _ver(capsys, opp_id)}]
     reglas.append({"label": "critica-plan:O-0007", "respuesta": None})
     out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0003", "O-0007", "O-0003"]}, reglas)
     ls = labels(out)
     assert not any(l.startswith(("M1a", "M1b", "registro", "triage", "puntuacion", "ranking")) for l in ls)
     assert [l for l in ls if l.startswith("plan:")] == ["plan:O-0003", "plan:O-0007"]
-    prompt = _norm(call(out, "plan:O-0003")["prompt"])
-    for fragment in ("donantes con procedimiento autorizado o de matadero", "Directiva 2010/63/UE", "Real Decreto 53/2013",
-                     "la técnica in situ es in vivo", "EFSA J 2024;22(7):e8856", "BPL", "varianzas reales",
-                     "registro previo del protocolo", "Reglamento (UE) 2019/1381, art. 32b", "--sin-puntuaciones"):
-        assert fragment in prompt, fragment
+    for c in ("plan:O-0003", "critica-plan:O-0003"):  # el crítico recibe la misma lista de validación (D1-12)
+        prompt = _norm(call(out, c)["prompt"])
+        for fragment in FRAGMENTOS_VALIDACION:
+            assert fragment in prompt, (c, fragment)
+    assert "--sin-puntuaciones" in call(out, "plan:O-0003")["prompt"]
+    assert ls.index("compuertas-registro:planes:O-0003") < ls.index("plan:O-0003")
+    assert ls.index("revision-plan:O-0003") < ls.index("etica-plan:O-0003")
     assert ls.index("revision-plan:O-0003") < ls.index("verificacion:plan:O-0003")
+    etica = call(out, "etica-plan:O-0003")
+    assert etica["agentType"] == "sostenibilidad-bienestar"
+    assert "nutria --agente sostenibilidad-bienestar puntuar compuerta O-0003 etica" in etica["prompt"]
+    assert "sin --firma-humana" in etica["prompt"]
     assert "verificar research/planes/O-0003.md" in call(out, "verificacion:plan:O-0003")["prompt"]
-    # sin crítica no hay revisión, pero el plan se verifica igualmente y el fallo se informa
-    assert "revision-plan:O-0007" not in ls and "verificacion:plan:O-0007" in ls
+    # sin crítica no hay revisión, pero el plan se verifica y su ética se repropone igualmente; el fallo se informa
+    assert "revision-plan:O-0007" not in ls and "verificacion:plan:O-0007" in ls and "etica-plan:O-0007" in ls
     res = out["resultado"]
     assert [p["critica"] for p in res["planes"]] == ["sostenida", "sin crítica (fallo de agente)"]
+    assert res["planes"][0]["etica"]["estado"] == "superada"
     assert res["fallos"]["total"] == 1
 
 
 @requires_node
 @pytest.mark.parametrize("analisis,agente", [("destino_digestivo", "fisiologia-bioquimica"),
                                              ("modelo_ganadero", "economia-mercado-pi")])
-def test_evaluar_stops_when_quick_discard_proposes_blocked(analisis, agente):  # D1-7
-    reglas = [{"label": f"descarte:{analisis}", "respuesta": {"analisis": analisis, "estado": "bloqueada",
+def test_evaluar_stops_when_quick_discard_proposes_blocked(analisis, agente, project, capsys):  # D1-7
+    reglas = [_regla_registro(project, capsys, "O-0003"),
+              {"label": f"descarte:{analisis}", "respuesta": {"analisis": analisis, "estado": "bloqueada",
                                                              "motivo": "MOTIVO-BLOQUEO", "resumen": "r"}}]
     out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
     assert {c["label"]: c["agentType"] for c in out["llamadas"]} == {
+        "compuertas-registro:inicio": None,
         "descarte:regulatoria": "regulacion-seguridad", "descarte:seguridad": "compuestos-toxicologia",
         "descarte:destino_digestivo": "fisiologia-bioquimica", "descarte:modelo_ganadero": "economia-mercado-pi"}
-    assert out["fases"] == ["Descarte rápido"]
+    assert out["fases"] == ["Compuertas del registro", "Descarte rápido"]
     res = out["resultado"]
     assert res["detenida_en"] == "Descarte rápido"
-    assert res["bloqueos"] == [{"analisis": analisis, "agente": agente, "motivo": "MOTIVO-BLOQUEO", "archivo": None}]
+    assert res["bloqueos"] == [{"analisis": analisis, "agente": agente, "motivo": "MOTIVO-BLOQUEO",
+                                "archivo": f"research/revisiones/O-0003_descarte_{analisis}.md"}]
     assert "nutria destino ruminal" in call(out, "descarte:destino_digestivo")["prompt"]
     assert "nutria econ ganadero research/datos/O-0003/econ_ganadero.toml" in call(out, "descarte:modelo_ganadero")["prompt"]
-    assert "puntuar compuerta O-0003 regulatoria" in call(out, "descarte:regulatoria")["prompt"]
+    assert "nutria --agente regulacion-seguridad puntuar compuerta O-0003 regulatoria" in call(out, "descarte:regulatoria")["prompt"]
 
 
 @requires_node
-def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring():  # D2-7, D2-8, D2-12, D9-11, D2-2, D2-3, D3-3
+def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring(project, capsys):  # D2-7, D2-8, D2-12, D9-11, D2-2, D2-3, D3-3
     estudios = [{"fuente": f"doi:10.1000/e{i}", "especie": "vacuno lechero", "tipo_estudio": "ensayo controlado",
                  "datos_cuantitativos": True, "comparable": True} for i in range(1, 5)]
     estudios.append({"fuente": "pmid:123", "especie": "rata", "tipo_estudio": "in vivo", "datos_cuantitativos": True,
                      "comparable": False})
     reglas = [
+        _regla_registro(project, capsys, "O-0003"),
         {"label": "plan:O-0003", "respuesta": {"peco": "PECO", "variables": ["leche_kg_d"], "preguntas": [
             {"agente": "investigador-bibliografico", "pregunta": "novedad", "entregable": "e"},
             {"agente": "estadistico", "pregunta": "potencia", "entregable": "e"},
@@ -561,11 +600,14 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring():  # D2-7, 
         {"labelPrefix": "conciliacion:", "respuesta": {"discrepancias": 0, "registrada": True,
                                                        "estado_verificacion": "doble_concordante"}},
         {"label": "puntuacion:evaluador-2", "lanzar": "error terminal simulado"},
+        *_reglas_puntuacion_emitida(project, capsys, "O-0003"),
         {"label": "informe:O-0003", "respuesta": {"archivo": "research/informes/O-0003.md", "decision_propuesta": "continuar"}},
+        {"label": "sello:O-0003", "respuesta": SELLO_VALIDO},
     ]
     out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003"}, reglas)
     ls = labels(out)
-    assert out["fases"] == ["Descarte rápido", "Plan", "Evidencia", "Especialistas", "Síntesis e informe", "Puntuación"]
+    assert out["fases"] == ["Compuertas del registro", "Descarte rápido", "Plan", "Evidencia", "Especialistas", "Puntuación",
+                            "Síntesis e informe", "Sello y registro"]
     for i in range(1, 5):
         assert f"extraccion:A:doi:10.1000/e{i}" in ls and f"extraccion:B:doi:10.1000/e{i}" in ls
     assert not any("pmid:123" in l for l in ls)
@@ -584,7 +626,7 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring():  # D2-7, 
         "investigador-bibliografico", "estadistico", "nutricion-formulacion", "desarrollo-industrial",
         "economia-mercado-pi", "sostenibilidad-bienestar"}
     industrial = next(c for c in especialistas if c["agentType"] == "desarrollo-industrial")
-    assert "puntuar compuerta O-0003 analitica" in industrial["prompt"]
+    assert "nutria --agente desarrollo-industrial puntuar compuerta O-0003 analitica" in industrial["prompt"]
     verificacion = call(out, "verificacion-informe:O-0003")
     assert verificacion["agentType"] == "verificador-citas"
     assert "| Ref | Afirmación | Respaldo | Motivo |" in verificacion["prompt"]
@@ -596,21 +638,26 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring():  # D2-7, 
         "puntuacion:evaluador-2:reintento": "opus"}
     for c in puntuaciones:
         assert "--sin-puntuaciones --json" in c["prompt"] and "No ejecutes nutria puntuar ranking" in c["prompt"]
+    # quien genera no evalúa: los evaluadores puntúan antes de la síntesis y del informe
+    assert max(ls.index(c["label"]) for c in puntuaciones) < ls.index("informe:O-0003")
     res = out["resultado"]
     assert res["fallos"]["total"] == 2
     assert {f["agente"] for f in res["fallos"]["detalle"]} == {"extraccion:B:doi:10.1000/e4", "puntuacion:evaluador-2"}
     assert res["evidencia"]["doble_extraccion_registrada"] == 3
     assert [s["fuente"] for s in res["evidencia"]["sin_registrar"]] == ["doi:10.1000/e4"]
     assert next(e for e in res["evaluadores"] if e["id"] == "evaluador-2") == {
-        "id": "evaluador-2", "modelo": "opus", "reintento": True, "registrado": True, "fallo": None}
-    assert res["evaluadores_registrados"] == 3
+        "id": "evaluador-2", "modelo": "opus", "reintento": True, "emitida": True, "registrado": True, "fallo": None,
+        "alerta": None}
+    assert res["evaluadores_registrados"] == 3 and res["puntuaciones_pendientes"] == []
+    assert res["informe"]["sello_valido"] is True
 
 
 @requires_node
-def test_evaluar_skips_meta_analysis_and_logs_study_limit():
+def test_evaluar_skips_meta_analysis_and_logs_study_limit(project, capsys):
     estudios = [{"fuente": f"doi:10.1000/e{i}", "especie": "vacuno lechero", "tipo_estudio": "ensayo controlado",
                  "datos_cuantitativos": True, "comparable": True} for i in range(1, 5)]
-    reglas = [{"label": "bibliografia:O-0003", "respuesta": {"archivo": "a.md", "estudios": estudios}}]
+    reglas = [_regla_registro(project, capsys, "O-0003"),
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "a.md", "estudios": estudios}}]
     out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "max_estudios": 2}, reglas)
     assert len([l for l in labels(out) if l.startswith("extraccion:A:")]) == 2
     assert "metaanalisis:O-0003" not in labels(out)
@@ -620,9 +667,9 @@ def test_evaluar_skips_meta_analysis_and_logs_study_limit():
 
 
 @requires_node
-def test_evaluar_retry_skipped_when_budget_is_low():  # D10-3
-    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [{"label": "puntuacion:evaluador-3", "respuesta": None}],
-                       presupuesto_total=1000, coste_por_agente=1)
+def test_evaluar_retry_skipped_when_budget_is_low(project, capsys):  # D10-3
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "puntuacion:evaluador-3", "respuesta": None}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas, presupuesto_total=1000, coste_por_agente=1)
     assert not any(l.endswith(":reintento") for l in labels(out))
     ev3 = next(e for e in out["resultado"]["evaluadores"] if e["id"] == "evaluador-3")
     assert ev3["registrado"] is False and "presupuesto" in ev3["fallo"]
@@ -639,12 +686,12 @@ CASOS_AGREGACION = {  # afirmación: ((fuentes, biologia, viabilidad), resultado
     "A1": (("sostenida", "sostenida", "sostenida"), "sostenida"),
     "A2": (("refutada", "refutada", "sostenida"), "refutada"),
     "A3": (("no_verificable", "no_verificable", "sostenida"), "no_verificable"),
-    "A4": (("refutada", "sostenida", "sostenida"), "debilitada"),
+    "A4": (("refutada", "sostenida", "sostenida"), "refutada"),        # D2-10: "fuentes" refutada decide
     "A5": (("debilitada", "sostenida", "sostenida"), "debilitada"),
     "A6": (("sostenida", "no_verificable", None), "no_verificable"),
     "A7": (("sostenida", None, None), "sin_quorum"),
     "A8": (("sostenida", "sostenida", None), "sostenida"),
-    "A9": (("refutada", "no_verificable", "no_verificable"), "no_verificable"),
+    "A9": (("refutada", "no_verificable", "no_verificable"), "refutada"),  # D2-10: la fuente no existe o no dice eso
     "A10": (("refutada", "refutada", "no_verificable"), "refutada"),
     "A11": ((None, None, None), "sin_quorum"),
 }
@@ -661,7 +708,7 @@ def test_red_team_aggregation_with_quorum():  # D2-9, D2-10, D9-11
     res = out["resultado"]
     assert {r["id"]: r["resultado"] for r in res["resultados"]} == {k: v for k, (_, v) in CASOS_AGREGACION.items()}
     assert res["sin_quorum"] == ["A7", "A11"]
-    assert res["refutadas"] == 2
+    assert res["refutadas"] == 4
     assert res["fallos"]["total"] == sum(v is None for votos, _ in CASOS_AGREGACION.values() for v in votos)
     refutador = call(out, "A1:fuentes")
     assert refutador["schema"]["properties"]["veredicto"]["enum"] == ["sostenida", "debilitada", "refutada", "no_verificable"]

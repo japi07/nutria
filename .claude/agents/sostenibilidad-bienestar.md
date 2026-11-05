@@ -31,3 +31,8 @@ Propón su estado y regístralo como propuesta, sin `--firma-humana`:
 `nutria --agente sostenibilidad-bienestar puntuar compuerta <ID> etica <superada|no_resuelta|bloqueada> --motivo "..."`.
 `bloqueada` (la validación exige procedimientos no autorizables o el producto compromete el bienestar animal) actúa
 de inmediato; `superada` no cuenta hasta que la firme una persona.
+
+La propones dos veces: en el triage, con la validación prevista, y **otra vez cuando exista el diseño experimental del
+plan** (`research/planes/<ID>.md`, F10), sobre ese diseño concreto: origen del líquido ruminal (donantes con
+procedimiento autorizado o matadero), procedimientos con animales y su autorización (la técnica in situ es in vivo),
+3R, alternativas sin animales y bienestar. Una propuesta del triage no sustituye a la revisión del diseño.

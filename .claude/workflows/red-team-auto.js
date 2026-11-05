@@ -1,12 +1,12 @@
 export const meta = {
   name: 'red-team-auto',
-  description: 'Revisión adversarial de un documento: extrae las afirmaciones clave, somete cada una a tres refutadores con enfoques distintos (fuentes, biología, viabilidad) y agrega los veredictos (sostenida, debilitada, refutada, no_verificable) con quórum; segunda opinión opcional de otra familia de modelos según la política de datos',
-  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial"} (por defecto "confidencial"; "normal" solo para información no confidencial). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
+  description: 'Revisión adversarial de un documento: el crítico (que no escribió el documento) extrae las afirmaciones clave, cada una se somete a tres refutadores con enfoques distintos (fuentes, biología, viabilidad) y los veredictos se agregan con quórum y la regla de fuentes (sin fuentes comprobadas nunca sale sostenida); segunda opinión opcional de otra familia de modelos según la política de datos',
+  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial", "max_afirmaciones": 15} (sensibilidad por defecto "confidencial"; "normal" solo para información no confidencial; como máximo 30 afirmaciones). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
   phases: [
-    { title: 'Afirmaciones', detail: 'extracción de las afirmaciones que sostienen la conclusión' },
-    { title: 'Refutación', detail: '3 enfoques independientes por afirmación y agregación con quórum' },
+    { title: 'Afirmaciones', detail: 'extracción de las afirmaciones que sostienen la conclusión por el crítico, con tope' },
+    { title: 'Refutación', detail: '3 enfoques independientes por afirmación y agregación con quórum y regla de fuentes' },
     { title: 'Otra familia', detail: 'segunda opinión opcional con nutria llm (solo modelos que admita la política de datos)' },
-    { title: 'Consolidación', detail: 'tabla de veredictos y acciones' },
+    { title: 'Consolidación', detail: 'tabla de veredictos y acciones propuestas, escrita por el crítico' },
   ],
 }
 
@@ -29,6 +29,22 @@ const SENSIBILIDAD = A.sensibilidad === undefined || A.sensibilidad === null || 
 if (!SENSIBILIDADES.includes(SENSIBILIDAD)) {
   return { error: `Sensibilidad no válida: "${SENSIBILIDAD}". Opciones: confidencial (por defecto) o normal (solo para información no confidencial).` }
 }
+const TOPE_AFIRMACIONES = 30
+const MAX_AFIRMACIONES = A.max_afirmaciones === undefined || A.max_afirmaciones === null ? 15 : A.max_afirmaciones
+if (!Number.isInteger(MAX_AFIRMACIONES) || MAX_AFIRMACIONES < 1 || MAX_AFIRMACIONES > TOPE_AFIRMACIONES) {
+  return { error: `"max_afirmaciones" debe ser un entero entre 1 y ${TOPE_AFIRMACIONES} (recibido: ${JSON.stringify(A.max_afirmaciones)})` }
+}
+
+// Fichero de salida: incluye el directorio de origen, para que revisar research/planes/O-0001.md y
+// research/informes/O-0001.md no escriba en el mismo fichero (planes_O-0001_redteam.md frente a informes_O-0001_redteam.md).
+const rutaRedTeam = (archivo) => {
+  const segs = String(archivo).replace(/\\/g, '/').split('/').filter((s) => s && s !== '.')
+  const k = segs.lastIndexOf('research')
+  const partes = (k >= 0 ? segs.slice(k + 1) : segs).map((s) => (s === '..' ? 'arriba' : s))
+  const nombre = partes.join('_').replace(/\.[A-Za-z0-9]+$/, '').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '') || 'documento'
+  return `research/revisiones/${nombre}_redteam.md`
+}
+const DESTINO = rutaRedTeam(ARCHIVO)
 
 // ---------------------------------------------------------------- fallos y presupuesto
 // Los fallos de agentes se cuentan y se informan; nunca se descartan en silencio.
@@ -60,7 +76,7 @@ const STR = { type: 'string' }
 const STRS = { type: 'array', items: { type: 'string' } }
 const VEREDICTOS = ['sostenida', 'debilitada', 'refutada', 'no_verificable']
 
-const AFIRMACIONES = S({ afirmaciones: { type: 'array', items: S({ id: STR, texto: STR, importancia: STR }, ['id', 'texto']) } }, ['afirmaciones'])
+const AFIRMACIONES = S({ afirmaciones: { type: 'array', maxItems: MAX_AFIRMACIONES, items: S({ id: STR, texto: STR, importancia: STR }, ['id', 'texto']) } }, ['afirmaciones'])
 const VEREDICTO = S({ veredicto: { type: 'string', enum: VEREDICTOS }, motivo: STR, fuentes: STRS, accion: STR }, ['veredicto', 'motivo'])
 const OTRA_FAMILIA = S({
   ejecutado: { type: 'boolean' },
@@ -70,35 +86,61 @@ const OTRA_FAMILIA = S({
 }, ['ejecutado', 'motivo'])
 
 const ENFOQUES = [
-  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria verificar --doi/--pmid con --cita y lee los resúmenes', tipo: 'verificador-citas' },
-  { id: 'biologia', texto: '¿es biológicamente sostenible en la especie diana (destino digestivo, concentraciones alcanzables, explicaciones alternativas, diseño de los estudios)?', tipo: 'critico-red-team' },
+  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria verificar --doi/--pmid con --cita y lee los resúmenes. Si no puedes acceder a la fuente o comprobar que dice eso (p. ej. sin red), el veredicto es "no_verificable"', tipo: 'verificador-citas' },
+  { id: 'biologia', texto: '¿es biológicamente sostenible en la especie diana (destino digestivo, concentraciones alcanzables, adaptación de la microbiota ruminal, explicaciones alternativas, diseño de los estudios)?', tipo: 'critico-red-team' },
   { id: 'viabilidad', texto: '¿resiste un examen regulatorio, de seguridad, industrial y económico?', tipo: 'critico-red-team' },
 ]
 
-// Quórum: al menos 2 veredictos válidos. Reglas, en este orden: refutada con 2 o más "refutada";
-// no_verificable con 2 o más "no_verificable"; debilitada si hay alguna "refutada" o "debilitada";
-// sostenida solo con 2 o más "sostenida" y ninguna "refutada". El resto (p. ej. una "sostenida" y una
-// "no_verificable") queda no_verificable: "sostenida" exige dos votos.
+// Agregación con quórum (al menos 2 veredictos válidos; si no, "sin_quorum") y regla de fuentes: el enfoque
+// "fuentes" (verificador-citas) es el único que comprueba las fuentes. Reglas, en este orden:
+// 1. refutada si "fuentes" da "refutada" (la fuente no existe, no dice eso o la contradice) o si hay 2 o más "refutada";
+// 2. no_verificable con 2 o más "no_verificable";
+// 3. debilitada si hay alguna "refutada" o "debilitada";
+// 4. sostenida solo si "fuentes" da "sostenida", hay 2 o más "sostenida" y ninguna "refutada";
+// 5. en cualquier otro caso, no_verificable. Así, si "fuentes" da "no_verificable" o no da resultado, la afirmación
+//    nunca sale "sostenida" (como mucho "debilitada" o "no_verificable"), aunque los otros dos enfoques la sostengan.
 const QUORUM = 2
 const agregar = (validos) => {
   if (validos.length < QUORUM) return 'sin_quorum'
   const n = (v) => validos.filter((x) => x.veredicto === v).length
-  if (n('refutada') >= 2) return 'refutada'
+  const deFuentes = validos.find((x) => x.enfoque === 'fuentes')
+  const fuentes = deFuentes ? deFuentes.veredicto : null
+  if (fuentes === 'refutada' || n('refutada') >= 2) return 'refutada'
   if (n('no_verificable') >= 2) return 'no_verificable'
   if (n('refutada') >= 1 || n('debilitada') >= 1) return 'debilitada'
-  if (n('sostenida') >= 2) return 'sostenida'
+  if (fuentes === 'sostenida' && n('sostenida') >= 2) return 'sostenida'
   return 'no_verificable'
 }
 
 // ---------------------------------------------------------------- afirmaciones
 phase('Afirmaciones')
-log(`Estimación: 1 agente de extracción; después 3 por afirmación (5-15 afirmaciones), 1 de segunda opinión opcional y 1 de consolidación`)
+const MAXIMO = 1 + MAX_AFIRMACIONES * ENFOQUES.length + 2
+log(`Estimación: 1 agente de extracción; después 3 por afirmación (como máximo ${MAX_AFIRMACIONES} afirmaciones: hasta ${MAX_AFIRMACIONES * ENFOQUES.length}), ` +
+  `1 de segunda opinión opcional y 1 de consolidación: como máximo ${MAXIMO} agentes` +
+  (typeof budget !== 'undefined' && budget && budget.total ? `. Presupuesto restante: ${Math.round(budget.remaining())} tokens` : ''))
+// Las afirmaciones las extrae el crítico, que no escribió el documento (nunca su autor, p. ej. el director en un informe o plan suyo).
 const extraidas = await lanzar(
-  `Lee ${ARCHIVO} e identifica las 5-15 afirmaciones que sostienen su conclusión (las que, si fueran falsas, cambiarían la decisión). Cópialas literalmente con un id A1..An.`,
-  { label: 'extraccion', phase: 'Afirmaciones', agentType: 'director-cientifico', schema: AFIRMACIONES },
+  `Lee ${ARCHIVO} e identifica las afirmaciones que sostienen su conclusión (las que, si fueran falsas, cambiarían la decisión): entre 5 y ${MAX_AFIRMACIONES}, ` +
+  'ordenadas de la más decisiva a la menos. Cópialas literalmente con un id A1..An. No escribiste este documento: no lo corrijas ni lo defiendas. ' +
+  'Solo lectura: no modifiques ningún fichero.',
+  { label: 'extraccion', phase: 'Afirmaciones', agentType: 'critico-red-team', schema: AFIRMACIONES },
 )
-const afirmaciones = extraidas && Array.isArray(extraidas.afirmaciones) ? extraidas.afirmaciones.filter((af) => af && af.texto) : []
-if (!afirmaciones.length) return { documento: ARCHIVO, error: 'No se extrajeron afirmaciones', fallos: resumenFallos() }
+const todas = []
+const idsVistos = new Set()
+for (const af of (extraidas && Array.isArray(extraidas.afirmaciones) ? extraidas.afirmaciones : [])) {
+  if (!af || !af.texto) continue
+  let id = typeof af.id === 'string' && /^[A-Za-z0-9_.-]{1,20}$/.test(af.id) ? af.id : ''
+  if (!id || idsVistos.has(id)) id = `A${todas.length + 1}`
+  while (idsVistos.has(id)) id = `${id}b`
+  idsVistos.add(id)
+  todas.push({ ...af, id })
+}
+if (!todas.length) return { documento: ARCHIVO, error: 'No se extrajeron afirmaciones', fallos: resumenFallos() }
+const afirmaciones = todas.slice(0, MAX_AFIRMACIONES)
+const noRevisadas = todas.slice(MAX_AFIRMACIONES)
+if (noRevisadas.length) {
+  log(`Límite de ${MAX_AFIRMACIONES} afirmaciones: quedan sin revisar ${noRevisadas.length} (${noRevisadas.map((af) => af.id).join(', ')}); súbelo con args.max_afirmaciones (máximo ${TOPE_AFIRMACIONES})`)
+}
 log(`${afirmaciones.length} afirmaciones. Estimación: ${1 + afirmaciones.length * ENFOQUES.length + 2} agentes en total`)
 
 // ---------------------------------------------------------------- segunda opinión de otra familia (opcional, en paralelo)
@@ -129,35 +171,41 @@ const juzgadas = await pipeline(
   ))).then((vs) => {
     const validos = vs.map((v, i) => (v && VEREDICTOS.includes(v.veredicto) ? { enfoque: ENFOQUES[i].id, ...v } : null)).filter(Boolean)
     const votos = Object.fromEntries(VEREDICTOS.map((k) => [k, validos.filter((v) => v.veredicto === k).length]))
-    return { ...af, veredictos: validos, votos, validos: validos.length, resultado: agregar(validos) }
+    const deFuentes = validos.find((v) => v.enfoque === 'fuentes')
+    return { ...af, veredictos: validos, votos, validos: validos.length, fuentes: deFuentes ? deFuentes.veredicto : 'sin_resultado', resultado: agregar(validos) }
   }),
 )
-const resultados = juzgadas.map((j, i) => j || { ...afirmaciones[i], veredictos: [], votos: {}, validos: 0, resultado: 'sin_quorum' })
+const resultados = juzgadas.map((j, i) => j || { ...afirmaciones[i], veredictos: [], votos: {}, validos: 0, fuentes: 'sin_resultado', resultado: 'sin_quorum' })
 const segundaOpinion = await otraFamilia
 
 // ---------------------------------------------------------------- consolidación
+// La consolida el crítico (no el autor del documento): no cambia los resultados agregados y solo propone acciones.
 phase('Consolidación')
-const destino = ARCHIVO.replace(/^.*\//, '').replace(/\.md$/, '')
 const sinQuorum = resultados.filter((j) => j.resultado === 'sin_quorum').map((j) => j.id)
 const consolidado = await lanzar(
-  `Escribe research/revisiones/${destino}_redteam.md con una tabla "afirmación | resultado | motivos por enfoque | acción" y un resumen de las tres debilidades más graves. ` +
-  'Los resultados ya están agregados con quórum: no los cambies. Las afirmaciones "sin_quorum" no tienen veredicto (menos de 2 veredictos válidos): dilo y propone repetir su revisión. ' +
+  `Escribe ${DESTINO} (crea solo ese fichero; no modifiques ${ARCHIVO} ni ningún otro) con una tabla "afirmación | resultado | motivos por enfoque | acción propuesta" ` +
+  'y un resumen de las tres debilidades más graves. No escribiste el documento revisado. Los resultados ya están agregados con quórum y con la regla de fuentes ' +
+  '(si el enfoque "fuentes" no pudo comprobarlas, nunca "sostenida"): no los cambies. Las afirmaciones "sin_quorum" no tienen veredicto (menos de 2 veredictos ' +
+  `válidos): dilo y propone repetir su revisión.${noRevisadas.length ? ` Las afirmaciones ${noRevisadas.map((af) => af.id).join(', ')} quedaron sin revisar por el límite de ${MAX_AFIRMACIONES}: dilo.` : ''} ` +
   'Integra la segunda opinión de otra familia de modelos, si la hubo, como opinión de un modelo (no como evidencia): dónde coincide y dónde discrepa de los veredictos. ' +
-  'Registra con nutria decision registrar las acciones que cambien estados (sin firma humana).' +
+  'Incluye la bibliografía de las referencias [Rn] que copies del documento. Registra como propuestas las acciones que cambien estados con ' +
+  'nutria --agente critico-red-team decision registrar --entidad <ID de la oportunidad o hipótesis, si consta> --decision "..." --motivo "..." (sin --firma-humana: ' +
+  'las decide una persona).' +
   (fallos.length ? `\nAgentes que fallaron (decláralo en el documento): ${fallos.map((f) => f.agente).join(', ')}` : '') +
   `\nResultados: ${JSON.stringify(resultados)}\nSegunda opinión de otra familia: ${JSON.stringify(segundaOpinion)}`,
-  { label: 'consolidacion', phase: 'Consolidación', agentType: 'director-cientifico' },
+  { label: 'consolidacion', phase: 'Consolidación', agentType: 'critico-red-team' },
 )
 
 return {
   documento: ARCHIVO,
   sensibilidad: SENSIBILIDAD,
-  resultados: resultados.map((j) => ({ id: j.id, resultado: j.resultado, validos: j.validos, votos: j.votos })),
+  resultados: resultados.map((j) => ({ id: j.id, resultado: j.resultado, fuentes: j.fuentes, validos: j.validos, votos: j.votos })),
   refutadas: resultados.filter((j) => j.resultado === 'refutada').length,
   sin_quorum: sinQuorum,
+  no_revisadas: noRevisadas.map((af) => af.id),
   otra_familia: { ejecutado: Boolean(segundaOpinion && segundaOpinion.ejecutado), motivo: segundaOpinion ? segundaOpinion.motivo : null,
     modelos: segundaOpinion && segundaOpinion.modelos_utilizables ? segundaOpinion.modelos_utilizables : [] },
-  informe: `research/revisiones/${destino}_redteam.md`,
+  informe: DESTINO,
   nota: consolidado ? 'Consolidado escrito' : 'No se pudo escribir el consolidado',
   fallos: resumenFallos(),
 }

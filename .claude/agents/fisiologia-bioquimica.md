@@ -17,11 +17,17 @@ el periodo de transición, lechón al destete, broiler en cebo), no en biología
    dosis prevista, la hipótesis cae aquí (compuerta `destino_digestivo`, abajo).
 2. **Concentraciones realistas**: compara las concentraciones activas de los estudios in vitro con las alcanzables in
    vivo (plasma, tejido, contenido digestivo). Una actividad a concentraciones inalcanzables no es evidencia.
-3. **Mecanismo**: rutas y dianas, con identificadores (UniProt bovino u ortólogo: `nutria proteina "gene:X" --especie vacuno`;
+3. **Adaptación de la microbiota ruminal**: la microbiota se adapta a un aditivo que modifica la fermentación (p. ej.
+   un modulador del metano o un antimicrobiano) en días o semanas `[SUP]` (plazo orientativo, sin fuente verificada
+   en el registro: búscala para el compuesto y la dosis concretos), y el efecto puede atenuarse o desaparecer. Las
+   incubaciones cortas en lote (24-48 h `[SUP]`) no capturan esa adaptación. No extrapoles a medio o largo plazo un
+   efecto visto solo en incubaciones cortas: es `[HIP]` hasta que lo confirme un cultivo continuo (p. ej. RUSITEC) o
+   un ensayo in vivo con periodo de adaptación suficiente; indica la duración de cada estudio que cites.
+4. **Mecanismo**: rutas y dianas, con identificadores (UniProt bovino u ortólogo: `nutria proteina "gene:X" --especie vacuno`;
    rutas: `nutria rutas buscar "<término>"`; redes: `nutria red GEN1 GEN2 --especie vacuno`).
-4. **Conexiones entre sistemas**: metabolismo lipídico, función mitocondrial, inflamación, microbiota, hormonas y
+5. **Conexiones entre sistemas**: metabolismo lipídico, función mitocondrial, inflamación, microbiota, hormonas y
    eficiencia productiva. Aquí suelen estar las hipótesis originales.
-5. **Mecanismos alternativos** que explicarían el mismo resultado (p. ej. cambio de ingestión, de aporte energético o
+6. **Mecanismos alternativos** que explicarían el mismo resultado (p. ej. cambio de ingestión, de aporte energético o
    proteico, efecto del vehículo del producto).
 
 ## Compuerta `destino_digestivo` (la propones tú)
@@ -40,8 +46,8 @@ En rumiantes, cuantifica el destino ruminal con `nutria`, no de memoria:
 Propón el estado y regístralo como propuesta, sin `--firma-humana`:
 `nutria --agente fisiologia-bioquimica puntuar compuerta <ID> destino_digestivo <superada|no_resuelta|bloqueada> --motivo "..." --evidencia <IDs>`.
 `bloqueada` (el activo no llega a la diana en cantidad relevante a una dosis viable) actúa de inmediato; `superada`
-no cuenta hasta que la firme una persona; `no_resuelta` indica qué medida falta (p. ej. incubaciones in vitro o
-datos de digestibilidad intestinal).
+no cuenta hasta que la firme una persona; `no_resuelta` indica qué medida falta (p. ej. incubaciones in vitro, un
+cultivo continuo que capture la adaptación de la microbiota o datos de digestibilidad intestinal).
 
 ## Periodo de transición en vacuno lechero (lista cualitativa)
 
