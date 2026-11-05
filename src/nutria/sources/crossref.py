@@ -5,6 +5,12 @@ Retractaciones: Crossref incluye en su API las de sus miembros y las de Retracti
 trae en `update-to` o en `updated-by` una entrada de tipo `retraction` o `withdrawal` (sin distinguir
 mayúsculas), o si el título lo declara. Si no hay información, `retracted` queda en None (desconocido),
 nunca en False: que Crossref no traiga aviso no demuestra que el trabajo no esté retractado.
+
+Licencia: el campo `license` de Crossref es una lista de URL con su `content-version` (`vor`, versión publicada;
+`am`, manuscrito aceptado; `tdm`, minería de textos; `unspecified`). `extra["license"]` guarda la de la versión
+publicada si existe (si no, la del manuscrito aceptado, la no especificada y, por último, la de minería de
+textos) y `extra["licenses"]` todas. Para comprobar la cita, `extra` guarda además los apellidos de los autores
+(`families`), los subtítulos y los títulos de la revista (completos y abreviados).
 """
 
 from __future__ import annotations
@@ -52,12 +58,43 @@ def retraction_updates(msg: dict) -> list[dict]:
     return found
 
 
+_LICENSE_PREFERENCE = ("vor", "am", "unspecified", "tdm")
+
+
+def _strings(value) -> list[str]:
+    items = value if isinstance(value, list) else [value]
+    return [str(x).strip() for x in items if isinstance(x, str) and x.strip()]
+
+
+def licenses(msg: dict) -> list[dict]:
+    """Entradas de licencia del registro: [{"url", "version", "delay_days"}]."""
+    out = []
+    for entry in _entries(msg.get("license")):
+        if isinstance(entry, dict) and entry.get("URL"):
+            out.append({"url": str(entry["URL"]), "version": str(entry.get("content-version") or "unspecified"),
+                        "delay_days": entry.get("delay-in-days")})
+    return out
+
+
+def best_license(msg: dict) -> str | None:
+    """URL de la licencia de la versión publicada (o la mejor disponible según `_LICENSE_PREFERENCE`)."""
+    found = licenses(msg)
+    for version in _LICENSE_PREFERENCE:
+        for entry in found:
+            if entry["version"].lower() == version:
+                return entry["url"]
+    return found[0]["url"] if found else None
+
+
 def parse(msg: dict) -> Record:
-    authors = []
+    authors, families = [], []
     for a in msg.get("author", []) or []:
+        if not isinstance(a, dict):
+            continue
         name = " ".join(x for x in (a.get("family"), a.get("given")) if x) or a.get("name")
         if name:
             authors.append(name)
+            families.append(a.get("family") or a.get("name"))
     year = None
     for key in ("issued", "published-print", "published-online", "created"):
         parts = (msg.get(key) or {}).get("date-parts") or []
@@ -75,7 +112,11 @@ def parse(msg: dict) -> Record:
         cited_by=msg.get("is-referenced-by-count"),
         retracted=True if (updates or retracted_by_title) else None,
         extra={"publisher": msg.get("publisher"), "update_to": _entries(msg.get("update-to")),
-               "updated_by": _entries(msg.get("updated-by")), "retraction_updates": updates},
+               "updated_by": _entries(msg.get("updated-by")), "retraction_updates": updates,
+               "families": families, "subtitles": _strings(msg.get("subtitle")),
+               "container_titles": _strings(msg.get("container-title")),
+               "short_container_titles": _strings(msg.get("short-container-title")),
+               "license": best_license(msg), "licenses": licenses(msg)},
     )
 
 

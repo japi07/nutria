@@ -3,6 +3,10 @@
 OpenAlex exige una clave de API en todas las peticiones desde el 13-02-2026. Sin `OPENALEX_API_KEY`
 las funciones de este módulo lanzan `NetworkError` con instrucciones antes de hacer la petición
 (en modo offline se permite servir lo que ya esté en caché).
+
+Licencia: `extra["license"]` toma la de la mejor copia en acceso abierto (`best_oa_location.license`) o, si no la
+hay, la de la ubicación principal (`primary_location.license`); OpenAlex usa códigos como `cc-by`, `cc-by-nc` o
+`publisher-specific-oa`.
 """
 
 from __future__ import annotations
@@ -63,6 +67,8 @@ def parse(work: dict) -> Record:
     if biblio.get("first_page"):
         pages = biblio["first_page"] + (f"-{biblio['last_page']}" if biblio.get("last_page") else "")
     oa = work.get("open_access") or {}
+    best = work.get("best_oa_location") or {}
+    license_ = best.get("license") or location.get("license")
     return Record(
         source="openalex",
         title=work.get("display_name") or work.get("title"),
@@ -83,6 +89,7 @@ def parse(work: dict) -> Record:
         cited_by=work.get("cited_by_count"),
         is_oa=oa.get("is_oa"),
         retracted=work.get("is_retracted"),
+        extra={"license": str(license_) if license_ else None, "oa_status": oa.get("oa_status")},
     )
 
 

@@ -20,15 +20,18 @@ def test_citation_year_ignores_doi_years_and_page_ranges():
     assert c.citation_year("Sin año. DOI: 10.1234/abc.2015") is None
 
 
-def test_title_coverage_and_author():
+def test_title_and_first_author():
+    # D3-7: título comparado de forma simétrica y primer autor de la cita = primer autor del registro
     real = "Meta-analyses of experimental data in animal nutrition"
     good = "[R1] Sauvant D et al. 2008. Meta-analyses of experimental data in animal nutrition. Animal 2:1203."
     bad = "[R1] Smith J. 2008. Rumen protected choline improves fertility. J Dairy Sci."
-    assert c.title_coverage(real, good) == pytest.approx(1.0)
-    assert c.title_coverage(real, bad) < 0.6
-    assert c.author_matches(["Sauvant D", "Schmidely P"], good) is True
-    assert c.author_matches(["Sauvant D"], "[R1] Smith J, Brown K. 2008. Meta-analyses of experimental data in "
-                                           "animal nutrition. Animal.") is False
+    check = c.compare_citation(good, titles=[real], authors=["Sauvant D", "Schmidely P"], journals=["Animal"])
+    assert check.title_ok is True and check.title_score == pytest.approx(1.0) and check.author_ok is True
+    assert check.journal_ok is True and check.year_in_citation == 2008
+    assert c.compare_citation(bad, titles=[real], authors=["Sauvant D"]).title_ok is False
+    second = "[R1] Smith J, Sauvant D. 2008. Meta-analyses of experimental data in animal nutrition. Animal."
+    assert c.compare_citation(second, titles=[real], authors=["Sauvant D"]).author_ok is False
+    assert c.title_similarity(real, real.upper()) == pytest.approx(1.0)
 
 
 class FakeClient:
@@ -79,5 +82,7 @@ def test_verify_doi_not_found(monkeypatch):
         raise NotFoundError("404")
     monkeypatch.setattr(c.crossref, "work", missing)
     monkeypatch.setattr(c.openalex, "work_by_doi", missing)
+    # D3-15: solo es "no existe" si el registro de DOI (doi.org) tampoco lo tiene
+    monkeypatch.setattr(c.doiorg, "handle_exists", lambda client, doi: False)
     res = c.verify_doi(FakeClient(), "10.9999/inventado.2024.001")
-    assert res.status == "no_encontrada" and not res.ok
+    assert res.status == "no_encontrada" and not res.ok and "doi.org" in res.message
