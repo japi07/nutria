@@ -1,6 +1,16 @@
-"""UniProtKB REST: proteínas por gen y especie (p. ej. ortólogos bovinos)."""
+"""UniProtKB REST: proteínas por gen y especie (p. ej. ortólogos bovinos).
+
+La versión de UniProt que respondió se lee de las cabeceras `X-UniProt-Release` y `X-UniProt-Release-Date`
+(documentadas por UniProt; no comprobadas contra el servicio real), que el cliente HTTP conserva también en la
+caché.
+"""
 
 from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+
+from .base import checked_version
 
 BASE = "https://rest.uniprot.org/uniprotkb"
 FIELDS = "accession,id,protein_name,gene_names,organism_name,organism_id,length,reviewed,cc_function"
@@ -53,3 +63,24 @@ def search(client, query: str, taxon: int | None = None, size: int = 10,
     data = client.get_json(f"{BASE}/search", params={"query": q, "fields": FIELDS, "format": "json",
                                                      "size": size})
     return [parse(e) for e in data.get("results", [])]
+
+
+RELEASE_RE = r"\d{4}_\d{2}"    # p. ej. «2024_06»
+_DATE_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z ,./-]{3,29}")
+
+
+def parse_release(headers) -> dict:
+    """Versión de UniProt en unas cabeceras de respuesta: {"version", "fecha_publicacion"}; lo que no tiene la forma
+    esperada no se registra como versión ({"version_no_reconocida": ...})."""
+    headers = {str(k).lower(): v for k, v in (headers or {}).items()} if isinstance(headers, dict) else {}
+    out = checked_version(headers.get("x-uniprot-release"), RELEASE_RE)
+    date = headers.get("x-uniprot-release-date")
+    if out.get("version") and isinstance(date, str) and _DATE_RE.fullmatch(date.strip()):
+        out["fecha_publicacion"] = date.strip()
+    return out
+
+
+def release(client) -> dict:
+    """Versión de UniProt de la última respuesta (red o caché): {"version", "fecha_publicacion"}; vacío si
+    la respuesta no traía las cabeceras."""
+    return parse_release((getattr(client, "response_headers", None) or {}).get(urlparse(BASE).hostname, {}))

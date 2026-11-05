@@ -5,6 +5,7 @@ Principios:
   contrastarse con referencias verificadas.
 - Cada llamada queda en la procedencia (proveedor, modelo, huella del prompt y de la respuesta).
 - Los datos marcados como confidenciales solo se envían a modelos locales o con no retención.
+- En modo offline (`--offline`) no se hace ninguna petición, ni siquiera a modelos locales.
 """
 
 from __future__ import annotations
@@ -60,8 +61,13 @@ def load_registry(cfg) -> list[ModelSpec]:
                       active=bool(m.get("activo", False))) for m in data.get("modelo", [])]
 
 
+OFFLINE_REASON = "modo offline: no se hace ninguna petición a modelos"
+
+
 def _call(cfg, spec: ModelSpec, prompt: str, system: str | None, max_tokens: int,
           temperature: float | None) -> dict:
+    if getattr(cfg, "offline", False):  # defensa en profundidad: `ask` ya lo comprueba
+        raise ValueError(OFFLINE_REASON)
     key = spec.api_key(cfg)
     timeout = max(cfg.timeout, 120)
     if spec.provider == "anthropic":
@@ -136,6 +142,9 @@ def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, 
         specs = [s for s in specs if s.id == model_id]
     elif role:
         specs = [s for s in specs if role in s.roles]
+    if sensitivity not in ("normal", "confidencial"):
+        raise ValueError(f"Sensibilidad desconocida: {sensitivity!r} (usa 'normal' o 'confidencial')")
+    offline = bool(getattr(cfg, "offline", False))
     results = []
     for spec in specs:
         ok, why = spec.usable(cfg)
@@ -145,6 +154,9 @@ def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, 
         if sensitivity == "confidencial" and spec.data_policy not in SAFE_POLICIES:
             results.append({"modelo": spec.id, "omitido": f"política de datos '{spec.data_policy}' no apta para "
                                                          "información confidencial"})
+            continue
+        if offline:
+            results.append({"modelo": spec.id, "omitido": OFFLINE_REASON})
             continue
         try:
             out = _call(cfg, spec, prompt, system, max_tokens, temperature)
@@ -192,14 +204,19 @@ def grade(item: dict, answer: str) -> bool:
 
 def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None = None) -> dict:
     items = [json.loads(line) for line in Path(eval_path).read_text("utf-8").splitlines() if line.strip()]
+    if getattr(cfg, "offline", False):
+        return {"resultados": {}, "detalle": None, "n_items": len(items), "aviso": OFFLINE_REASON}
     system = ("Responde de forma breve y directa. Si la pregunta pide una cifra, empieza por la cifra. "
               "Si pide SÍ o NO, empieza por SÍ o NO.")
     scores: dict[str, dict] = {}
+    errors: dict[str, int] = {}
     rows = []
     for item in items:
         # El banco de preguntas no contiene información confidencial.
         for res in ask(cfg, item["pregunta"], role=role, model_id=model_id, system=system, max_tokens=400,
                        sensitivity="normal"):
+            if "error" in res:   # un fallo no se descarta en silencio: se cuenta por modelo (la orden sale con 1)
+                errors[res["modelo"]] = errors.get(res["modelo"], 0) + 1
             if "texto" not in res:
                 continue
             correct = grade(item, res["texto"])
@@ -214,4 +231,7 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
     out_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", "utf-8")
     for s in scores.values():
         s["exactitud"] = s["aciertos"] / s["total"] if s["total"] else None
-    return {"resultados": scores, "detalle": str(out_file), "n_items": len(items)}
+    out = {"resultados": scores, "detalle": str(out_file), "n_items": len(items)}
+    if errors:
+        out["errores"] = errors
+    return out

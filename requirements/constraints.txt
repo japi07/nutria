@@ -1,0 +1,42 @@
+# Versiones con las que se ha probado nutria (python -m pytest -q: suite completa en verde).
+# Entorno: Python 3.13.18 en Linux (x86_64), 2026-11-05. Comprobado también en un entorno virtual nuevo, creado
+# solo con este fichero: `pip install ".[dev,mixto]" -c requirements/constraints.txt` resuelve exactamente estas
+# versiones desde PyPI y la suite pasa con ellas.
+# Incluye las dependencias del proyecto (pyproject.toml), los extras `mixto` (statsmodels, pandas) y `dev`
+# (pytest), y sus dependencias transitivas; generado a partir de los paquetes instalados (importlib.metadata).
+# wrapt se fija en la última versión estable (2.5.2): formulaic (dependencia de statsmodels) la pide en Python >= 3.13
+# con `wrapt>=1.17.0rc1`, una cota que admite versiones preliminares, y sin este fichero pip elige la más reciente
+# publicada aunque sea preliminar (2.6.0.dev1 el 2026-11-05), que puede desaparecer de PyPI.
+# Uso, para reproducir el entorno de las pruebas:
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -e ".[dev,mixto]" -c requirements/constraints.txt
+# Es un fichero de restricciones (-c), no de requisitos: no instala nada que pyproject.toml no pida. Otras
+# versiones compatibles con las cotas de pyproject.toml pueden funcionar, pero no se han probado. Node.js (22.23.4; para
+# tests/test_orquestacion.py) y R (opcional, para `nutria meta exportar-r`) no se instalan con pip.
+attrs==26.1.0
+certifi==2026.10.18
+charset-normalizer==3.5.1
+formulaic==1.2.2
+idna==3.20
+iniconfig==2.3.1
+interface_meta==2.0.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+narwhals==2.28.0
+numpy==2.5.3
+packaging==26.3
+pandas==3.0.5
+patsy==1.0.3
+pluggy==1.7.0
+Pygments==2.21.0
+pytest==9.2.0
+python-dateutil==2.9.0.post0
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+scipy==1.18.1
+six==1.17.0
+statsmodels==0.15.0
+typing_extensions==4.16.0
+urllib3==2.8.0
+wrapt==2.5.2

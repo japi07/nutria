@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIG_FILENAME = "nutria.toml"
+DEFAULT_MAX_OFFLINE_DAYS = 180.0
+DEFAULT_STRING_URL = "https://version-12-0.string-db.org"
 
 DEFAULT_CONFIG_TEXT = """\
 # Configuración del proyecto NUTRIA.
@@ -28,6 +30,14 @@ cache = ".cache/nutria"
 cache_dias = 30
 timeout_s = 30
 offline = false
+# Con --offline, antigüedad máxima (días) de las copias de la caché que se aceptan; amplíala para una orden
+# con --antiguedad-maxima DIAS. La fecha de cada copia es la de su registro en la procedencia.
+antiguedad_maxima_offline_dias = 180
+
+[fuentes]
+# Dirección versionada de STRING (resultados estables entre consultas). Cámbiala para usar otra versión;
+# la orden `nutria red` registra la versión que responde.
+string_url = "https://version-12-0.string-db.org"
 
 [puntuacion]
 # Perfil de pesos por defecto: "recomendado" (v2) u "original" (pesos del prompt inicial).
@@ -60,6 +70,8 @@ class Config:
     cache_days: float = 30.0
     timeout: float = 30.0
     offline: bool = False
+    cache_max_offline_days: float = DEFAULT_MAX_OFFLINE_DAYS
+    string_url: str = DEFAULT_STRING_URL
     scoring_profile: str = "recomendado"
     actor: str | None = None
     raw: dict = field(default_factory=dict)
@@ -82,6 +94,24 @@ class Config:
 _TRUE = {"1", "true", "si", "sí", "yes", "on"}
 
 
+def positive_days(value, origin: str) -> float:
+    """Número de días positivo y finito; si no lo es, ValueError con el origen del valor."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{origin}: se esperaba un número de días y se encontró {value!r}") from None
+    if not (number > 0 and number != float("inf")):
+        raise ValueError(f"{origin}: el número de días debe ser positivo y finito (valor {value!r})")
+    return number
+
+
+def _url(value, origin: str) -> str:
+    text = str(value or "").strip().rstrip("/")
+    if not text.lower().startswith(("https://", "http://")):
+        raise ValueError(f"{origin}: se esperaba una URL http(s) y se encontró {value!r}")
+    return text
+
+
 def load_config(root: Path | None = None) -> Config:
     root = find_root(root)
     raw: dict = {}
@@ -93,6 +123,7 @@ def load_config(root: Path | None = None) -> Config:
     rutas = raw.get("rutas", {})
     red = raw.get("red", {})
     puntuacion = raw.get("puntuacion", {})
+    fuentes = raw.get("fuentes", {})
     offline_env = os.environ.get("NUTRIA_OFFLINE", "").strip().lower() in _TRUE
     return Config(
         root=root,
@@ -103,6 +134,9 @@ def load_config(root: Path | None = None) -> Config:
         cache_days=float(red.get("cache_dias", 30)),
         timeout=float(red.get("timeout_s", 30)),
         offline=bool(red.get("offline", False)) or offline_env,
+        cache_max_offline_days=positive_days(red.get("antiguedad_maxima_offline_dias", DEFAULT_MAX_OFFLINE_DAYS),
+                                             f"{CONFIG_FILENAME} [red] antiguedad_maxima_offline_dias"),
+        string_url=_url(fuentes.get("string_url", DEFAULT_STRING_URL), f"{CONFIG_FILENAME} [fuentes] string_url"),
         scoring_profile=str(puntuacion.get("perfil", "recomendado")),
         raw=raw,
     )
