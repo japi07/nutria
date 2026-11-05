@@ -204,42 +204,116 @@ def _webfetch_dominios(root: Path) -> tuple[list[str], str]:
     return (found, "docs/FUENTES.md") if found else (list(WEBFETCH_DOMINIOS), "lista interna")
 
 
-def _doctor_hook(root: Path) -> dict:
-    """Intérprete con el que scripts/hooks/run_hook.sh ejecutaría los hooks (mismo orden de búsqueda: .venv, python3,
-    python) y si, como check_research_file.py (que antepone <raíz>/src a sys.path), importa nutria y jsonschema."""
+_HOOK_PROBE = """import json, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import jsonschema, nutria, nutria.reports.check
+except Exception as exc:
+    print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+    sys.exit(3)
+print(json.dumps({"doctor_hook": "ok", "python": sys.executable, "nutria": nutria.__file__}))
+"""
+_HOOK_CANDIDATES = (Path(".venv") / "bin" / "python", Path(".venv") / "Scripts" / "python.exe", "python3", "python")
+
+
+def _hook_candidates(root: Path) -> list[str]:
+    """Intérpretes que scripts/hooks/run_hook.sh encontraría, en su orden (.venv, python3, python)."""
     import os
     import shutil
+    found: list[str] = []
+    for candidate in _HOOK_CANDIDATES:
+        if isinstance(candidate, Path):
+            path = root / candidate
+            if path.is_file() and os.access(path, os.X_OK):
+                found.append(str(path))
+        else:
+            path = shutil.which(candidate)
+            if path and path not in found:
+                found.append(path)
+    return found
+
+
+def _probe_interpreter(interpreter: str, root: Path) -> tuple[bool, str]:
+    """¿Importa este intérprete lo que usa check_research_file.py (con <raíz>/src antepuesto a sys.path)?"""
     import subprocess
+    try:
+        proc = subprocess.run([interpreter, "-c", _HOOK_PROBE, str(root / "src")], capture_output=True, text=True,
+                              timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)[:300]
+    if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return False, (lines[-1] if lines else f"código {proc.returncode}")[:300]
+    return True, ""
+
+
+def _run_hook_black_box(root: Path) -> dict | None:
+    """Ejecuta una copia de scripts/hooks/run_hook.sh (con la .venv del proyecto enlazada) con una sonda en lugar del
+    hook: así se comprueba el intérprete que elegiría la versión instalada de run_hook.sh, con su misma lógica (tanto
+    si usa el primero que encuentra como si prueba el siguiente cuando uno falla). None si no se pudo ejecutar."""
+    import os
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="nutria_doctor_") as tmp:
+        hooks = Path(tmp) / "scripts" / "hooks"
+        hooks.mkdir(parents=True)
+        try:
+            (hooks / "run_hook.sh").write_text((root / "scripts" / "hooks" / "run_hook.sh").read_text("utf-8"), "utf-8")
+            (hooks / "doctor_probe.py").write_text(
+                "import sys\nsys.argv.append(" + repr(str(root / "src")) + ")\n" + _HOOK_PROBE, "utf-8")
+            if (root / ".venv").exists():
+                os.symlink(root / ".venv", Path(tmp) / ".venv", target_is_directory=True)
+            proc = subprocess.run(["sh", str(hooks / "run_hook.sh"), "doctor_probe.py"], input="{}",
+                                  capture_output=True, text=True, timeout=180)
+        except (OSError, UnicodeDecodeError, subprocess.SubprocessError):
+            return None
+    for line in reversed((proc.stdout or "").splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("doctor_hook") == "ok":
+            return {"ok": True, "interprete": data.get("python"), "nutria": data.get("nutria")}
+    return {"ok": False, "codigo": proc.returncode}
+
+
+def _doctor_hook(root: Path) -> dict:
+    """¿Puede scripts/hooks/run_hook.sh ejecutar los hooks de Claude Code? Se ejecuta una copia del propio
+    run_hook.sh con una sonda que importa, como check_research_file.py (con <raíz>/src antepuesto a sys.path),
+    jsonschema y nutria; además se prueba cada intérprete candidato (.venv, python3, python) para explicar los
+    fallos."""
+    import shutil
     if not (root / "scripts" / "hooks" / "run_hook.sh").is_file():
         return {"estado": "no_aplica", "esencial": False,
                 "detalle": "el proyecto no tiene los hooks de Claude Code (scripts/hooks/run_hook.sh)"}
     if not shutil.which("sh"):
         return {"estado": "no_encontrado", "esencial": True, "detalle": "no hay `sh` para ejecutar run_hook.sh"}
-    interpreter = None
-    for candidate in (root / ".venv" / "bin" / "python", root / ".venv" / "Scripts" / "python.exe", "python3", "python"):
-        if isinstance(candidate, Path):
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                interpreter = str(candidate)
-                break
-        elif shutil.which(candidate):
-            interpreter = shutil.which(candidate)
-            break
-    if not interpreter:
+    candidates = _hook_candidates(root)
+    if not candidates:
         return {"estado": "no_encontrado", "esencial": True,
                 "detalle": "run_hook.sh no encuentra Python: bloqueará las escrituras en research/ (falla cerrado)"}
-    probe = ("import sys; sys.path.insert(0, sys.argv[1]); import jsonschema, nutria, nutria.reports.check; "
-             "print(nutria.__file__)")
-    try:
-        proc = subprocess.run([interpreter, "-c", probe, str(root / "src")], capture_output=True, text=True,
-                              timeout=60)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"estado": "error", "esencial": True, "interprete": interpreter, "detalle": str(exc)[:300]}
-    if proc.returncode != 0:
-        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
-        return {"estado": "sin_dependencias", "esencial": True, "interprete": interpreter,
-                "detalle": (lines[-1] if lines else f"código {proc.returncode}")[:300]
-                + " — el hook bloqueará las escrituras en research/ que debía validar"}
-    return {"estado": "ok", "esencial": True, "interprete": interpreter, "nutria": proc.stdout.strip()}
+    checks = []
+    for interpreter in candidates:
+        ok, why = _probe_interpreter(interpreter, root)
+        checks.append({"interprete": interpreter, "ok": ok, **({"detalle": why} if why else {})})
+    runner = _run_hook_black_box(root)
+    failed = "; ".join(f"{c['interprete']}: {c['detalle']}" for c in checks if not c["ok"])
+    if runner is None:   # no se pudo ejecutar la copia: se juzga como la versión que usa el primero que encuentra
+        first = checks[0]
+        if first["ok"]:
+            return {"estado": "ok", "esencial": True, "interprete": first["interprete"], "candidatos": checks}
+        return {"estado": "sin_dependencias", "esencial": True, "interprete": first["interprete"],
+                "candidatos": checks,
+                "detalle": f"{failed} — el hook bloqueará las escrituras en research/ que debía validar"}
+    if runner["ok"]:
+        out = {"estado": "ok", "esencial": True, "interprete": runner.get("interprete"), "nutria": runner.get("nutria"),
+               "candidatos": checks}
+        if failed:
+            out["detalle"] = f"run_hook.sh usa otro intérprete porque estos no sirven: {failed}"
+        return out
+    return {"estado": "sin_dependencias", "esencial": True, "interprete": checks[0]["interprete"], "candidatos": checks,
+            "detalle": (failed or f"run_hook.sh terminó con código {runner.get('codigo')} sin ejecutar la sonda")
+            + " — el hook bloqueará las escrituras en research/ que debía validar"}
 
 
 def _doctor_r() -> dict:
@@ -488,6 +562,9 @@ def cmd_buscar(args, cfg) -> int:
     if confidencial:
         notas.append("consulta confidencial: la procedencia guarda solo su huella SHA-256 (y la de los identificadores "
                      f"devueltos), pero la consulta ha viajado igualmente al servicio externo ({args.fuente})")
+        if registered:
+            notas.append("las fuentes registradas con --registrar quedan en claro en el registro (research/nutria.sqlite, "
+                         "que se versiona con git) y pueden dejar ver el tema de la consulta")
     header = f"{args.fuente}: {total} resultados totales; mostrando {len(records)}"
     if (res.get("paginas") or 0) > 1:
         header += f" ({res['paginas']} páginas)"
@@ -874,9 +951,12 @@ def cmd_cache(args, cfg) -> int:
         _emit(args, {**res, "aviso": aviso}, "\n".join(lines))
         return SALIDA_OK
     if args.accion == "importar":
-        res = import_cache(client, Path(args.fichero))
+        res = import_cache(client, Path(args.fichero), expected_sha256=args.sha256)
         lines = [f"Importadas {res['importadas']} copias de {res['fichero']} (conservan su fecha original; "
                  f"{res['conservadas_locales']} copias locales iguales o más recientes se mantienen)"]
+        if args.sha256 is None:
+            lines.append("Nota: sin --sha256 no se comprueba que el fichero sea el que se exportó (la huella que "
+                         "mostró `nutria cache exportar`)")
         lines += [f"RECHAZADA entrada {r['indice']}: {r['motivo']}" for r in res["rechazadas"]]
         lines.append("Nota: una copia importada vale lo que valga su origen; la importación queda en la procedencia "
                      "con la huella del fichero, y la verificación de referencias nunca usa la caché")
@@ -1493,6 +1573,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="incluye las copias de consultas confidenciales (por defecto se omiten)")
     x = cs.add_parser("importar", parents=[common], help="importa una exportación (queda en la procedencia)")
     x.add_argument("fichero")
+    x.add_argument("--sha256", default=None,
+                   help="huella que mostró `cache exportar`: si el fichero no la tiene, no se importa nada")
     s.set_defaults(func=cmd_cache)
 
     s = sub.add_parser("buscar", parents=[common], help="busca literatura")
@@ -1811,11 +1893,10 @@ CODIGOS_SALIDA = {
                                     "parte falló), caché con copias no válidas o importación con entradas rechazadas, "
                                     "comprobaciones esenciales de `doctor` fallidas"),
     SALIDA_ENTRADA: ("entrada", "entrada no válida o condición previa no cumplida: argumentos, fichero inexistente o "
-                                "inaccesible (directorio, permisos), JSON o CSV fuera de formato, identificador "
-                                "inexistente en el registro, configuración no válida, proyecto sin inicializar, orden "
-                                "no permitida para el rol del agente"),
-    SALIDA_REGISTRO: ("registro", "regla del registro o error de la base de datos (transición o compuerta no "
-                                  "permitida, fuente sin verificar...)"),
+                                "inaccesible (directorio, permisos), JSON o CSV fuera de formato, configuración no "
+                                "válida, proyecto sin inicializar, orden no permitida para el rol del agente"),
+    SALIDA_REGISTRO: ("registro", "regla del registro o error de la base de datos (identificador que no existe en el "
+                                  "registro, transición o compuerta no permitida, fuente sin verificar...)"),
     SALIDA_RED: ("red", "fallo de red, host bloqueado, error o respuesta no válida del servicio, credencial rechazada, "
                         "o modo offline sin copia válida en la caché"),
     SALIDA_CALCULO: ("calculo", "falta una dependencia opcional o un cálculo no converge"),
@@ -1823,6 +1904,18 @@ CODIGOS_SALIDA = {
     SALIDA_INTERNO: ("interno", "error interno inesperado (fallo del programa; NUTRIA_DEPURAR=1 muestra la traza)"),
     SALIDA_INTERRUMPIDA: ("interrumpida", "orden interrumpida (Ctrl+C)"),
 }
+
+
+# «No existe X»: un identificador que no está en el registro es un error del registro (código 3), tanto si lo detecta
+# la base de datos (RegistryError) como si lo detecta la propia orden (SystemExit con mensaje).
+_NO_EXISTE = "no existe "
+
+
+def _es_no_existe(mensaje) -> bool:
+    """Mensaje de un identificador que no existe en el registro (no el de un proyecto sin base de datos, que es una
+    condición previa: código 2)."""
+    text = str(mensaje or "").strip().lower()
+    return text.startswith(_NO_EXISTE) and not text.startswith(_NO_EXISTE + "la base de datos")
 
 
 class ErrorOrden(Exception):
@@ -1918,9 +2011,12 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         if exc.code is None or isinstance(exc.code, int):
             raise
-        # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa.
-        _error(args, str(exc.code), SALIDA_ENTRADA, "Error", cfg)
-        raise SystemExit(SALIDA_ENTRADA) from None
+        # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa, salvo un
+        # identificador que no existe en el registro, que es el mismo error que da la base de datos (código 3).
+        # Se relanza SystemExit (con el código numérico) para quien llama a main() desde Python.
+        codigo = SALIDA_REGISTRO if _es_no_existe(exc.code) else SALIDA_ENTRADA
+        _error(args, str(exc.code), codigo, "Error de registro" if codigo == SALIDA_REGISTRO else "Error", cfg)
+        raise SystemExit(codigo) from None
     except ErrorOrden as exc:
         return _error(args, str(exc), exc.codigo, "Error", cfg)
     except registry.RegistryError as exc:

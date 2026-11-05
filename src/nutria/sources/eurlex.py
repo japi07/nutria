@@ -143,11 +143,22 @@ def parse_page(page: str, celex: str, language: str = "ES") -> dict:
 
 
 def document(client, celex: str, language: str = "ES") -> dict:
-    """Metadatos de un acto por su CELEX (con caché de 7 días y procedencia del cliente HTTP)."""
+    """Metadatos de un acto por su CELEX (con caché de 7 días y procedencia del cliente HTTP).
+
+    Una página sin metadatos reconocibles (verificación anti-robots, error) no se guarda en la caché: la consulta
+    siguiente vuelve a pedirla en lugar de servir esa página durante 7 días."""
     celex = normalize_celex(celex)
     language = str(language or "ES").upper()
     if language not in LANGUAGES:
         raise ValueError(f"Idioma no válido para EUR-Lex: {language} (usa uno de {', '.join(LANGUAGES)})")
+
+    def recognisable(page) -> str | None:
+        try:
+            parse_page(str(page or ""), celex, language)
+        except NetworkError as exc:
+            return str(exc)
+        return None
+
     page = client.get_text(page_url(celex, language), ttl_days=7,
-                           headers={"Accept": "text/html,application/xhtml+xml"})
+                           headers={"Accept": "text/html,application/xhtml+xml"}, validate=recognisable)
     return parse_page(str(page or ""), celex, language)

@@ -287,6 +287,18 @@ def _headers_digest(headers) -> str:
     return sha256_text(json.dumps(clean, sort_keys=True))
 
 
+def _validation_problem(validate, value) -> str | None:
+    """Problema que `validate(value)` encuentra en una respuesta (None si no hay validación o si la supera). Una
+    validación que falla con una excepción cuenta como problema (falla en cerrado)."""
+    if validate is None:
+        return None
+    try:
+        problem = validate(value)
+    except Exception as exc:  # noqa: BLE001 - la validación nunca deja pasar una respuesta que no entiende
+        return f"{type(exc).__name__}: {exc}"
+    return str(problem) if problem else None
+
+
 def _kept_headers(headers) -> dict:
     out: dict[str, str] = {}
     try:
@@ -643,7 +655,8 @@ class HttpClient:
         except OSError:
             pass
 
-    def _from_cache(self, cache_file: Path, key: str, ttl: float, expect: str, trace: dict, url: str):
+    def _from_cache(self, cache_file: Path, key: str, ttl: float, expect: str, trace: dict, url: str,
+                    validate=None):
         """(valor, None) con una copia válida (y evento `http_cache`), o (_MISS, motivo) si no hay copia
         utilizable; el motivo explica por qué se descartó la que había (None si no había ninguna)."""
         record, confirmed, problem = self.read_cached(cache_file, key)
@@ -667,6 +680,11 @@ class HttpClient:
             value = self._decode(body, expect)
         except ValueError:
             problem = "el contenido no es JSON válido"
+            self._discard(key, trace, url, problem)
+            return _MISS, problem
+        problem = _validation_problem(validate, value)
+        if problem:
+            problem = f"el contenido no es una respuesta válida de la fuente ({problem})"
             self._discard(key, trace, url, problem)
             return _MISS, problem
         hit = {"fecha": _iso(moment), "antiguedad_dias": round(age / 86400, 3), "sha256": record["sha256"],
@@ -706,7 +724,14 @@ class HttpClient:
     def request(self, method: str, url: str, *, params: dict | None = None, json_body=None,
                 data: str | None = None, headers: dict | None = None, use_cache: bool = True,
                 expect: str = "json", ttl_days: float | None = None, timeout: float | None = None,
-                max_attempts: int | None = None):
+                max_attempts: int | None = None, validate=None):
+        """Petición con caché, límites de uso, reintentos y procedencia.
+
+        `validate(valor)` (opcional) devuelve None si la respuesta es la que se esperaba de la fuente o un texto
+        con el problema (p. ej. una página de verificación anti-robots con HTTP 200): una respuesta así no se
+        guarda en la caché y se lanza `NetworkError` (motivo "respuesta"), y una copia de la caché que no la
+        supera se descarta con aviso, como una copia alterada.
+        """
         method = method.upper()
         params = {k: v for k, v in (params or {}).items() if v is not None}
         key = cache_key(method, url, params, json_body, data)
@@ -720,7 +745,7 @@ class HttpClient:
                                               f"(no se usa la caché) y no hay red: {self._shown_url(url)}", trace)
         problem = None
         if use_cache and not self.fresh:
-            value, problem = self._from_cache(cache_file, key, ttl, expect, trace, url)
+            value, problem = self._from_cache(cache_file, key, ttl, expect, trace, url, validate)
             if value is not _MISS:
                 return value
         if self.cfg.offline:
@@ -781,6 +806,10 @@ class HttpClient:
             except ValueError as exc:
                 raise self._failure(NetworkError, f"Respuesta no válida de {host} (se esperaba JSON): {exc}",
                                     trace, status=status, attempts=attempt, motivo="respuesta") from None
+            invalid = _validation_problem(validate, value)
+            if invalid:   # no se guarda: una página de error no debe servirse después desde la caché
+                raise self._failure(NetworkError, f"Respuesta no válida de {host} (HTTP {status}): {invalid}",
+                                    trace, status=status, attempts=attempt, motivo="respuesta")
             moment = time.time()
             sha = sha256_text(body)
             kept = _kept_headers(resp.headers)
@@ -907,10 +936,15 @@ def export_cache(client: HttpClient, destination: Path, include_confidential: bo
         entries.append(entry)
     bundle = {"formato": EXPORT_FORMAT, "exportado": utc_now(), "nutria": __version__, "entradas": entries}
     destination = Path(destination)
+    if destination.is_dir():
+        raise IsADirectoryError(21, "el destino de la exportación es un directorio", str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_name(f"{destination.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(bundle, ensure_ascii=False, default=str), "utf-8")
-    os.replace(tmp, destination)
+    try:
+        tmp.write_text(json.dumps(bundle, ensure_ascii=False, default=str), "utf-8")
+        os.replace(tmp, destination)
+    finally:
+        tmp.unlink(missing_ok=True)   # tras un fallo no queda un fichero temporal a medias
     return {"fichero": str(destination), "entradas": len(entries), "no_exportadas": skipped,
             "confidenciales_omitidas": confidential_left,
             "confidenciales_incluidas": sum(1 for e in entries if e["confidencial"]), "sha256": sha256_file(destination)}
@@ -943,14 +977,24 @@ def _import_problem(item) -> str | None:
     return None
 
 
-def import_cache(client: HttpClient, source: Path) -> dict:
+def import_cache(client: HttpClient, source: Path, expected_sha256: str | None = None) -> dict:
     """Importa una exportación de `export_cache`: comprueba cada entrada (huella, clave y fecha), registra la
     importación en la procedencia (con la huella del fichero) y escribe las copias, que conservan su fecha
-    original. No sustituye una copia local válida igual o más reciente."""
+    original. No sustituye una copia local válida igual o más reciente. Con `expected_sha256` (la huella que
+    mostró `cache exportar`), un fichero distinto no se importa."""
     source = Path(source)
+    raw = source.read_bytes()
+    if expected_sha256 is not None:
+        wanted = str(expected_sha256).strip().lower()
+        actual = sha256_text(raw)
+        if not _HEX64_RE.fullmatch(wanted):
+            raise ValueError(f"--sha256 no es una huella SHA-256 (64 caracteres hexadecimales): {expected_sha256!r}")
+        if actual != wanted:
+            raise ValueError(f"{source}: su huella SHA-256 ({actual}) no es la esperada ({wanted}); el fichero no es "
+                             "el que se exportó o se ha alterado: no se importa nada")
     try:
-        bundle = json.loads(source.read_text("utf-8"))
-    except ValueError as exc:
+        bundle = json.loads(raw.decode("utf-8"))
+    except ValueError as exc:   # también UnicodeDecodeError
         raise ValueError(f"{source} no es JSON válido: {exc}") from None
     if not isinstance(bundle, dict) or bundle.get("formato") != EXPORT_FORMAT:
         raise ValueError(f"{source} no es una exportación de la caché de nutria (formato '{EXPORT_FORMAT}')")
@@ -971,7 +1015,7 @@ def import_cache(client: HttpClient, source: Path) -> dict:
         # registra en la procedencia y se escribe en la copia, para que su huella coincida al leerla.
         accepted.append({**item, "cabeceras": _kept_headers(item.get("cabeceras") or {})})
     log_event(client.cfg, "cache_importar",
-              inputs={"fichero": str(source), "sha256": sha256_file(source), "exportado": bundle.get("exportado"),
+              inputs={"fichero": str(source), "sha256": sha256_text(raw), "exportado": bundle.get("exportado"),
                       "nutria_origen": bundle.get("nutria")},
               outputs={"entradas": [{"clave": i["clave"], "sha256": i["sha256"], "fecha": i["fecha"],
                                      "cabeceras": i["cabeceras"]} for i in accepted],

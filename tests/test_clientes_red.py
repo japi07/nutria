@@ -1180,30 +1180,72 @@ def test_doctor_checks_keys_lens_webfetch_and_records_versions(proj, router, cap
     assert SECRET not in (proj / "research" / "procedencia.jsonl").read_text("utf-8")
 
 
+MARKER = '{"doctor_hook": "ok", "python": "venv", "nutria": "/ruta/nutria/__init__.py"}'
+# run_hook.sh de la versión que prueba el siguiente intérprete cuando uno falla (la del paquete de informes)
+FALLTHROUGH_RUNNER = """#!/bin/sh
+dir=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$dir/../.." && pwd)
+payload=$(cat)
+for py in "$root/.venv/bin/python" python3 python; do
+  case "$py" in /*) [ -x "$py" ] || continue ;; *) command -v "$py" >/dev/null 2>&1 || continue ;; esac
+  out=$(printf '%s' "$payload" | "$py" "$dir/$1" 2>/dev/null) && { printf '%s\\n' "$out"; exit 0; }
+done
+exit 0
+"""
+
+
+def _fake_venv(proj, script):
+    venv = proj / ".venv" / "bin"
+    venv.mkdir(parents=True, exist_ok=True)
+    (venv / "python").write_text(script, "utf-8")
+    (venv / "python").chmod(0o755)
+    return venv / "python"
+
+
 def test_doctor_checks_the_hook_interpreter(proj, router, capsys, monkeypatch):
+    # D10-12: doctor ejecuta una copia del propio run_hook.sh con una sonda en lugar del hook
     monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
     _doctor_ok_routes(router)
     (proj / "scripts" / "hooks").mkdir(parents=True)
-    (proj / "scripts" / "hooks" / "run_hook.sh").write_text("#!/bin/sh\n", "utf-8")
-    venv = proj / ".venv" / "bin"
-    venv.mkdir(parents=True)
-    (venv / "python").write_text("#!/bin/sh\necho 'ModuleNotFoundError: No module named jsonschema' >&2\nexit 1\n",
-                                 "utf-8")
-    (venv / "python").chmod(0o755)
+    (proj / "scripts" / "hooks" / "run_hook.sh").write_text((ROOT / "scripts" / "hooks" / "run_hook.sh").read_text(
+        "utf-8"), "utf-8")
+    _fake_venv(proj, "#!/bin/sh\necho 'ModuleNotFoundError: No module named jsonschema' >&2\nexit 3\n")
     code, out, _ = run(capsys, ["doctor"])
-    assert code == cli.SALIDA_RESULTADO and "sin_dependencias" in out and "intérprete del hook" in out
+    runner_text = (ROOT / "scripts" / "hooks" / "run_hook.sh").read_text("utf-8")
+    if "exit $?" in runner_text:      # run_hook.sh que usa el primer intérprete que encuentra: el hook falla
+        assert code == cli.SALIDA_RESULTADO and "sin_dependencias" in out and "intérprete del hook" in out
+    else:                             # run_hook.sh que prueba el siguiente: usa python3 y avisa
+        assert code == 0 and "usa otro intérprete" in out
     seen = proj / "argumentos.txt"
-    (venv / "python").write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{seen}"\necho /ruta/nutria/__init__.py\n', "utf-8")
+    _fake_venv(proj, f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{seen}"\necho \'{MARKER}\'\n')
     code, out, _ = run(capsys, ["--json", "doctor"])
-    assert code == 0 and json.loads(out)["hook"]["estado"] == "ok"
-    # como check_research_file.py, la comprobación antepone <raíz>/src a sys.path e importa lo que usa el hook
-    args = seen.read_text("utf-8").splitlines()
-    assert args[0] == "-c" and args[-1] == str(proj / "src")
-    assert "sys.path.insert(0, sys.argv[1])" in args[1] and "nutria.reports.check" in args[1] and "jsonschema" in args[1]
-    (venv / "python").unlink()                                               # sin .venv: python3 del sistema
+    hook = json.loads(out)["hook"]
+    assert code == 0 and hook["estado"] == "ok" and hook["interprete"] == "venv"
+    # la sonda directa antepone <raíz>/src a sys.path e importa lo que usa check_research_file.py; la copia de
+    # run_hook.sh ejecuta la sonda como un hook (un fichero de scripts/hooks)
+    text = seen.read_text("utf-8")
+    args = text.splitlines()
+    assert args[0] == "-c" and str(proj / "src") in args
+    assert "sys.path.insert(0, sys.argv[1])" in text and "nutria.reports.check" in text and "jsonschema" in text
+    assert any(a.endswith("doctor_probe.py") for a in args)
+    (proj / ".venv" / "bin" / "python").unlink()                            # sin .venv ni Python: falla cerrado
     monkeypatch.setattr("shutil.which", lambda name: None)
     code, out, _ = run(capsys, ["--json", "doctor"])
     assert code == cli.SALIDA_RESULTADO and json.loads(out)["hook"]["estado"] == "no_encontrado"
+
+
+def test_doctor_hook_check_follows_the_installed_runner(proj, router, capsys, monkeypatch):
+    # Con un run_hook.sh que prueba el siguiente intérprete, una .venv rota no impide el hook si python3 sirve
+    monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
+    _doctor_ok_routes(router)
+    (proj / "scripts" / "hooks").mkdir(parents=True)
+    (proj / "scripts" / "hooks" / "run_hook.sh").write_text(FALLTHROUGH_RUNNER, "utf-8")
+    broken = _fake_venv(proj, "#!/bin/sh\necho 'ModuleNotFoundError: No module named jsonschema' >&2\nexit 3\n")
+    code, out, _ = run(capsys, ["--json", "doctor"])
+    hook = json.loads(out)["hook"]
+    assert code == 0 and hook["estado"] == "ok" and hook["interprete"] != str(broken)
+    assert "usa otro intérprete" in hook["detalle"] and str(broken) in hook["detalle"]
+    assert [c["ok"] for c in hook["candidatos"]][:2] == [False, True]
 
 
 def test_doctor_fails_without_project(tmp_path, router, capsys, monkeypatch):
@@ -1215,10 +1257,11 @@ def test_doctor_fails_without_project(tmp_path, router, capsys, monkeypatch):
 
 
 def test_doctor_reads_the_webfetch_domains_from_docs_fuentes(tmp_path):
-    # doctor comprueba los dominios que declara docs/FUENTES.md (no una copia que pueda desfasarse)
-    text = re.sub(r"\s+", " ", (ROOT / "docs" / "FUENTES.md").read_text("utf-8"))
-    listed = text[text.index("Para lectura con WebFetch:"):text.index("Comprueba con")]
-    assert cli._webfetch_dominios(ROOT) == (re.findall(r"`([a-z0-9.-]+\.[a-z]{2,})`", listed), "docs/FUENTES.md")
+    # doctor comprueba los dominios que declara docs/FUENTES.md (no una copia que pueda desfasarse). Si esta prueba
+    # falla tras editar FUENTES.md, mantén la frase «Para lectura con WebFetch: `dominio`, ... Comprueba con».
+    domains, origin = cli._webfetch_dominios(ROOT)
+    assert origin == "docs/FUENTES.md", "doctor no reconoce la lista de dominios de WebFetch de docs/FUENTES.md"
+    assert "eur-lex.europa.eu" in domains and all("." in d and " " not in d for d in domains)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "FUENTES.md").write_text(
         "Para lectura con WebFetch: `eur-lex.europa.eu`,\n`joint-research-centre.ec.europa.eu`. Comprueba con algo.",
@@ -1264,12 +1307,12 @@ def _assert_json_error(out, err, code, tipo):
 
 def test_errors_with_json_are_structured_and_codes_are_coherent(proj, router, capsys, monkeypatch):
     cases = [
-        (["--json", "oportunidad", "ver", "O-9999"], cli.SALIDA_ENTRADA, "entrada"),           # SystemExit(str)
         (["--json", "meta", "analizar", "noexiste.csv"], cli.SALIDA_ENTRADA, "entrada"),
         (["--json", "buscar", "pubmed", "x"], cli.SALIDA_RED, "red"),
         (["--json", "--offline", "buscar", "pubmed", "x"], cli.SALIDA_RED, "red"),
         (["--json", "buscar", "pubmed"], cli.SALIDA_ENTRADA, "entrada"),                       # argparse
-        (["--json", "--agente", "evaluador-1", "procedencia"], cli.SALIDA_ENTRADA, "entrada"),
+        (["--json", "cache", "importar", "noexiste.json"], cli.SALIDA_ENTRADA, "entrada"),
+        (["--json", "normativa", "eurlex", "767/2009"], cli.SALIDA_ENTRADA, "entrada"),
     ]
     for argv, code, tipo in cases:
         got, out, err = run(capsys, argv)
@@ -1277,25 +1320,58 @@ def test_errors_with_json_are_structured_and_codes_are_coherent(proj, router, ca
         _assert_json_error(out, err, code, tipo)
     assert _assert_json_error(*run(capsys, ["--json", "--offline", "buscar", "pubmed", "x"])[1:], 4, "red")["motivo"] \
         == "offline"
+    # Una orden que se niega (rol, permisos...) da siempre un error JSON con un código de la tabla, sin traza.
+    got, out, err = run(capsys, ["--json", "--agente", "evaluador-1", "procedencia"])
+    payload = _assert_json_error(out, err, got, cli.CODIGOS_SALIDA[got][0])
+    assert got in (cli.SALIDA_ENTRADA, cli.SALIDA_REGISTRO) and payload["error"]
     opp = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
     (proj / "o.json").write_text(json.dumps(opp), "utf-8")
     assert run(capsys, ["oportunidad", "nueva", "--datos", "o.json"])[0] == 0
     got, out, err = run(capsys, ["--json", "oportunidad", "estado", "O-0001", "en_validacion", "--motivo", "x"])
     _assert_json_error(out, err, cli.SALIDA_REGISTRO, "registro")
+
+
+def test_a_missing_registry_identifier_has_the_same_code_in_every_order(proj, capsys):
+    # D10-8: «un recurso inexistente es 1 o 2 según la orden»; ahora un identificador que no existe en el registro es
+    # siempre el código 3, lo detecte la orden (SystemExit con mensaje) o la base de datos (RegistryError)
+    for argv in (["oportunidad", "ver", "O-9999"], ["hipotesis", "ver", "H-9999"],
+                 ["oportunidad", "estado", "O-9999", "descartada", "--motivo", "x"],
+                 ["puntuar", "compuerta", "O-9999", "seguridad", "bloqueada", "--motivo", "x"]):
+        got, out, err = run(capsys, ["--json", *argv])
+        assert got == cli.SALIDA_REGISTRO, argv
+        assert "O-9999" in _assert_json_error(out, err, cli.SALIDA_REGISTRO, "registro")["error"] or "H-9999" in out
     code, out, err = run(capsys, ["oportunidad", "ver", "O-9999"])
-    assert code == cli.SALIDA_ENTRADA and err.startswith("Error: No existe O-9999")
+    assert code == cli.SALIDA_REGISTRO and err.startswith("Error de registro: No existe O-9999")
+    # un proyecto sin base de datos es una condición previa (2), aunque el mensaje empiece por «No existe»
+    (proj / "research" / "nutria.sqlite").unlink()
+    code, out, err = run(capsys, ["--json", "oportunidad", "ver", "O-0001"])
+    assert code == cli.SALIDA_ENTRADA and "nutria init" in _assert_json_error(out, err, 2, "entrada")["error"]
 
 
 @pytest.mark.parametrize("argv", [["meta", "analizar", "{d}"], ["oportunidad", "nueva", "--datos", "{d}"],
                                   ["extraccion", "agregar", "--datos", "{d}"], ["econ", "ganadero", "{d}"],
                                   ["informe", "comprobar", "{d}"], ["afirmacion", "agregar", "--datos", "{f}/x.json"]])
 def test_oserror_inputs_give_a_message_and_the_input_code(proj, capsys, argv):
+    # D9-4 (b): un directorio o una ruta imposible dan un mensaje y el código de entrada, sin traza (las órdenes son
+    # de otros paquetes: pueden comprobar la ruta antes y dar su propio mensaje, pero nunca una traza)
     (proj / "fichero.txt").write_text("x", "utf-8")
     argv = [a.format(d=str(proj / "research"), f=str(proj / "fichero.txt")) for a in argv]
     code, out, err = run(capsys, argv)
-    assert code == cli.SALIDA_ENTRADA and "Traceback" not in err and "No se puede usar" in err
+    assert code == cli.SALIDA_ENTRADA and "Traceback" not in err and err.strip()
     code, out, err = run(capsys, ["--json", *argv])
-    assert _assert_json_error(out, err, cli.SALIDA_ENTRADA, "entrada")["error"].startswith("No se puede usar")
+    assert _assert_json_error(out, err, cli.SALIDA_ENTRADA, "entrada")["error"]
+
+
+@pytest.mark.parametrize("argv, kind", [(["cache", "importar", "{d}"], "es un directorio"),
+                                        (["cache", "importar", "{f}/x.json"], "no es un directorio"),
+                                        (["cache", "exportar", "{d}", "--forzar"], "es un directorio")])
+def test_oserror_in_own_orders_names_the_path_and_the_cause(proj, capsys, argv, kind):
+    (proj / "fichero.txt").write_text("x", "utf-8")
+    argv = [a.format(d=str(proj / "research"), f=str(proj / "fichero.txt")) for a in argv]
+    code, out, err = run(capsys, argv)
+    assert code == cli.SALIDA_ENTRADA and "Traceback" not in err
+    assert err.startswith("Error: No se puede usar") and f"({kind})" in err
+    assert not list(proj.glob("research.*.tmp"))                    # sin ficheros temporales a medias
 
 
 def test_permission_error_is_an_input_error(proj, capsys, monkeypatch):
@@ -1348,21 +1424,19 @@ def test_keyboard_interrupt_has_its_own_code(proj, capsys, monkeypatch):
     assert run(capsys, ["estado"])[0] == cli.SALIDA_INTERRUMPIDA
 
 
-class _Verification:
-    def __init__(self, status, ok=False, retracted=None):
-        self.status, self.ok, self.retracted = status, ok, retracted
-        self.kind, self.identifier, self.mismatch, self.title, self.message = "doi", "10.1/x", False, None, "m"
-        self.year, self.journal = None, None
-
-    def to_dict(self):
-        return {"estado": self.status, "ok": self.ok}
+def _verification(identifier, status, ok):
+    """Verification real (de nutria.verify.citations): «ok» exige verificada, retractación comprobada y sin
+    discrepancia; con ok=False y estado verificada se simula una retractación desconocida."""
+    from nutria.verify import citations
+    return citations.Verification(identifier=identifier, kind="doi", status=status, title="T", message="m",
+                                  retracted=False if ok else None)
 
 
 @pytest.mark.parametrize("status, ok, code", [("error_red", False, 4), ("offline", False, 4), ("no_encontrada", False, 6),
                                               ("verificada", False, 1), ("verificada", True, 0)])
 def test_verification_exit_codes_match_the_table(proj, capsys, monkeypatch, status, ok, code):
     from nutria.verify import citations
-    monkeypatch.setattr(citations, "verify_doi", lambda client, doi, cita=None: _Verification(status, ok, False))
+    monkeypatch.setattr(citations, "verify_doi", lambda client, doi, *a, **k: _verification(doi, status, ok))
     assert run(capsys, ["verificar", "--doi", "10.1/x"])[0] == code
     if status != "verificada":
         got, out, err = run(capsys, ["--json", "fuente", "agregar", "--doi", "10.1/x"])
@@ -1386,8 +1460,9 @@ def test_pending_verification_batch_never_exits_zero_on_failures(proj, capsys, m
     finally:
         conn.close()
     answers = dict(zip(["10.1000/p0", "10.1000/p1"], statuses))
+    # «verificada» con retractación desconocida: sin metadatos que registrar, el lote solo cuenta el estado
     monkeypatch.setattr(citations, "verify_doi",
-                        lambda client, doi, cita=None: _Verification(answers[doi], answers[doi] == "verificada", False))
+                        lambda client, doi, *a, **k: _verification(doi, answers[doi], answers[doi] == "verificada"))
     got, out, _ = run(capsys, ["--json", "verificar", "--pendientes"])
     assert got == code and [o["estado"] for o in json.loads(out)] == statuses
 
