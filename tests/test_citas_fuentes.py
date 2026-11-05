@@ -552,6 +552,18 @@ def test_titulo_que_contiene_el_nombre_de_la_revista():
         assert not _bad(check) and check.year_in_citation == 2020, (style, check)
 
 
+@pytest.mark.parametrize("cite", [
+    f"Pérez J, García A, 2020, {TITLE}, Animal 14:1-10",
+    f"Pérez J García A 2020 {TITLE} Animal 14 1-10",
+    f"Pérez J, García A (2020) {TITLE}, Animal, 14(1), pp. 1-10.",
+    f"Pérez J García A 2020 {TITLE} Journal of Animal Science 98 1-10",
+])
+def test_otra_revista_pegada_al_titulo_no_se_absorbe_en_el(cite):
+    # T11 en estilos sin puntos: la revista equivocada no se toma por una palabra de más del título.
+    check = c.compare_citation(cite, **REC)
+    assert check.journal_ok is False and not check.title_extra, check
+
+
 def test_negacion_o_calificativo_recortado_no_se_sella(net):
     for real, cited in ((EFFECT, "No effect" + EFFECT[len("Effect"):]),
                         (VIT_E, VIT_E.replace("vitamin E", "vitamin D3")), (SERIES + ". Part I", SERIES + ". Part 2")):

@@ -995,8 +995,18 @@ def _trim_span(text: str, span: list[_Tok], all_toks: list[_Tok], real: set[str]
         while k > 0 and toks[k - 1].norm not in real and not _is_qualifier(toks[:k]) and (
                 _has_digit(toks[k - 1].norm) or not _is_sig(toks[k - 1].norm) or toks[k - 1].norm in _NOISE):
             k -= 1
-        if k < len(toks) and _bibliographic(text, toks[k:], _other_year(all_toks, toks[k:])):
+        run = toks[k:]
+        if run and _bibliographic(text, run, _other_year(all_toks, run)):
             toks = toks[:k]
+            if start is None and any(_has_digit(t.norm) for t in run):
+                # Tras el título venían volumen y páginas pero no la revista del registro: las palabras finales que no
+                # son del título real son la revista citada ("..., Animal 14:1-10"), que se compara aparte
+                # (`_check_journal`). Nunca una cifra, una negación ni un calificativo: esos se quedan en el título.
+                j = len(toks)
+                while j > 1 and toks[j - 1].norm not in real and not _has_digit(toks[j - 1].norm) \
+                        and toks[j - 1].norm not in _CRITICAL_WORDS and not _is_qualifier(toks[:j]):
+                    j -= 1
+                toks = toks[:j]
     return toks
 
 
