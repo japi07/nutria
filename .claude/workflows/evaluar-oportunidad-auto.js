@@ -61,7 +61,7 @@ const EJECUCION = OPCIONES.ejecucion.valor
 const MIN_COMPARABLES = 3
 const DIR = `research/datos/${ID}`
 const RUTA_INFORME = `research/informes/${ID}.md`
-const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria, contexto biológico completo. Atribuye tus órdenes con "nutria --agente <tu-rol>" y nunca uses --firma-humana.'
+const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria, contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana.'
 
 const EVALUADORES = [
   { id: 'evaluador-1', modelo: 'opus' },

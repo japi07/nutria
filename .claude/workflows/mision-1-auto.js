@@ -66,7 +66,7 @@ const MAX_RONDAS_EXTRA = 2
 // Mínimo del encargo: al menos 10 oportunidades, al menos 6 en rumiantes (la misma proporción si el tope es menor).
 const MINIMO_MISION = { oportunidades: 10, rumiantes: 6 }
 const OBJ_RUM = N_OPS >= MINIMO_MISION.oportunidades ? MINIMO_MISION.rumiantes : Math.ceil(N_OPS * 0.6)
-const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria (solo fuentes obtenidas con nutria buscar o WebSearch y verificadas), contexto biológico completo. Atribuye tus órdenes con "nutria --agente <tu-rol>" y nunca uses --firma-humana. Si una fuente no responde, dilo y no lo sustituyas por suposiciones.'
+const REGLAS = 'Sigue CLAUDE.md: etiquetas [PUB]/[DER]/[HIP]/[SUP]/[DESC], nada de citas de memoria (solo fuentes obtenidas con nutria buscar o WebSearch y verificadas), contexto biológico completo. Atribuye cada orden con "nutria --agente <tu-rol>" (tu rol, o la identidad que te indique la tarea, escrito literalmente: sin variables; nutria se ejecuta directamente, no desde Python, xargs ni eval) y nunca uses --firma-humana. Si una fuente no responde, dilo y no lo sustituyas por suposiciones.'
 
 // ---------------------------------------------------------------- fallos y presupuesto
 // Los fallos de agentes se cuentan y se informan; nunca se descartan en silencio.
