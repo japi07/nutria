@@ -109,8 +109,8 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   como la monensina)** y a los reductores de metano que sean antibióticos. La única excepción es su autorización como
   coccidiostático o histomonóstato (categoría propia de aditivos, para las especies y condiciones de esa
   autorización), que no ampara el uso como modulador ruminal (pendiente de verificación). Para esa finalidad no hay
-  vía como pienso ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no basta cambiar la
-  alegación), y la vía del medicamento veterinario queda fuera de alcance. Con otros antimicrobianos (p. ej.
+  vía como pienso ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no
+  basta cambiar la alegación), y la vía del medicamento veterinario queda fuera de alcance. Con otros antimicrobianos (p. ej.
   extractos vegetales o compuestos de síntesis) propuestos con esa finalidad, hay que comprobar si encajan en la
   definición de antibiótico del reglamento (antimicrobiano producido por un microorganismo o derivado de él; art. 2,
   pendiente de verificación) y si son medicamento por función (Reglamento (UE) 2019/6, art. 4); mientras no esté
