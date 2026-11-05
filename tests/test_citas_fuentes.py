@@ -261,6 +261,7 @@ def _bad(check) -> bool:
     f"Pérez J, García A. 2020. {TITLE.replace('rumen-protected', 'rumen protected')}. JDS 103:1-10.",
     f"Pérez J, García A, on behalf of the XYZ Study Group. 2020. {TITLE}. J Dairy Sci 103:1-10.",
     f"Pérez J, Garsia A, Lopes L. 2020. {TITLE}. J Dairy Sci 103:1-10.",     # coautores escritos de otra forma
+    f"Juan A. Pérez, Ana B. García, and Luis López. 2020. {TITLE}. Journal of Dairy Science 103:1–10.",
     "Pérez J, García A. 2020. J Dairy Sci 103:1-10.",                        # sin título: no se compara
 ])
 def test_cita_legitima_sin_discrepancia(cite):
@@ -286,6 +287,7 @@ def test_cita_legitima_sin_discrepancia(cite):
     (f"Smith J, Pérez J. 2020. {TITLE}. J Dairy Sci 103:1-10.", "author"),
     (f"García A, Pérez J. 2020. {TITLE}. J Dairy Sci 103:1-10.", "author"),
     (f"Smith J Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.", "author"),
+    (f"Smith J. Pérez J. 2020. {TITLE}. J Dairy Sci 103:1-10.", "author"),
     (f"Inventado Z, Ficticio Q. 2020. {TITLE}. J Dairy Sci 103:1-10.", "author"),
     # T11: otra revista; y la revista no se salta con notas, volumen o páginas delante
     (f"Pérez J, García A. 2020. {TITLE}. Animal 14:1-10.", "journal"),

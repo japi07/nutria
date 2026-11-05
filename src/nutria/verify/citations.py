@@ -469,12 +469,13 @@ def _acronym(name: str | None) -> str | None:
 
 def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
     """Primer autor de la cita: palabras del principio hasta la primera coma, punto y coma, '&', paréntesis,
-    cifra, conjunción ("and", "y", "et al."), palabra en minúscula (salvo partículas) o fin de frase. Tras una
-    inicial ("Pérez J D", "J. D. Pérez") sigue solo si viene otra inicial o si aún no hay apellido: ni
-    "Smith J. Pérez J." ni "Smith J Pérez J" hacen de Pérez el primer autor."""
+    cifra, conjunción ("and", "y", "et al."), palabra en minúscula (salvo partículas) o fin de frase. Tras
+    apellido e iniciales, otro apellido seguido de sus iniciales es el segundo autor: ni "Smith J. Pérez J." ni
+    "Smith J Pérez J" hacen de Pérez el primer autor; "Juan A. Pérez" (nombre, inicial y apellido) sí es uno."""
     lead: list[_Tok] = []
     prev_end = 0
-    for tok in toks:
+    separator = r"[,;&(\[:]|[.?!]\s"
+    for idx, tok in enumerate(toks):
         gap = text[prev_end:tok.start]
         if lead:
             if re.search(r"[,;&(\[:]", gap):
@@ -483,7 +484,9 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
                 break
             if (_is_initial(lead[-1].raw) and not _is_initial(tok.raw)
                     and any(not _is_initial(t.raw) for t in lead)):
-                break                 # apellido + iniciales + otro apellido: empieza el segundo autor
+                nxt = toks[idx + 1] if idx + 1 < len(toks) else None
+                if nxt is not None and _is_initial(nxt.raw) and not re.search(separator, text[tok.end:nxt.start] + " "):
+                    break             # apellido + iniciales + otro apellido con iniciales: segundo autor
         if _has_digit(tok.norm) or tok.norm in _LEAD_CONJ:
             break
         if tok.raw[:1].islower() and tok.norm not in _PARTICLES:
