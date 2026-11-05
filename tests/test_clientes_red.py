@@ -229,8 +229,15 @@ def test_planted_entry_under_another_key_and_legacy_entry_are_rejected(cfg):
         HttpClient(cfg, session=Session(net)).get_json(URL, params={"q": "b"})
     legacy = {"ts": time.time(), "method": "GET", "url": URL, "params": {"q": "b"}, "body": '{"dato": 1}'}
     target.write_text(json.dumps(legacy), "utf-8")               # formato anterior, sin huella
-    with pytest.raises(OfflineError, match="sin huella SHA-256"):
+    with pytest.raises(OfflineError, match="sin huella SHA-256.*con red, la consulta siguiente la renueva"):
         HttpClient(cfg, session=Session(net)).get_json(URL, params={"q": "b"})
+    # Con red, la copia antigua se descarta con aviso y se sustituye por una con huella, que ya sirve sin red.
+    cfg.offline = False
+    online = HttpClient(cfg, session=Session(net))
+    assert online.get_json(URL, params={"q": "b"}) == {"dato": "verdad"}
+    assert any("sin huella SHA-256" in a for a in online.avisos)
+    cfg.offline = True
+    assert HttpClient(cfg, session=Session(net)).get_json(URL, params={"q": "b"}) == {"dato": "verdad"}
 
 
 def test_copy_age_is_the_oldest_of_the_file_and_provenance_dates(cfg):

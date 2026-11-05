@@ -629,7 +629,10 @@ class HttpClient:
             return None, None, "formato desconocido"
         stored = record.get("sha256")
         if not stored:
-            return None, None, "sin huella SHA-256 (copia de una versión anterior de nutria o manipulada)"
+            # Las copias de las versiones anteriores de nutria no tenían huella ni evento que las confirme: no se
+            # migran (sería una segunda vía de confirmación); con red, la consulta siguiente las sustituye.
+            return None, None, ("sin huella SHA-256 (copia de una versión anterior de nutria o manipulada; con red, la "
+                                "consulta siguiente la renueva)")
         actual = sha256_text(record["body"])
         if stored != actual:
             return None, None, (f"la huella SHA-256 no coincide con el contenido (guardada {str(stored)[:12]}…, "
