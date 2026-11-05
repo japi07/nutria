@@ -8,8 +8,9 @@ validación), D7-11 (dianas por símbolo de gen y estrategias independientes), D
 Reactome, Lens, PubChem, ChEMBL, UniProt, EUR-Lex y router de modelos con sus tres proveedores; recursos cerrados;
 fichero de restricciones), D7-13 (paginación de PubMed, Europe PMC y OpenAlex; avisos de las API), D7-14, D10-12 y
 D9-16 (no encontrado, errores etiquetados por su causa, doctor con y sin red y su comprobación del run_hook.sh
-instalado, GHS, router sin red, init con NUTRIA_HOME), D7-15 (versiones de las bases), D10-8 y D9-4 (errores en
-JSON, tabla única de códigos, «no existe» coherente, OSError), D5-15 (EUR-Lex) y las partes de D1-11
+instalado, GHS, router sin red y `llm preguntar|evaluar` sin respuesta, init con NUTRIA_HOME), D7-15 (versiones de
+las bases, sus fechas y direcciones), D10-8 y D9-4 (errores en JSON por stdout y en texto por stderr, tabla única de
+códigos, «no existe» coherente, OSError, tuberías y flujos estándar cerrados), D5-15 (EUR-Lex) y las partes de D1-11
 (confidencialidad de consultas) y D10-1 (ningún mensaje recomienda --offline).
 Toda la red está simulada: no prueban que los servicios reales respondan así (eso es tests/test_vivo.py).
 Las pruebas que tocan órdenes de otros paquetes (fuente, verificar, oportunidad...) solo comprueban el contrato de
