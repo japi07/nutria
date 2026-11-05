@@ -1,12 +1,26 @@
 import json
+from pathlib import Path
 
 import pytest
 
+from nutria import db
 from nutria.reports import check as rc
-from nutria.reports.check import check_report, stamp_status, write_stamp
+from nutria.reports.check import check_report, review_digest, stamp_status, verify_report, write_stamp
+from nutria.verify.citations import Verification, extract_identifiers
 
-SECTIONS = "\n".join(f"## {n}. Sección {n}\n" + ("Alegación prevista: ninguna.\n" if n == 14 else "")
-                     for n in range(1, 20))
+GATES = ("seguridad", "regulatoria", "analitica", "propiedad_intelectual", "destino_digestivo", "etica")
+SECTION_TEXT = {
+    7: ("Destino digestivo en vacuno: escape ruminal [DESC] (se medirá in vitro) y digestibilidad intestinal [DESC] "
+        "(se medirá in situ).\n"),
+    14: ("Ruta regulatoria preliminar: aditivo_zootecnico [SUP].\n\n| Compuerta | Estado |\n|---|---|\n"
+         + "\n".join(f"| {g} | no_resuelta |" for g in GATES) + "\n\nAlegación prevista: ninguna.\n"),
+}
+SECTIONS = "\n".join(f"## {n}. Sección {n}\n" + SECTION_TEXT.get(n, "Texto [HIP].\n") for n in range(1, 20))
+CLAIM = "La respuesta fue de 1,2 kg/d en vacas lecheras [PUB] [R1]."
+ANEXO_OK = ("| Ref | Afirmación | Respaldo | Motivo |\n|---|---|---|---|\n"
+            "| R1 | La respuesta fue de 1,2 kg/d en vacas lecheras | respalda | Tabla 2 |\n")
+BIB = "[R1] Autor. 2020. Título. DOI: 10.1234/x\n"
+EXAMPLES = Path(__file__).resolve().parents[1] / "ejemplos"
 
 
 @pytest.fixture(autouse=True)
@@ -14,12 +28,22 @@ def stamp_key(tmp_path, monkeypatch):
     monkeypatch.setenv("NUTRIA_CLAVE_SELLO", str(tmp_path / "clave"))
 
 
+@pytest.fixture(autouse=True)
+def human_terminal(monkeypatch):
+    """Las pruebas simulan a la persona que registra la revisión: sin variables de contexto de agente."""
+    for name in ("NUTRIA_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def make(body: str, bib: str, estado: str = "borrador", humano: str = "null", anexo: str = "") -> str:
-    return (f"---\nestado: {estado}\nrevisado_por_humano: {humano}\n---\n# Informe\n{SECTIONS}\n{body}\n"
-            f"## 20. Bibliografía científica verificable\n{bib}\n## Anexo A. Tabla\n{anexo}\n")
+    return (f"---\noportunidad: O-0001\nestado: {estado}\nespecie: vacuno lechero\n"
+            "etapa: 'periodo de transición (-21 a +21 días respecto al parto)'\n"
+            f"revisado_por_humano: {humano}\n---\n# Informe\n"
+            f"{SECTIONS}\n{body}\n## 20. Bibliografía científica verificable\n{bib}\n## Anexo A. Tabla\n{anexo}\n")
 
 
-ANEXO_OK = "| Ref | Afirmación | Respaldo | Motivo |\n|---|---|---|---|\n| R1 | dato | respalda | leído |\n"
+def _errors(text: str, **kw) -> list[str]:
+    return [str(i) for i in check_report(text, **kw) if i.severity == "error"]
 
 
 def test_detects_unreferenced_pub_and_missing_entries():
@@ -44,46 +68,60 @@ def test_entry_without_identifier_is_error_and_missing_section():
     assert any("Falta la sección 2" in e for e in errors)
 
 
-def test_strict_mode_requires_support_and_human_review():
-    # D3-3 / D3-6
-    text = make("La respuesta fue de 1,2 kg/d [PUB] [R1].\n", "[R1] Autor. 2020. Título. PMID: 12345678\n",
-                estado='"Final"')
-    errors = [str(i) for i in check_report(text) if i.severity == "error"]
+def test_strict_mode_requires_support_and_human_review(tmp_path):
+    # D3-3 / D3-6: respaldo por afirmación, revisión del crítico y revisión humana registrada para el contenido exacto
+    text = make(CLAIM, BIB, estado='"Final"')
+    errors = _errors(text)
     assert any("respaldo de R1" in e for e in errors)
     assert any("revisión humana" in e for e in errors)
-    ok = make("La respuesta fue de 1,2 kg/d [PUB] [R1].\n", "[R1] Autor. 2020. Título. PMID: 12345678\n",
-              estado="final", humano="Ana Pérez", anexo=ANEXO_OK)
-    assert [i for i in check_report(ok) if i.severity == "error"] == []
+    assert any("Falta la revisión del crítico" in e for e in errors)
+    (tmp_path / "nutria.toml").write_text("", "utf-8")                       # proyecto mínimo
+    critique = tmp_path / "research" / "revisiones" / "informes_O-0001_redteam.md"
+    critique.parent.mkdir(parents=True)
+    critique.write_text("# Revisión adversarial de research/informes/inf.md\n", "utf-8")
+    report = tmp_path / "research" / "informes" / "inf.md"
+    conn = db.connect(tmp_path / "registro.sqlite")
+    db.upsert_source(conn, {"doi": "10.1234/x", "title": "t", "verified": True, "retracted": False})
+    opportunity = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
+    opportunity["ruta_regulatoria_preliminar"] = "aditivo_zootecnico"      # la que recoge la sección 14
+    assert db.add_opportunity(conn, opportunity) == "O-0001"       # sus compuertas, sin evaluar: no_resuelta
+    ok = make(CLAIM, BIB, estado="final", humano="Ana Pérez", anexo=ANEXO_OK).replace(
+        "revisado_por_humano:", "revision_critica: research/revisiones/informes_O-0001_redteam.md\nrevisado_por_humano:")
+    assert any("no corresponde a ninguna revisión registrada" in e for e in _errors(ok, conn=conn, path=report))
+    db.add_report_review(conn, "inf.md", review_digest(ok), "Ana Pérez", "final")
+    assert _errors(ok, conn=conn, path=report) == []
     refuted = ok.replace("| respalda |", "| no_respalda |")
-    assert any("NO respalda" in str(i) for i in check_report(refuted))
+    assert any("NO respalda" in e for e in _errors(refuted, conn=conn, path=report))
+    conn.close()
 
 
-def _stamp(report, text, complete=True, structure=True, errors=None):
-    summary = {"total": 1, "verificadas": 1 if complete else 0, "pendientes": 0 if complete else 1,
-               "con_error": 0, "completa": complete}
-    return write_stamp(report, text, errors or [], online=True, details=[], summary=summary,
-                       structure_checked=structure)
+def _verify(report, monkeypatch, complete=True, structure=True):
+    def fake_verify_entry(client, entry):
+        return [Verification(d, "doi", "verificada" if complete else "error_red", title="t", year=2020,
+                             retracted=False if complete else None) for d in extract_identifiers(entry)["doi"]]
+    monkeypatch.setattr(rc, "verify_entry", fake_verify_entry)
+    monkeypatch.setattr(rc, "fetch_abstract", lambda client, entry: (None, "sin red"))
+    return verify_report(report, client=object(), require_sections=structure)
 
 
-def test_stamp_requires_complete_online_verification(tmp_path):
+def test_stamp_requires_complete_online_verification(tmp_path, monkeypatch):
     report = tmp_path / "informes" / "inf.md"
     report.parent.mkdir()
-    text = make("[PUB] dato [R1]", "[R1] A. 2020. T. DOI: 10.1234/x", estado="final", humano="Ana", anexo=ANEXO_OK)
-    report.write_text(text, "utf-8")
-    _stamp(report, text, complete=False)          # p. ej. sin red: referencias no verificadas
+    report.write_text(make(CLAIM, BIB, anexo=ANEXO_OK), "utf-8")
+    write_stamp(_verify(report, monkeypatch, complete=False))        # p. ej. sin red: referencias no verificadas
     ok, msg = stamp_status(report)
     assert not ok and "incompleta" in msg
-    _stamp(report, text, complete=True)
+    write_stamp(_verify(report, monkeypatch, complete=True))
     assert stamp_status(report)[0]
-    _stamp(report, text, complete=True, structure=False)   # `verificar --sellar` sin estructura
+    write_stamp(_verify(report, monkeypatch, structure=False))       # sin estructura (antes, `verificar --sellar`)
     assert not stamp_status(report)[0]
 
 
-def test_stamp_invalidated_by_edit_forgery_and_corruption(tmp_path):
+def test_stamp_invalidated_by_edit_forgery_and_corruption(tmp_path, monkeypatch):
     report = tmp_path / "inf.md"
-    text = make("[PUB] dato [R1]", "[R1] A. 2020. T. DOI: 10.1234/x", anexo=ANEXO_OK)
+    text = make(CLAIM, BIB, anexo=ANEXO_OK)
     report.write_text(text, "utf-8")
-    _stamp(report, text)
+    write_stamp(_verify(report, monkeypatch))
     assert stamp_status(report)[0]
     report.write_text(text + "\nCambio", "utf-8")
     ok, msg = stamp_status(report)
@@ -96,12 +134,15 @@ def test_stamp_invalidated_by_edit_forgery_and_corruption(tmp_path):
     assert not stamp_status(report)[0]
 
 
-def test_stamp_covers_checked_text_not_later_edits(tmp_path):
-    # D9-6: el sello guarda la huella del texto comprobado; si el fichero cambia durante la verificación, no vale
+def test_stamp_covers_checked_text_not_later_edits(tmp_path, monkeypatch):
+    # D9-6: el sello guarda la huella del texto comprobado; si el fichero cambia durante la verificación, no se sella
     report = tmp_path / "inf.md"
-    checked = make("[PUB] dato [R1]", "[R1] A. 2020. T. DOI: 10.1234/x", anexo=ANEXO_OK)
+    checked = make(CLAIM, BIB, anexo=ANEXO_OK)
+    report.write_text(checked, "utf-8")
+    result = _verify(report, monkeypatch)
     report.write_text(checked + "\n[R9] inventada", "utf-8")
-    _stamp(report, checked)
+    with pytest.raises(rc.StampError):
+        write_stamp(result)
     assert not stamp_status(report)[0]
 
 

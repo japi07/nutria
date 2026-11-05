@@ -1,9 +1,14 @@
 """Firma HMAC de los sellos de verificación.
 
-La clave vive FUERA del repositorio (~/.config/nutria/clave_sello, o NUTRIA_CLAVE_SELLO), así que un
-sello escrito a mano o copiado de otro equipo no valida. No es una protección criptográfica frente a
-quien tenga acceso a la clave (los hooks impiden a los agentes leerla o escribir sellos con las
-herramientas de edición), sino una barrera contra sellos falsificados o desactualizados.
+La clave vive FUERA del repositorio (~/.config/nutria/clave_sello, o NUTRIA_CLAVE_SELLO), así que un sello
+escrito a mano, copiado de otro equipo o alterado después no valida.
+
+Es una barrera frente a errores y atajos, no un control de seguridad: cualquier proceso que se ejecute con el
+mismo usuario puede leer la clave y firmar (por ejemplo, un `python -c` o una prueba que llame a las funciones de
+`nutria.reports.check`). Los hooks de Claude Code solo frenan las vías más directas de los agentes (leer o editar
+la clave con las herramientas de edición, órdenes Bash que la nombran, escribir sellos con Write o Edit) y no ven
+otras. Lo que el sello certifica se vuelve a comprobar al consultarlo (`stamp_status`), pero la verificación en
+línea que registra solo se puede rehacer ejecutándola otra vez.
 """
 
 from __future__ import annotations
