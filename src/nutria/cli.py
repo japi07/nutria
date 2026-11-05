@@ -899,23 +899,27 @@ def _check_report_file(args, cfg, path: Path, online: bool) -> int:
     from .reports.check import StampError, is_report_path, stamp_status, verify_report, write_stamp
     structure = not getattr(args, "sin_secciones", False)
     conn = _report_registry(cfg, path)
-    # Las compuertas exigidas en la sección 14 son las de la rúbrica del proyecto del documento (las mismas que
-    # usan `informe sello` y el hook).
-    result = verify_report(path, client=_client(cfg, fresh=True) if online else None, conn=conn,
-                           require_sections=structure)
+    seal = None
+    try:
+        # Las compuertas exigidas en la sección 14 son las de la rúbrica del proyecto del documento (las mismas que
+        # usan `informe sello` y el hook).
+        result = verify_report(path, client=_client(cfg, fresh=True) if online else None, conn=conn,
+                               require_sections=structure)
+        if getattr(args, "sellar", False):
+            try:
+                stamp = write_stamp(result)
+            except StampError as exc:
+                raise SystemExit(str(exc))
+            seal = stamp_status(path, conn=conn)
+            log_event(cfg, "sello_informe", inputs={"informe": str(path)},
+                      outputs={"sha256": stamp["sha256"], "errores": stamp["errores"],
+                               "verificacion_completa": stamp["verificacion_completa"], "sello_valido": seal[0]},
+                      actor=args.agente)
+    finally:
+        if conn is not None:
+            conn.close()
     issues, details, summary = result.issues, result.details, result.summary
     errors = result.errors
-    seal = None
-    if getattr(args, "sellar", False):
-        try:
-            stamp = write_stamp(result)
-        except StampError as exc:
-            raise SystemExit(str(exc))
-        seal = stamp_status(path, conn=conn)
-        log_event(cfg, "sello_informe", inputs={"informe": str(path)},
-                  outputs={"sha256": stamp["sha256"], "errores": stamp["errores"],
-                           "verificacion_completa": stamp["verificacion_completa"], "sello_valido": seal[0]},
-                  actor=args.agente)
     lines = [str(i) for i in issues] or ["Sin incidencias"]
     if online and summary is not None:
         if not summary["total"]:
@@ -938,8 +942,6 @@ def _check_report_file(args, cfg, path: Path, online: bool) -> int:
     if seal is not None:
         data["sello"] = {"valido": seal[0], "mensaje": seal[1]}
     _emit(args, data, "\n".join(lines))
-    if conn is not None:
-        conn.close()
     incomplete = online and summary is not None and not summary["completa"]
     return 1 if errors or incomplete or (seal is not None and not seal[0]) else 0
 
@@ -962,32 +964,37 @@ def _review_report(args, cfg) -> int:
     if conn is None:
         raise SystemExit("No hay registro del proyecto (research/nutria.sqlite): la revisión humana se registra en él. "
                          "Ejecuta `nutria init` en la raíz del proyecto.")
-    text = path.read_text("utf-8")
-    before = sha256_text(text)
-    updates = {"revisado_por_humano": signer}
-    if args.estado:
-        updates["estado"] = args.estado
     try:
-        new_text = set_front_matter_fields(text, updates)
-    except ValueError as exc:
-        raise SystemExit(str(exc))
-    problems = [i for i in check_report(new_text, require_sections=is_report_path(path), conn=conn, path=path)
-                if i.severity == "error" and i.code != REVIEW_CODE]
-    if problems:
-        raise SystemExit(f"No se registra la revisión: el informe tiene {len(problems)} error(es); corrígelos antes:\n"
-                         + "\n".join(str(i) for i in problems[:25]))
-    if sha256_file(path) != before:
-        raise SystemExit("El informe cambió mientras se revisaba: vuelve a ejecutar la orden")
-    digest = review_digest(new_text)
-    status = status_info(new_text).value
-    review_id = registry.add_report_review(conn, report_key(path), digest, signer, status, args.nota,
-                                           entity_id=front_matter_value(new_text, "oportunidad"))
-    tmp = path.with_name(path.name + ".tmp-revision")
-    tmp.write_text(new_text, "utf-8")
-    os.replace(tmp, path)
+        raw = path.read_bytes()            # en bytes: se conservan los saltos de línea del fichero
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise SystemExit(f"{path} no está en UTF-8: no se puede revisar")
+        updates = {"revisado_por_humano": signer}
+        if args.estado:
+            updates["estado"] = args.estado
+        try:
+            new_text = set_front_matter_fields(text, updates)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        problems = [i for i in check_report(new_text, require_sections=is_report_path(path), conn=conn, path=path)
+                    if i.severity == "error" and i.code != REVIEW_CODE]
+        if problems:
+            raise SystemExit(f"No se registra la revisión: el informe tiene {len(problems)} error(es); corrígelos "
+                             "antes:\n" + "\n".join(str(i) for i in problems[:25]))
+        if sha256_file(path) != sha256_text(raw):
+            raise SystemExit("El informe cambió mientras se revisaba: vuelve a ejecutar la orden")
+        digest = review_digest(new_text)
+        status = status_info(new_text).value
+        review_id = registry.add_report_review(conn, report_key(path), digest, signer, status, args.nota,
+                                               entity_id=front_matter_value(new_text, "oportunidad"))
+        tmp = path.with_name(path.name + ".tmp-revision")
+        tmp.write_bytes(new_text.encode("utf-8"))
+        os.replace(tmp, path)
+    finally:
+        conn.close()
     log_event(cfg, "revision_humana_informe", inputs={"informe": str(path)},
               outputs={"sha256_revision": digest, "firma": signer, "estado": status, "id": review_id})
-    conn.close()
     _emit(args, {"informe": str(path), "revisado_por_humano": signer, "estado": status, "sha256_revision": digest},
           f"Revisión humana registrada: {path} (estado '{status}', revisado por {signer}; huella {digest[:12]}). "
           "Si el informe cambia, la revisión deja de valer. El sello anterior ya no vale: vuelve a sellar con "
@@ -999,7 +1006,10 @@ def cmd_informe(args, cfg) -> int:
     if args.accion == "nuevo":
         from .reports.render import new_report
         conn = _conn(cfg)
-        text = new_report(conn, args.id, gate_ids=[g.id for g in _rubric(cfg).gates])
+        try:
+            text = new_report(conn, args.id, gate_ids=[g.id for g in _rubric(cfg).gates])
+        finally:
+            conn.close()
         out = Path(args.salida) if args.salida else cfg.research_dir / "informes" / f"{args.id}.md"
         if out.exists() and not args.forzar:
             raise SystemExit(f"{out} ya existe (usa --forzar para sobrescribir)")
@@ -1012,9 +1022,11 @@ def cmd_informe(args, cfg) -> int:
         from .reports.check import stamp_status
         path = Path(args.archivo)
         conn = _report_registry(cfg, path)
-        ok, msg = stamp_status(path, conn=conn)
-        if conn is not None:
-            conn.close()
+        try:
+            ok, msg = stamp_status(path, conn=conn)
+        finally:
+            if conn is not None:
+                conn.close()
         _emit(args, {"valido": ok, "mensaje": msg}, msg)
         return 0 if ok else 1
     if args.accion == "revisar":

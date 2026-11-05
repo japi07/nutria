@@ -3,33 +3,42 @@
 Sin red (`check_report`):
 - Estado: se lee del front matter YAML (primer bloque `---` del documento; lo que va dentro de comentarios HTML
   no cuenta, tampoco antes del front matter). Admite comillas y comentarios `#` de YAML. Un estado ilegible,
-  duplicado, desconocido o fuera del front matter es un error y se trata como estricto; en un informe (cualquier
-  documento bajo una carpeta `informes`, también en subcarpetas) el estado es obligatorio. Lo leen igual
-  `check_report`, `stamp_status` y el hook (`status_info`).
+  duplicado, desconocido o fuera del front matter es un error y se trata como estricto; en un informe (documento
+  bajo research/informes del proyecto, también en subcarpetas; fuera de un proyecto, bajo cualquier carpeta
+  `informes`) el estado es obligatorio. Lo leen igual `check_report`, `stamp_status` y el hook (`status_info`).
 - Estructura: las 20 secciones numeradas (sin duplicados), marcadores `[POR COMPLETAR]` y secciones vacías (error
   en revisado o final, aviso en borrador), destino digestivo en la sección 7 (informes de rumiantes o de especie no
-  declarada) y, en la sección 14, la alegación prevista, la ruta regulatoria y el estado de las compuertas.
+  declarada) y, en la sección 14, la alegación prevista, la ruta regulatoria y el estado de las compuertas de la
+  rúbrica del proyecto; con registro, ese estado debe coincidir con el efectivo de la oportunidad del front matter.
 - Etiquetas: se detectan sin distinguir mayúsculas (`[pub]` cuenta como `[PUB]`, con aviso de formato), también en
   encabezados, citas, tablas y bloques de código; una etiqueta escrita en código solo se ignora si el código no
   contiene nada más (mención del término). Cada segmento que empieza en una `[PUB]` necesita su propio `[Rn]`
-  antes de la etiqueta siguiente (los `[Rn]` escritos antes de la primera etiqueta cuentan para ella). Las cifras
-  con unidades (%, L/d, kg/d, mg/kg MS, g/t, Mcal, MJ, mmol/L, ppm...) sin etiqueta ni referencia son error en
-  revisado o final y aviso en borrador; las citas autor-año sin `[Rn]` son error.
+  antes de la etiqueta siguiente (los `[Rn]` escritos antes de la primera etiqueta cuentan para ella). Por frase
+  (hasta «.», «!» o «?», aunque ocupe varias líneas del párrafo): una cifra con unidades (%, L/d, kg/d, mg/kg MS,
+  g/t, Mcal, MJ, mmol/L, ppm...) necesita etiqueta o referencia, y una referencia `[Rn]`, una etiqueta (si no,
+  eludiría el Anexo A); error en revisado o final y aviso en borrador. Las citas autor-año sin `[Rn]` son error.
+  Solo quedan exentos la línea del título, el front matter, la bibliografía, las tablas de respaldo del Anexo A y
+  los anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
 - Bibliografía: la sección 20 o, si no existe, la última sección de nivel 2 titulada Bibliografía o Referencias.
   Una entrada puede ocupar varias líneas (hasta la siguiente entrada, una línea en blanco o un encabezado). Un
   `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía no se verifica: aviso
   (error en estricto).
-- Anexo A, por afirmación: cada línea `[PUB]` con `[Rn]` necesita una fila de ese `[Rn]` cuya columna Afirmación
-  reproduzca la afirmación y cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar (minúsculas,
-  sin acentos, sin etiquetas ni `[Rn]`, sin formato ni puntuación), el texto de la fila debe aparecer literalmente,
-  con al menos 4 palabras (o el párrafo entero si es más corto), en el párrafo de la afirmación y solapar la línea
-  de la `[PUB]`; `...` o `…` separan fragmentos que deben aparecer en orden. Una fila `no_respalda` del mismo par
-  (Rn, afirmación) es error aunque otra diga `respalda`, y las filas con valores distintos para el mismo par
-  también.
+- Anexo A, por afirmación: la afirmación de una `[PUB]` son las palabras de su frase anteriores a la etiqueta,
+  desde el inicio de la frase o desde la etiqueta o `[Rn]` anterior (ver `_claims`). Necesita una fila de su `[Rn]`
+  cuya columna Afirmación la reproduzca y cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar
+  (minúsculas, sin acentos, sin etiquetas ni `[Rn]`, sin formato ni puntuación), el texto de la fila debe aparecer
+  literalmente en el párrafo de la afirmación (`...` o `…` separan fragmentos de al menos 2 palabras que deben
+  aparecer en orden) y cubrir al menos la mitad de sus palabras, con un mínimo de 4 (o todas si tiene menos). Cada
+  fila cuenta para la afirmación de su referencia que mejor reproduce; una fila `respalda` o `parcial` que reproduce
+  por igual afirmaciones distintas no cuenta para ninguna (una fila por afirmación) y una fila `no_respalda` o
+  `no_verificable` cuenta para todas las que reproduce: es error aunque otra fila diga `respalda`, y las filas con
+  valores distintos para el mismo par (Rn, afirmación) también. Las filas que no corresponden a ninguna afirmación
+  y las que van antes de la cabecera son aviso en borrador y error en revisado o final (las negativas, siempre).
 - Registro (si se pasa `conn`): las referencias con DOI o PMID de las líneas `[PUB]` deben ser fuentes registradas
-  y verificadas, con la retractación comprobada (error en estricto, aviso en borrador; una fuente retractada es
-  siempre error). En revisado o final, `revisado_por_humano` debe coincidir con una revisión registrada por una
-  persona (`nutria informe revisar`) para el contenido exacto del informe: si el informe cambia, deja de valer.
+  (por cualquiera de sus identificadores) y verificadas, con la retractación comprobada y sin identificadores que
+  contradigan los del registro (error en estricto, aviso en borrador; una fuente retractada es siempre error). En
+  revisado o final, `revisado_por_humano` debe coincidir con una revisión registrada por una persona (`nutria
+  informe revisar`) para el contenido exacto del informe: si el informe cambia, deja de valer.
 
 Con red (`check_report_online`, sin caché): cada DOI/PMID existe, corresponde a la cita (título, año y primer
 autor) y su retractación es conocida y negativa; las referencias con solo URL valen únicamente si una persona las
@@ -42,11 +51,11 @@ una persona) ni la calidad del razonamiento.
 
 El sello (`<informe>.verificacion.json`) guarda la huella SHA-256 del texto EXACTO comprobado y el detalle de la
 verificación de cada referencia, y va firmado con HMAC (`nutria.sello`). Solo lo escribe `write_stamp` a partir del
-resultado de `verify_report`. `stamp_status` vuelve a pasar `check_report` sobre el texto actual: el sello solo es
-válido si la verificación en línea fue completa y coherente con el detalle, no hubo errores, la estructura se
-comprobó entera (en informes) y el informe no ha cambiado.
+resultado de `verify_report` (un proceso del mismo usuario podría fabricar ese resultado: es una barrera frente a
+errores y atajos, no un control de seguridad). `stamp_status` vuelve a pasar `check_report` sobre el texto actual:
+el sello solo es válido si la verificación en línea fue completa y coherente con el detalle, no hubo errores, la
+estructura se comprobó entera (en informes), el documento no tiene apartados por completar y no ha cambiado.
 """
-
 from __future__ import annotations
 
 import html

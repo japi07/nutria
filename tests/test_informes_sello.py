@@ -124,9 +124,9 @@ def _register(*dois, verified=True, retracted=False):
     conn.close()
 
 
-def _filled_report(project: Path, **opp_changes) -> Path:
+def _filled_report(project: Path, opp: str = "O-0001", **opp_changes) -> Path:
     _opportunity(project, **opp_changes)
-    path = _skeleton(project)
+    path = _skeleton(project, opp)
     path.write_text(fill(path.read_text("utf-8")), "utf-8")
     _register(GOOD, GOOD2)
     return path
@@ -213,6 +213,26 @@ def test_review_command_rejects_agents_missing_signature_and_errors(project, mon
     assert db.report_reviews(_conn()) == []
 
 
+def test_review_command_rejects_abbreviated_signature_option(project, capsys):
+    # La orden no acepta abreviaturas (--firma, --firma-h): el hook de Bash solo reconoce la opción completa.
+    path = _filled_report(project)
+    for abbreviation in ("--firma", "--firma-h", "--fir"):
+        with pytest.raises(SystemExit) as exc:
+            main(["informe", "revisar", str(path), abbreviation, "Ana"])
+        assert exc.value.code == 2
+    assert db.report_reviews(_conn()) == []
+
+
+def test_review_keeps_crlf_line_endings(project):
+    path = _filled_report(project)
+    path.write_bytes(path.read_text("utf-8").replace("\n", "\r\n").encode("utf-8"))
+    assert main(["informe", "revisar", str(path), SIGN, "Ana Pérez"]) == 0
+    raw = path.read_bytes()
+    assert b"revisado_por_humano: 'Ana P\xc3\xa9rez'\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b"")
+    assert not [e for e in _errors(raw.decode("utf-8"), conn=_conn(), path=path, strict=True)
+                if "revisión" in e]
+
+
 def test_review_outside_a_project_is_a_clear_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("NUTRIA_HOME", raising=False)
@@ -269,6 +289,27 @@ def test_report_paths_are_resolved(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path / "research" / "informes")
     assert chk.is_report_path(Path("O-0009.md")) and chk.is_report_path(Path("./sub/../O-0009.md"))
     assert not chk.is_report_path(tmp_path / "research" / "planes" / "P.md")
+
+
+def test_report_paths_are_relative_to_the_project_root(tmp_path, monkeypatch):
+    # Una carpeta «informes» por encima del proyecto (p. ej. ~/informes/nutria) no convierte los planes en informes.
+    base = tmp_path / "informes" / "proyecto"
+    base.mkdir(parents=True)
+    monkeypatch.chdir(base)
+    monkeypatch.delenv("NUTRIA_HOME", raising=False)
+    assert main(["init"]) == 0
+    plan = base / "research" / "planes" / "P.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    assert not chk.is_report_path(plan)
+    assert chk.is_report_path(base / "research" / "informes" / "sub" / "E.md")
+    assert chk.is_report_path(base / "Research" / "Informes" / "E.md")
+    assert not chk.is_report_path(base / "informes" / "E.md")              # dentro del proyecto, fuera de research
+    link = base / "research" / "planes" / "enlace.md"                       # un enlace a un informe sigue siéndolo
+    target = base / "research" / "informes" / "O-0001.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x", "utf-8")
+    link.symlink_to(target)
+    assert chk.is_report_path(link)
 
 
 # ============================================================================ D3-4: etiquetas y cifras
@@ -332,6 +373,59 @@ def test_unlabeled_figures_error_in_strict_and_warning_in_draft():
     assert any("Cifra con unidades" in str(i) and i.severity == "aviso" for i in draft)
     strict = chk.check_report(_draft(body), require_sections=False, strict=True)
     assert any("Cifra con unidades" in str(i) and i.severity == "error" for i in strict)
+
+
+def _strict_errors(body: str) -> list[str]:
+    return _errors(_draft(body), require_sections=False, strict=True)
+
+
+@pytest.mark.parametrize("body", [
+    "La dosis fue de 15 g/d. El efecto sobre la leche fue positivo [HIP].",     # otra frase de la línea
+    "La leche subió 3,1 L/d en el grupo B. Contexto del ensayo [SUP].",
+    "La leche subió 3,1 L/d!\nContexto del ensayo [SUP].",
+])
+def test_a_label_only_covers_its_own_sentence(body):
+    assert any("Cifra con unidades" in e for e in _strict_errors(body))
+
+
+@pytest.mark.parametrize("body", [
+    "La colina aumentó la producción de leche en 1,2 kg/d en vacas\nHolstein multíparas [HIP].",   # frase partida
+    "La leche subió 1,2 kg/d; la grasa, 0,1 % [HIP].",
+    "Según D. Sauvant la respuesta fue de 1,2 kg/d [HIP].",
+    "La respuesta fue de 1,2 kg/d (p. ej. en multíparas) [HIP].",
+])
+def test_sentence_split_has_no_false_positives(body):
+    assert not any("Cifra con unidades" in e for e in _strict_errors(body))
+
+
+def test_references_need_a_label_too():
+    # Una afirmación atribuida a [Rn] sin etiqueta eludiría el Anexo A y el registro de fuentes.
+    for body in ("La colina aumentó la leche en vacas lecheras [R1].",
+                 "| Estudio | Dosis |\n|---|---|\n| [R1] | 50 g/d |",
+                 "La colina aumentó la leche [R1]. Contexto [HIP]."):
+        assert any("Referencia [Rn] sin etiqueta" in e for e in _strict_errors(body)), body
+    draft = chk.check_report(_draft("La colina aumentó la leche [R1]."), require_sections=False)
+    assert any("Referencia [Rn] sin etiqueta" in str(i) and i.severity == "aviso" for i in draft)
+    for body in ("Según [R1] [PUB] hubo cambios en la leche.", "Hipótesis basada en [R1] [HIP].",
+                 "Calculado con datos de [R1] [DER] (nutria destino ruminal)."):
+        assert not any("Referencia [Rn] sin etiqueta" in e for e in _strict_errors(body)), body
+
+
+def test_only_real_annexes_and_the_title_line_are_exempt(project):
+    # Un «#### Anexo A» o un «### Anexo C» en mitad del informe no exime sus tablas ni su texto, y en la sección 1
+    # solo queda exenta la línea que repite el título.
+    path = _filled_report(project)
+    text = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    fake = {"#### Anexo A de la sección\n\n| Dato | Valor |\n|---|---|\n| leche | 3,1 L/d |\n": "## 10.",
+            "### Anexo C. Datos\n\nLa leche subió 3,1 L/d y la cetosis bajó un 45 %.\n": "## 10.",
+            "La leche subió 3,1 L/d.\n": "\n## 2."}
+    for inject, before in fake.items():
+        errors = _errors(text.replace(before, "\n" + inject + "\n" + before, 1), conn=_conn(), path=path)
+        assert any("Cifra con unidades" in e for e in errors), inject
+    titled = _filled_report(project, "O-0002", titulo="Colina protegida a 15 g/d en el periodo de transición")
+    text = titled.read_text("utf-8")
+    assert "\n\nColina protegida a 15 g/d en el periodo de transición\n" in text
+    assert not any("Cifra con unidades" in str(i) for i in chk.check_report(text, conn=_conn(), path=titled))
 
 
 # ============================================================================ D3-13: bibliografía
@@ -408,6 +502,58 @@ def test_row_matching_is_normalized_supports_ellipsis_and_wrapped_lines():
                chk.check_report(_strict_doc(body, short), require_sections=False, strict=False))
 
 
+def _annex_errors(body: str, annex: str) -> list[str]:
+    return [e for e in _errors(_strict_doc(body, annex), require_sections=False)
+            if "revisión humana" not in e and "no se cita" not in e]
+
+
+def test_a_generic_row_only_counts_for_the_claim_it_reproduces_best():
+    body = ("La suplementación con colina protegida aumentó la producción de leche [PUB] [R1].\n"
+            "La suplementación con colina protegida redujo la cetosis [PUB] [R1].")
+    errors = _annex_errors(body, "| R1 | La suplementación con colina protegida | respalda | x |")
+    assert any("Sin comprobación de respaldo de R1 para la afirmación de la línea 6" in e for e in errors)
+    assert not any("línea 7" in e for e in errors)
+
+
+def test_a_row_that_fits_two_claims_equally_counts_for_none_unless_negative():
+    body = ("La colina protegida en vacas aumentó la leche [PUB] [R1].\n"
+            "La colina protegida en vacas redujo la cetosis [PUB] [R1].")
+    errors = _annex_errors(body, "| R1 | La colina protegida en vacas | respalda | x |")
+    assert any("reproduce por igual varias afirmaciones distintas" in e for e in errors)
+    assert sum("Sin comprobación de respaldo de R1" in e for e in errors) == 2
+    rows = ("| R1 | La colina protegida en vacas | no_respalda | x |\n"
+            "| R1 | La colina protegida en vacas aumentó la leche | respalda | y |\n"
+            "| R1 | La colina protegida en vacas redujo la cetosis | respalda | z |")
+    errors = _annex_errors(body, rows)
+    assert sum("R1 NO respalda" in e for e in errors) == 2              # la negativa cuenta para las dos
+    proper = rows.split("\n", 1)[1]
+    assert _annex_errors(body, proper) == []
+
+
+def test_repeated_claim_and_second_claim_of_a_sentence():
+    body = ("La colina aumentó la leche en vacas [PUB] [R1].\n\n"
+            "Resumen: la colina aumentó la leche en vacas [PUB] [R1].")
+    assert _annex_errors(body, "| R1 | La colina aumentó la leche en vacas | respalda | y |") == []
+    body = "La colina aumentó la leche [PUB] [R1] y redujo la cetosis [PUB] [R1]."
+    rows = "| R1 | La colina aumentó la leche | respalda | y |\n| R1 | La colina ... redujo la cetosis | respalda | z |"
+    assert _annex_errors(body, rows) == []
+    errors = _annex_errors(body, rows.replace("La colina ... redujo", "La colina redujo"))
+    assert any("«redujo la cetosis»" in e for e in errors)        # el mensaje dice qué texto reproducir
+
+
+def test_rows_separated_from_the_table_or_before_its_header_are_not_ignored():
+    body = "La colina aumentó la leche en vacas [PUB] [R1]."
+    annex = ("| R1 | La colina aumentó la leche en vacas | respalda | y |\n\n"
+             "| R1 | La colina aumentó la leche en vacas | no_respalda | z |")
+    assert any("R1 NO respalda" in e for e in _annex_errors(body, annex))
+    doc = _strict_doc(body, "| R1 | La colina aumentó la leche en vacas | respalda | y |")
+    doc = doc.replace(ANNEX_HEADER, "| R1 | La colina aumentó la leche en vacas | no_respalda | z |\n\n" + ANNEX_HEADER)
+    errors = _errors(doc, require_sections=False)
+    assert any("antes de la cabecera" in e and "no respalda" in e for e in errors)
+    draft = doc.replace("estado: final", "estado: borrador")
+    assert any("antes de la cabecera" in e for e in _errors(draft, require_sections=False))   # negativa: siempre
+
+
 def test_annex_quotes_are_checked_against_the_abstract(monkeypatch):
     body = "La colina aumenta la leche en vacas [PUB] [R1]."
     rows = "| R1 | La colina aumenta la leche en vacas | respalda | El resumen dice «increased milk yield by 1.2 kg/d» |"
@@ -450,6 +596,22 @@ def test_pub_references_must_be_registered_verified_sources(project):
     messages = [str(i) for i in chk.check_report(path.read_text("utf-8"), conn=conn, path=path)]
     assert any("sin verificar" in m for m in messages)
     assert any("RETRACTADA" in m and m.startswith("[ERROR]") for m in messages)
+
+
+def test_registered_source_is_found_by_any_identifier_and_must_agree(project):
+    path = _filled_report(project)                       # GOOD registrado por DOI, sin PMID
+    text = path.read_text("utf-8").replace(f"DOI: {GOOD}", f"DOI: {GOOD} | PMID: 12345678")
+    conn = _conn()
+    assert not any("registr" in str(i) for i in chk.check_report(text, conn=conn, path=path))
+    conn.execute("UPDATE sources SET pmid = '99999999' WHERE doi = ?", (GOOD,))
+    messages = [str(i) for i in chk.check_report(text, conn=conn, path=path)]
+    assert any("el registro guarda PMID 99999999" in m for m in messages)
+    db.upsert_source(conn, {"pmid": "12345678", "title": "Otro trabajo", "verified": True, "verified_via": "prueba",
+                            "retracted": False})
+    conn.execute("UPDATE sources SET pmid = NULL WHERE doi = ?", (GOOD,))
+    messages = [str(i) for i in chk.check_report(text, conn=conn, path=path)]
+    assert any("corresponden a fuentes distintas del registro" in m for m in messages)
+    conn.close()
 
 
 # ============================================================================ D10-1: esqueleto y mensajes
@@ -609,6 +771,41 @@ def test_section_14_has_route_and_effective_gate_states(project):
     issues = [str(i) for i in chk.check_report(no_gates)]
     assert any("ruta o clasificación regulatoria" in m for m in issues)
     assert any("estado (superada, bloqueada o no_resuelta) de las compuertas" in m for m in issues)
+
+
+def test_section_14_gate_states_must_match_the_registry(project):
+    # D5-11: la sección 14 no puede declarar un estado de compuerta distinto del efectivo, ni quedarse sin oportunidad
+    path = _filled_report(project)
+    text = path.read_text("utf-8")
+    assert not any("compuerta" in str(i).lower() for i in chk.check_report(text, conn=_conn(), path=path))
+    claimed = text.replace("Alegación prevista (Reglamento", "La compuerta seguridad está superada.\n\nAlegación "
+                                                            "prevista (Reglamento", 1)
+    final = claimed.replace("estado: borrador", "estado: final")
+    assert any("dice «superada» para la compuerta seguridad" in e and "«no_resuelta»" in e
+               for e in _errors(final, conn=_conn(), path=path))
+    table = text.replace("| seguridad | no_resuelta |", "| seguridad | superada |").replace("estado: borrador",
+                                                                                             "estado: final")
+    assert any("compuerta seguridad" in e for e in _errors(table, conn=_conn(), path=path))
+    unknown = final.replace("oportunidad: O-0001", "oportunidad: O-0099")
+    assert any("O-0099 del front matter no está en el registro" in e for e in _errors(unknown, conn=_conn(), path=path))
+    missing = re.sub(r"(?m)^oportunidad: .*\n", "", final)
+    assert any("no declara la oportunidad" in e for e in _errors(missing, conn=_conn(), path=path))
+
+
+def test_project_rubric_gates_are_used_everywhere(project, online):
+    # Si la rúbrica del proyecto define otras compuertas, la CLI, el sello y el hook exigen las mismas.
+    from importlib import resources
+    rubric = resources.files("nutria.data").joinpath("rubrica.toml").read_text("utf-8")
+    head, *gates = rubric.split("[[compuerta]]")
+    kept = [g for g in gates if 'id = "etica"' not in g]
+    (project / "config").mkdir(exist_ok=True)
+    (project / "config" / "rubrica.toml").write_text(head + "".join("[[compuerta]]" + g for g in kept), "utf-8")
+    assert "etica" not in chk.gate_ids_for(project / "research" / "informes" / "x.md")
+    path = _filled_report(project)
+    assert "| etica |" not in path.read_text("utf-8")
+    assert main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"]) == 0
+    assert main(["informe", "comprobar", str(path), "--online", "--sellar"]) == 0
+    assert chk.stamp_status(path)[0]
 
 
 def test_out_of_scope_route_shows_blocked_regulatory_gate(project):
@@ -772,3 +969,31 @@ def test_run_hook_blocks_when_no_interpreter_works(tmp_path):
     (bindir / "python3").unlink()
     res = _run_sh(repo, bindir, RESEARCH_PAYLOAD)
     assert json.loads(res.stdout)["decision"] == "block"
+    upper = json.dumps({"tool_input": {"file_path": "/x/Research/Informes/O-0001.md"}})   # sin distinguir mayúsculas
+    assert json.loads(_run_sh(repo, bindir, upper).stdout)["decision"] == "block"
+
+
+def test_run_hook_with_the_real_hook_falls_back_and_blocks(project):
+    # De principio a fin: run_hook.sh con check_research_file.py. Un python3 sin las dependencias del proyecto sale
+    # con 3 (explica el bloqueo) y se prueba el siguiente; el informe final sin sello se bloquea.
+    hooks = _hook_project(project)
+    path = _filled_report(project)
+    path.write_text(path.read_text("utf-8").replace("estado: borrador", "estado: final"), "utf-8")
+    bindir = project / "bin"
+    bindir.mkdir()
+    for tool in ("cat", "grep", "head"):
+        (bindir / tool).symlink_to(shutil.which(tool))
+    _fake_python(bindir / "python3", f'exec "{sys.executable}" -I -S "$@"')       # aislado: sin nutria ni requests
+    env = dict(os.environ, PATH=str(bindir), PYTHONPATH=str(ROOT / "src"))
+
+    def run(payload: dict) -> dict:
+        res = subprocess.run(["/bin/sh", str(hooks / "run_hook.sh"), "check_research_file.py"],
+                             input=json.dumps(payload), text=True, capture_output=True, env=env, timeout=120)
+        assert res.returncode == 0, res.stderr
+        return json.loads(res.stdout)
+
+    only_broken = run(_payload(path))
+    assert only_broken["decision"] == "block" and "no operativo" in only_broken["reason"]
+    _fake_python(bindir / "python", f'exec "{sys.executable}" "$@"')
+    decision = run(_payload(path))
+    assert decision["decision"] == "block" and "Sin sello" in decision["reason"]
