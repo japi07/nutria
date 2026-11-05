@@ -12,56 +12,89 @@ Sin red (`check_report`):
   declarada) y, en la sección 14, la alegación prevista, la ruta regulatoria y el estado de las compuertas de la
   rúbrica del proyecto; con registro, ese estado debe coincidir con el efectivo de la oportunidad del front matter, y
   la ruta declarada (la primera ruta conocida que sigue a «ruta», «vía» o «clasificación regulatoria» en su bloque)
-  debe ser la del registro. El texto tachado (`~~...~~`, `<del>`, `<s>`) no cuenta como declarado.
+  debe ser la del registro. El texto tachado u oculto (`~~...~~`, `~...~`, `<del>`, `<s>`, un `<span>` con
+  line-through, hidden, display: none, tamaño u opacidad 0 o texto blanco) no cuenta como declarado.
 - Etiquetas: se detectan sin distinguir mayúsculas (`[pub]` cuenta como `[PUB]`, con aviso de formato), también en
   encabezados, citas, tablas y bloques de código; una etiqueta escrita en código solo se ignora si el código no
   contiene nada más y no está pegado a un corchete o a una letra (mención del término: «las etiquetas `[PUB]` y
   `[HIP]`»; «[`PUB`]» sí cuenta), y un acento combinado dentro de un corchete corto no oculta una etiqueta ni una
   referencia. Cada segmento que empieza en una `[PUB]` necesita su propio `[Rn]` antes de la etiqueta siguiente o
   del final de la frase, aunque esté en la línea siguiente (los `[Rn]` escritos antes de la primera etiqueta de la
-  frase cuentan para ella). Por frase (hasta «.», «!» o «?», aunque ocupe varias líneas del párrafo; una fila de
-  tabla es una sola frase): una cifra con unidades (%, L/d, kg/d, mg/kg MS, g/t, Mcal, MJ, mmol/L, ppm, ºC, €...)
-  necesita etiqueta o referencia, y una referencia `[Rn]`, una etiqueta (si no, eludiría el Anexo A); error en
-  revisado o final y aviso en borrador. La cifra y su unidad se buscan en el texto del párrafo entero (también
-  partidas por un salto de línea, con varios espacios o con la unidad entre paréntesis: «2,5 (kg/d)») y, en las
+  frase cuentan para ella).
+- Cifras, por frase (hasta «.», «!» o «?», aunque ocupe varias líneas del párrafo; una fila de tabla es una sola
+  frase): una cifra con unidades (%, L/d, kg/d, mg/kg MS, g/t, Mcal, MJ, mmol/L, ppm, ºC, €, m², μL, lb...; también
+  en notación científica, «1,2e6 UFC/g») o una medida de efecto («OR = 2,5», «SMD: 0,45», «R² = 0,91») necesita
+  etiqueta o referencia, y una referencia `[Rn]`, una etiqueta; error en revisado o final y aviso en borrador. La
+  cifra y su unidad se buscan en el texto del párrafo entero (también partidas por un salto de línea, con varios
+  espacios, con un carácter invisible o una entidad entre ellas, con la unidad entre paréntesis: «2,5 (kg/d)», o
+  separadas por etiquetas HTML de bloque: «<td>Leche</td><td>2,5 kg/d</td>», «leche:<br>2,5 kg/d») y, en las
   tablas (también las escritas sin «|» en los extremos), por su estructura: un número de una columna cuya cabecera
-  lleva la unidad («Leche (kg/d)»), o de una fila con una celda de unidades (la primera, «Leche (kg/d) | 30,1», una
-  columna «Unidad» o una fila de unidades bajo la cabecera). Una cita autor-año necesita su `[Rn]` en la misma frase
-  (error siempre): entre paréntesis («(García, 2018)»), narrativa («García (2018)», «García et al. (2018, p. 3)»,
-  «Smith J. (2019)»), con coautores sin paréntesis («García et al. 2018»), tras «según» o «véase» («según García
-  2018») o, en una columna de estudios o fuentes de una tabla, «García 2018». Una cita numérica «[1]» y una
-  referencia «(R1)» son error. Solo quedan exentos de la comprobación de cifras el título (el primer encabezado de
-  nivel 1) y la línea que lo repite en la sección 1, el front matter, la bibliografía, las tablas de respaldo del
-  Anexo A y los anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
+  lleva la unidad («Leche (kg/d)»), o de una fila con una celda que da la unidad (la etiqueta de la fila, aunque
+  lleve cifras: «Leche, semana 4 (kg/d) | 30,1», «Leche (kg/d), semana 8 | 30,1»; una celda «+2,5 (kg/d)»; una
+  columna «Unidad»; o una fila de unidades bajo la cabecera). En la cabecera, «Semana 4 (kg/d)» es el título de una
+  columna; en una fila de datos es una cifra con unidades. No se detectan las cifras escritas con letras, las
+  unidades fuera de la lista (las de tiempo se excluyen: «21 días» aparece en las etapas) ni la unidad que solo
+  figura en el título o en una nota de la tabla. Quedan exentos el título (el primer encabezado de nivel 1) y la
+  línea que lo repite en la sección 1, el front matter, la bibliografía, las tablas de respaldo del Anexo A y los
+  anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
+- Citas: una cita autor-año necesita su `[Rn]` en la misma frase (error siempre): entre paréntesis o corchetes
+  («(García, 2018)», «(García Pérez, 2018)», «(van Soest, 1994)», «(de la Fuente y col., 2019)», «(St. Pierre,
+  2001)», «(Smith, Jones, & Brown, 2019)», «(García, 2018: 23)»), con una entradilla de cita («(revisado por García,
+  2018)», «(citado en ...)», «(véase también ...)», «(datos de ...)»), narrativa («García (2018)», «García y otros
+  (2018)», «Smith J. (2019)»), con el año sustituido por «en prensa», «com. pers.» o «datos no publicados», con
+  coautores sin paréntesis («García et al. 2018»), tras «según» o «véase» («según García 2018»), con el año y un
+  verbo de cita junto al apellido («En 2018, García demostró», «García demostró en 2018», «García en 2018 mostró»,
+  «publicado en 2018 por García»), «García et al.» o «García y col.» sin año o, en una columna de estudios o fuentes
+  de una tabla, «García 2018». Las instituciones cuentan como autores («(NASEM, 2021)», «La EFSA publicó en 2020»);
+  «(Agenda 2030)», «(PAC, 2023)», «Grupo A (2019)», los meses y las palabras de función («Se observó en 2019») no.
+  No se detecta «Autor Año» sin paréntesis en prosa (sin «según», «véase» ni verbo de cita) ni una cita tras una
+  entradilla sin palabra de cita («(en García, 2018)», para no leer «(en España, 2019)» como cita). Son error
+  siempre las citas numéricas («[1]», «[3, 4]», «[1-3]», «(ref. 3)»; no los intervalos con decimales, con unidad
+  o tras «IC», «rango», «escala» o «%») y las referencias mal escritas («(R1)», «(R1, R2)», «{R1}», «según R1»).
+  Una cita numérica entre paréntesis al final de la frase («... la cetosis (1).», salvo tras «ecuación», «tabla»,
+  «dieta»...) y un número volado tras una palabra («transición¹», «<sup>1</sup>»; no «m²», «R²», «tau²» ni «10⁶»)
+  son error en revisado o final y aviso en borrador (en las tablas, aviso: pueden ser notas). Un DOI, un PMID, un
+  PMCID, un arXiv, un ISBN o el enlace a un artículo (doi.org, PubMed, rutas /article/...) en el cuerpo no se
+  verifica ni cuenta en el sello: error en los informes y en revisado o final, aviso en otros documentos en
+  borrador y en los bloques de código; otros enlaces (normativa, herramientas), aviso.
 - Bibliografía: la sección 20 o, si no existe, la última sección de nivel 2 titulada Bibliografía o Referencias.
   Una entrada puede ocupar varias líneas (hasta la siguiente entrada, una línea en blanco o un encabezado). Un
   `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía (o un identificador de la
   bibliografía fuera de una entrada) no se verifica: error en los informes y en revisado o final; aviso en otros
   documentos en borrador.
-- Anexo A, por afirmación: la afirmación de una `[PUB]` son las palabras de su frase (hasta «.», «!» o «?») que le
-  corresponden: las anteriores a la etiqueta desde el inicio de la frase o desde la etiqueta anterior y, si es la
-  última etiqueta de la frase, también las que la siguen; si la frase empieza con la etiqueta, las que la siguen hasta
-  la etiqueta siguiente (ver `_claims`). Necesita una fila de su `[Rn]` cuya columna Afirmación la reproduzca y
-  cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar
-  (minúsculas, sin acentos, sin etiquetas ni `[Rn]`, sin formato ni puntuación), el texto de la fila debe aparecer
-  literalmente en el párrafo de la afirmación (`...` o `…` separan fragmentos de al menos 2 palabras que deben
-  aparecer en orden) y cubrir al menos la mitad de sus palabras, con un mínimo de 4 (o todas si tiene menos). Cada
-  fila cuenta para la afirmación de su referencia que mejor reproduce; una fila `respalda` o `parcial` que reproduce
-  por igual afirmaciones distintas no cuenta para ninguna (una fila por afirmación) y una fila `no_respalda` o
-  `no_verificable` cuenta para todas las que reproduce: es error aunque otra fila diga `respalda`, y las filas con
-  valores distintos para el mismo par (Rn, afirmación) también. Las filas que no corresponden a ninguna afirmación
-  y las que van antes de la cabecera son aviso en borrador y error en revisado o final (las negativas, siempre).
-  Una tabla con la columna Respaldo fuera del «## Anexo A» (en otra sección, bajo «## Anexo A1» o «## Annex A»), o
-  una fila con una referencia y una valoración negativa fuera de él, es error siempre: ninguna valoración queda sin
-  leer. Una frase con `[PUB]` que remite a la anterior («Así lo indica el ensayo», «Esto se observó...», «Este
-  efecto...», «... lo confirma») o que no tiene más de una palabra con contenido («Según el ensayo»), cuando la
-  frase anterior no lleva etiqueta, es error en revisado o final y aviso en borrador: la afirmación real quedaría sin
-  etiqueta y el Anexo A solo comprobaría la remisión.
-- Registro (si se pasa `conn`): las referencias con DOI o PMID de las líneas `[PUB]` deben ser fuentes registradas
-  (por cualquiera de sus identificadores) y verificadas, con la retractación comprobada y sin identificadores que
-  contradigan los del registro (error en estricto, aviso en borrador; una fuente retractada es siempre error). En
-  revisado o final, `revisado_por_humano` debe coincidir con una revisión registrada por una persona (`nutria
-  informe revisar`) para el contenido exacto del informe: si el informe cambia, deja de valer.
+- Anexo A, por afirmación: toda afirmación que cita una fuente (una `[PUB]` o cualquier otra etiqueta con su `[Rn]`:
+  «... [SUP] [R1]» no elude el anexo) son las palabras de su frase (hasta «.», «!» o «?») que le corresponden: las
+  anteriores a la etiqueta desde el inicio de la frase o desde la etiqueta anterior y, si es la última etiqueta de
+  la frase, también las que la siguen; si la frase empieza con la etiqueta, las que la siguen hasta la etiqueta
+  siguiente (ver `_claims`). Necesita una fila de su `[Rn]` cuya columna Afirmación la reproduzca y cuyo Respaldo
+  sea `respalda` o `parcial`. Coincidencia: tras normalizar (minúsculas, sin acentos, sin etiquetas ni `[Rn]`, sin
+  formato ni puntuación), el texto de la fila debe aparecer literalmente en el párrafo de la afirmación (`...` o `…`
+  separan fragmentos de al menos 2 palabras que deben aparecer en orden) y cubrir al menos la mitad de sus palabras,
+  con un mínimo de 4 (o todas si tiene menos). Cada fila cuenta para la afirmación de su referencia que mejor
+  reproduce; una fila `respalda` o `parcial` que reproduce por igual afirmaciones distintas no cuenta para ninguna
+  (una fila por afirmación) y una fila `no_respalda` o `no_verificable` cuenta para todas las que reproduce: es error
+  aunque otra fila diga `respalda`, y las filas con valores distintos para el mismo par (Rn, afirmación) también.
+  Las filas que no corresponden a ninguna afirmación, las que van antes de la cabecera y las que no tienen
+  referencia son aviso en borrador y error en revisado o final (las negativas, siempre). Es una fila la línea que
+  empieza por «|» o la que GFM muestra como fila de la tabla; la prosa con una «|» en medio, separada de la tabla, es
+  texto del informe (y una valoración negativa escrita en esa prosa, «R1 no respalda...», es error). En los informes
+  y en los documentos con un Anexo A, una tabla con la columna Respaldo fuera del «## Anexo A» (en otra sección,
+  bajo «## Anexo A1» o «## Annex A»), o una fila con una referencia y una valoración negativa fuera de él, es error
+  siempre: ninguna valoración queda sin leer. En otros documentos (la crítica de red-team-auto con sus veredictos,
+  una nota de verificación) esas tablas son su contenido y no se señalan.
+- Remisión: una frase con `[PUB]` (o con otra etiqueta y su `[Rn]`) que remite a la anterior («Así lo indica el
+  ensayo», «Esto se observó...», «Este efecto...», «Un ensayo con 60 vacas así lo indica», «... lo confirma») o que
+  no tiene más de una palabra con contenido («Según el ensayo»), cuando la frase anterior no lleva etiqueta, es
+  error en revisado o final y aviso en borrador: la afirmación real quedaría sin etiqueta y el Anexo A solo
+  comprobaría la remisión. Un conector o una entradilla inicial («Así, ...», «Por ello, ...», «Dicho esto, ...»,
+  «Según el ensayo, ...») no es una remisión si lo que sigue enuncia la afirmación. La detección es léxica: no ve la
+  remisión con un encabezado de por medio ni una [PUB] sin verbo con contenido propio («Ensayo en vacas lecheras
+  [PUB] [R1].»).
+- Registro (si se pasa `conn`): las referencias con DOI o PMID citadas en el cuerpo con una etiqueta deben ser
+  fuentes registradas (por cualquiera de sus identificadores) y verificadas, con la retractación comprobada y sin
+  identificadores que contradigan los del registro (error en estricto, aviso en borrador; una fuente retractada es
+  siempre error). En revisado o final, `revisado_por_humano` debe coincidir con una revisión registrada por una
+  persona (`nutria informe revisar`) para el contenido exacto del informe: si el informe cambia, deja de valer.
 - Revisión del crítico (informes en revisado o final): `revision_critica` en el front matter enlaza un documento de
   research/revisiones del proyecto que menciona el informe (su fichero o su oportunidad); no se juzga su contenido.
 
@@ -165,7 +198,7 @@ UNIT_RE = re.compile(
     + r"|(?-i:o\s?C)(?![^\W\d_])"
     + r"|\(\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:" + _SYMBOL_UNITS_RE + r"))"
     + r"(?:\s*[/·]\s*[^\s()/·]+){0,3}(?:\s+[A-Za-z]{1,3})?\s*\))"
-    + r"|(?<![\w$€£])(?:US\$|\$|€|£)\s*\d)",
+    + r"|(?<![\w$€£])(?:US\$|\$|€|£|(?-i:EUR|USD)\s)\s*\d)",
     re.IGNORECASE)
 # Unidad escrita sin cifra: la cabecera de una columna («Leche (kg/d)», «Dosis, g/d», «Grasa %», «Coste €/vaca»), la
 # primera celda de una fila («Leche (kg/d) | 30,1 | 32,4») o una celda de unidades («| 2,5 | kg/d |»).
@@ -186,13 +219,13 @@ _NOT_NAMES = (r"(?:Agenda|Horizonte|Horizon|Estrategia|Strategy|Plan|Programa|Pr
               r"Lote|Tabla|Table|Figura|Figure|Fig|Anexo|Annex|Secci[oó]n|Section|Versi[oó]n|Version|A[nñ]o|Year|Mes|"
               r"Cosecha|Temporada|Ejercicio|Edici[oó]n|Edition|Cap[ií]tulo|Chapter|Vol|Volumen|PAC|CAP|ODS|SDG|COVID)")
 # Palabras de función que empiezan una frase con mayúscula y no son apellidos («Se observó en 2019», «No mostró...»).
-_FUNCTION_WORDS = (r"(?:Se|No|Lo|Ya|Si|Sí|Ni|Que|Qué|Como|Cómo|Cuando|Donde|Esto|Este|Esta|Estos|Estas|Eso|Ese|Esa|Esos|"
-                   r"Esas|Aquello|Aquel|Aquella|Ello|Ellos|Ellas|Él|Ella|Nos|Les|Los|Las|Un|Una|Unos|Unas|En|Con|Por|"
-                   r"Para|Sin|Sobre|Tras|Ante|Bajo|Desde|Hasta|Hacia|Según|Durante|Mediante|Entre|Cada|Todo|Toda|"
-                   r"Todos|Todas|Otro|Otra|Otros|Otras|Ambos|Ambas|Nuestro|Nuestra|Nuestros|Nuestras|Pero|Aunque|"
-                   r"Mientras|Además|También|Así|Tal|Tales|Dicho|Dicha|Dichos|Dichas|Es|Son|Fue|Fueron|Ha|Han|Hay|"
-                   r"Era|Eran|The|This|These|That|Those|It|We|They|In|On|At|For|With|From|By|As|Of|An|Our|Their|"
-                   r"There|Here)")
+_FUNCTION_WORDS = (r"(?:Se|No|Lo|Ya|Si|Sí|Ni|Que|Qué|Como|Cómo|Cuando|Donde|Esto|Este|Esta|Estos|Estas|Eso|Ese|"
+                   r"Esa|Esos|Esas|Aquello|Aquel|Aquella|Ello|Ellos|Ellas|Él|Ella|Nos|Les|Los|Las|Un|Una|Unos|"
+                   r"Unas|En|Con|Por|Para|Sin|Sobre|Tras|Ante|Bajo|Desde|Hasta|Hacia|Según|Durante|Mediante|"
+                   r"Entre|Cada|Todo|Toda|Todos|Todas|Otro|Otra|Otros|Otras|Ambos|Ambas|Nuestro|Nuestra|"
+                   r"Nuestros|Nuestras|Pero|Aunque|Mientras|Además|También|Así|Tal|Tales|Dicho|Dicha|Dichos|"
+                   r"Dichas|Es|Son|Fue|Fueron|Ha|Han|Hay|Era|Eran|The|This|These|That|Those|It|We|They|In|On|"
+                   r"At|For|With|From|By|As|Of|An|Our|Their|There|Here)")
 # Palabra de un apellido: mayúscula y al menos otra letra (con apóstrofos o guiones: «O'Neill», «García-López»,
 # «St. Pierre»); no un mes ni una palabra de las listas anteriores.
 _NAME_WORD = (rf"(?!(?i:{_MONTHS})\b)(?!{_NOT_NAMES}\b)(?!{_FUNCTION_WORDS}\b)(?:(?:St|Ste|Sta)\.\s?)?"
@@ -256,6 +289,9 @@ AUTHOR_YEAR_RES = (
     re.compile(rf"(?i:\ben\s+(?:el\s+año\s+)?)(?:19|20)\d{{2}}\s*,?\s+{_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})"),
     re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})\s+(?i:en\s+(?:el\s+año\s+)?)"
                rf"(?:19|20)\d{{2}}(?![\w/\-–])"),
+    # García en 2018 mostró...; un trabajo publicado en 2018 por García
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?i:en\s+)(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERBS})"),
+    re.compile(rf"(?i:\ben\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
 )
 _IN_PARENS_ONLY = 1          # índice de AUTHOR_YEAR_RES que solo cuenta dentro de un paréntesis o corchete abierto
 # En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita si la
@@ -274,25 +310,39 @@ BARE_REF_RE = re.compile(r"(?i:\b(?:seg[uú]n|v[eé]ase|cf\.?|see|referencia|ref
 # descarta además los intervalos («IC 95 % [1,2; 3,4]», «[1,2-3,4]», «[2, 4] kg/d», «escala [1-5]»).
 NUMERIC_CITATION_RE = re.compile(r"(?<![\]\w^])\[\s*([1-9]\d{0,2}(?:\s*(?:[,;]|[-–—])\s*[1-9]\d{0,2})*)\s*\]"
                                  r"(?![(:\[])")
+# Cita numérica entre paréntesis al final de una frase («... la cetosis (1).», «(2, 3).», «(4-6).»), salvo tras una
+# palabra que numera (ecuación, tabla, grupo, dieta...): `_paren_numeric_citations`. Y con «ref.»: «(ref. 3)».
+PAREN_NUMERIC_RE = re.compile(r"(?<=[^\W\d_])\s?\((\d{1,3}(?:\s*(?:[,;]|[-–—])\s*\d{1,3})*)\)(?=\s*\.(?:\s|$)|\s*$)")
+_ENUM_WORD_RE = re.compile(r"(?i)\b(?:ecuaci[oó]n(?:es)?|f[oó]rmulas?|eqs?|tablas?|figuras?|figs?|pasos?|apartados?|"
+                           r"secci[oó]n(?:es)?|puntos?|criterios?|niveles?|opci[oó]n(?:es)?|grupos?|tratamientos?|"
+                           r"dietas?|fases?|semanas?|d[ií]as?|columnas?|filas?|modelos?|anexos?|notas?|hip[oó]tesis|"
+                           r"escenarios?|casos?|ensayos?|experimentos?|lotes?|parcelas?|bloques?|per[ií]odos?|"
+                           r"compuertas?|preguntas?|objetivos?|etapas?)\s*$")
+REF_WORD_CITATION_RE = re.compile(r"(?i)[(\[]\s*(?:ref|refs|referencias?|citas?)\.?\s*\d{1,3}"
+                                  r"(?:\s*(?:[,;]|[-–—]|\by\b)\s*\d{1,3})*\s*[)\]]")
+# Medida de efecto sin unidad: «OR = 2,5», «SMD: 0,45», «R² = 0,91» (cuenta como una cifra con unidades).
+STAT_FIGURE_RE = re.compile(r"(?<![\w^])(?:OR|RR|HR|IRR|SMD|DME|DMP|MD|DM|RD|ROM|I\^?2|R\^?2|tau\^?2)\s*[=:≈]\s*"
+                            r"[-+−]?\d")
 _INTERVAL_CONTEXT_RE = re.compile(r"(?i)(?:\bIC\b|\bCI\b|interval|rango|range|escala|scale|puntuaci|score|%|entre)"
                                   r"[^.;\[\]]{0,15}$")
 # Número volado tras una palabra o un signo de puntuación («transición¹», «leche.²», «<sup>1</sup>»): una cita
 # numérica o una nota escrita a mano; no «m²», «R²», «Ca²⁺» ni «10⁶» (palabras de menos de tres letras o cifras).
-SUPERSCRIPT_CITATION_RE = re.compile(r"(?:(?<=[^\W\d_]{3})|(?<=[.,;:)\]»”\"’']))\^([1-9]\d{0,2}(?:[,–-]\^?[1-9]\d{0,2})*)"
-                                     r"(?![\d^])")
+SUPERSCRIPT_CITATION_RE = re.compile(r"(?:(?<=[^\W\d_]{3})|(?<=[.,;:)\]»”\"’']))"
+                                     r"\^([1-9]\d{0,2}(?:[,–-]\^?[1-9]\d{0,2})*)(?![\d^])")
 # Notación matemática con superíndice: «tau²», «chi²», «sigma²» (no son números volados).
 _SUPERSCRIPT_EXEMPT = {"tau", "chi", "phi", "psi", "sigma", "rho", "eta", "omega", "theta", "lambda", "beta", "gamma",
                        "delta", "alpha", "kappa", "epsilon", "zeta", "iota", "upsilon", "omicron", "log", "exp"}
 # Identificadores y enlaces de una fuente en el cuerpo (fuera de las entradas de la bibliografía): no se verifican.
 _BODY_DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>\])]+")
-_BODY_PMID_RE = re.compile(r"\bPMID\s*:?\s*\d{5,9}\b|\bPMC\d{5,9}\b|pubmed(?:\.ncbi\.nlm\.nih\.gov)?/+\d{5,9}",
-                           re.IGNORECASE)
+_BODY_PMID_RE = re.compile(r"\bPMID\s*:?\s*\d{5,9}\b|\bPMC\d{5,9}\b|pubmed(?:\.ncbi\.nlm\.nih\.gov)?/+\d{5,9}|"
+                           r"\bPubMed(?:\s+ID)?\s*:?\s*\d{5,9}\b|\barXiv\s*:\s*\d{4}\.\d{4,5}|"
+                           r"\bISBN(?:-1[03])?\s*:?\s*[\d\-–]{10,17}", re.IGNORECASE)
 _BODY_URL_RE = re.compile(r"\bhttps?://[^\s)>\]`]+|(?<![\w/.@])www\.[^\s)>\]`]+", re.IGNORECASE)
 _SCHOLARLY_URL_RE = re.compile(
     r"doi\.org|pubmed|ncbi\.nlm\.nih\.gov|europepmc|scholar\.google|semanticscholar|researchgate\.net/publication|"
     r"sciencedirect\.com/science/article|onlinelibrary\.wiley|link\.springer|tandfonline|academic\.oup|"
     r"journals\.plos|mdpi\.com/\d|frontiersin\.org/articles|nature\.com/articles|cambridge\.org/core|biorxiv|scielo|"
-    r"jstor\.org", re.IGNORECASE)
+    r"jstor\.org|arxiv\.org|/(?:article|articles|abs|abstract|fulltext|full|doi)/", re.IGNORECASE)
 _RUMINANT_RE = re.compile(
     r"vacun|bovin|vaca|ternero|ternera|novill|buey|toro|ovin|oveja|cordero|caprin|cabra|cabrit|bufal|rumiant|"
     r"ciervo|camel|llama|alpaca|cattle|\bcows?\b|dairy|beef|calf|calves|heifer|steer|\bbulls?\b|sheep|\bewes?\b|"
@@ -1104,10 +1154,18 @@ def _numeric_citations(text: str):
         content = m.group(1)
         if re.search(r",\d", content) and re.search(r"[;\-–—]", content):
             continue
-        if "," in content or ";" in content or re.search(r"[-–—]", content):
-            if _UNIT_AFTER_RE.match(text, m.end()) or _INTERVAL_CONTEXT_RE.search(text, 0, m.start()):
-                continue
+        listed = "," in content or ";" in content or re.search(r"[-–—]", content)
+        if listed and (_UNIT_AFTER_RE.match(text, m.end()) or _INTERVAL_CONTEXT_RE.search(text, 0, m.start())):
+            continue
         yield m.group(0)
+
+
+def _paren_numeric_citations(text: str):
+    """Citas numéricas entre paréntesis al final de una frase («... la cetosis (1).»), salvo tras una palabra que
+    numera («ecuación (3).», «dieta (2).»)."""
+    for m in PAREN_NUMERIC_RE.finditer(text):
+        if not _ENUM_WORD_RE.search(text, 0, m.start()):
+            yield m.group(0).strip()
 
 
 def _body_identifier_issues(line: str, i: int, sev: str) -> list[Issue]:
@@ -1123,9 +1181,9 @@ def _body_identifier_issues(line: str, i: int, sev: str) -> list[Issue]:
               and not any(a <= pos < b for a, b in spans)]
     out = []
     if found:
-        out.append(Issue(sev, f"Identificador de una fuente en el cuerpo («{found[0][:80]}»): no se verifica ni cuenta en "
-                              "el sello; cita la fuente con [Rn] y pon el identificador en su entrada de la bibliografía "
-                              "(sección 20)", i + 1))
+        out.append(Issue(sev, f"Identificador de una fuente en el cuerpo («{found[0][:80]}»): no se verifica ni "
+                              "cuenta en el sello; cita la fuente con [Rn] y pon el identificador en su entrada de la "
+                              "bibliografía (sección 20)", i + 1))
     if others:
         out.append(Issue("aviso", f"Enlace en el cuerpo («{others[0][:80]}»): no se verifica; si es una fuente, cítala "
                                   "con [Rn] y su entrada en la bibliografía", i + 1))
@@ -1290,17 +1348,18 @@ _ATTRIBUTION_VERBS = {
 
 # Palabras que no aportan contenido a una afirmación (función, remisión y atribución genérica).
 _NON_CONTENT = {
-    "el", "la", "los", "las", "un", "una", "unos", "unas", "lo", "le", "les", "de", "del", "al", "a", "en", "con", "por",
-    "para", "sin", "sobre", "entre", "hasta", "desde", "segun", "como", "que", "y", "e", "o", "u", "ni", "pero", "se",
-    "su", "sus", "es", "son", "fue", "fueron", "ha", "han", "habia", "era", "eran", "sido", "ser", "esta", "estan",
-    "asi", "esto", "ello", "eso", "aquello", "tambien", "ya", "muy", "mas", "no", "si", "otro", "otra", "otros", "otras",
-    "cual", "cuales", "ademas", "anterior", "anteriores", "previo", "previa", "previamente", "mencionado",
-    "mencionada", "citado", "citada", "referido", "referida", "conforme", "todo", "toda", "todos", "todas", "ambos",
-    "ambas", "mismo", "misma", "mismos", "mismas", "the", "of", "and", "in", "this", "that", "it", "is", "as", "so",
-    "ensayo", "ensayos", "estudio", "estudios", "trabajo", "trabajos", "articulo", "articulos", "autor", "autores",
-    "fuente", "fuentes", "referencia", "referencias", "revision", "revisiones", "metaanalisis", "literatura",
-    "evidencia", "evidencias", "publicacion", "publicaciones", "investigacion", "investigaciones", "experimento",
-    "experimentos", "analisis", "informe", "caso", "campo", "study", "trial", "authors",
+    "el", "la", "los", "las", "un", "una", "unos", "unas", "lo", "le", "les", "de", "del", "al", "a", "en", "con",
+    "por", "para", "sin", "sobre", "entre", "hasta", "desde", "segun", "como", "que", "y", "e", "o", "u", "ni",
+    "pero", "se", "su", "sus", "es", "son", "fue", "fueron", "ha", "han", "habia", "era", "eran", "sido", "ser",
+    "esta", "estan", "asi", "esto", "ello", "eso", "aquello", "tambien", "ya", "muy", "mas", "no", "si", "otro",
+    "otra", "otros", "otras", "cual", "cuales", "ademas", "anterior", "anteriores", "previo", "previa",
+    "previamente", "mencionado", "mencionada", "citado", "citada", "referido", "referida", "conforme", "todo",
+    "toda", "todos", "todas", "ambos", "ambas", "mismo", "misma", "mismos", "mismas", "the", "of", "and", "in",
+    "this", "that", "it", "is", "as", "so", "ensayo", "ensayos", "estudio", "estudios", "trabajo", "trabajos",
+    "articulo", "articulos", "autor", "autores", "fuente", "fuentes", "referencia", "referencias", "revision",
+    "revisiones", "metaanalisis", "literatura", "evidencia", "evidencias", "publicacion", "publicaciones",
+    "investigacion", "investigaciones", "experimento", "experimentos", "analisis", "informe", "caso", "campo",
+    "study", "trial", "authors",
 } | _DEMONSTRATIVES | _RESULT_NOUNS | _ATTRIBUTION_VERBS
 
 
@@ -1809,16 +1868,17 @@ def is_ruminant(species: str | None) -> bool:
 
 _GATE_STATE_RE = re.compile(r"\b(superada|bloqueada|no resuelta)\b")
 # Texto tachado u oculto («~~no_resuelta~~ superada», «~no_resuelta~», <del>, <s>, <strike>, <span> con
-# line-through, hidden o display: none): no es lo que el documento declara.
+# line-through, hidden, display: none, tamaño u opacidad 0 o texto blanco): no es lo que el documento declara.
 _STRUCK_RE = re.compile(
     r"(?<!~)(~{1,2})(?!~)(?=\S)(.+?)(?<=\S)(?<!~)\1(?!~)"            # ~~tachado~~ y ~tachado~ (GFM)
     r"|<(del|s|strike)\b[^>]*>.*?</\3\s*>"
     r"|<(span|div|font|p|mark|small|em|i|b|u|sup|sub)\b[^>]*(?:line-through|\bhidden\b|display\s*:\s*none|"
-    r"visibility\s*:\s*hidden)[^>]*>.*?</\4\s*>", re.IGNORECASE)
+    r"visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])|opacity\s*:\s*0(?![.\d]*[1-9])|"
+    r"color\s*:\s*(?:white|transparent|#fff\b|#ffffff\b))[^>]*>.*?</\4\s*>", re.IGNORECASE)
 _ROUTE_PHRASE_RE = re.compile(r"\b(?:ruta|via|clasificacion)\s+(?:regulatoria|preliminar|propuesta|de autorizacion)\b")
 _FALLBACK_ROUTES = ("materia_prima", "aditivo_tecnologico", "aditivo_sensorial", "aditivo_nutricional",
-                    "aditivo_zootecnico", "pienso_dietetico", "fuera_de_alcance_medicamento", "fuera_de_alcance_biocida",
-                    "indeterminada")
+                    "aditivo_zootecnico", "pienso_dietetico", "fuera_de_alcance_medicamento",
+                    "fuera_de_alcance_biocida", "indeterminada")
 
 
 def _unstruck(line: str) -> str:
@@ -1925,8 +1985,8 @@ def _context_issues(doc: _Doc, reg: _RegistryOpportunity, sev: str) -> list[Issu
         registered = reg.opp.get(column)
         declared = next((v for _, v, p in fields.get(key, []) if v and not p), None)
         if registered and _plain(declared or "") != _plain(registered):
-            out.append(Issue(sev, f"La {name} del front matter ({declared or 'sin declarar'}) no es la de la oportunidad "
-                                  f"{reg.opp_id} en el registro ({registered}): corrígela",
+            out.append(Issue(sev, f"La {name} del front matter ({declared or 'sin declarar'}) no es la de la "
+                                  f"oportunidad {reg.opp_id} en el registro ({registered}): corrígela",
                              (doc.fm_start + 1) if doc.fm_start is not None else None))
     return out
 
@@ -1956,9 +2016,9 @@ def _gate_registry_issues(conn, doc: _Doc, reg: _RegistryOpportunity, lines: lis
         declared = _declared_routes(lines, _known_routes() + (route,))
         for stated, idx in declared:
             if stated != _plain(route):
-                out.append(Issue(sev, f"La sección 14 declara la ruta regulatoria «{stated.replace(' ', '_')}», pero el "
-                                      f"registro tiene «{route}» para {opp_id} (cuenta la primera ruta que sigue a «ruta "
-                                      "regulatoria»): actualiza la sección o la clasificación de la oportunidad",
+                out.append(Issue(sev, f"La sección 14 declara la ruta regulatoria «{stated.replace(' ', '_')}», pero "
+                                      f"el registro tiene «{route}» para {opp_id} (cuenta la primera ruta que sigue a "
+                                      "«ruta regulatoria»): actualiza la sección o la clasificación de la oportunidad",
                                  idx + 1))
         if not declared:
             out.append(Issue(sev, f"La sección 14 no recoge la ruta regulatoria que el registro tiene para {opp_id} "
@@ -2155,8 +2215,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         excluded |= {bib.start} | bib.entry_lines
         for entry in entries:
             if LABEL_RE.search(_scan(entry.text).text):
-                issues.append(Issue("error", f"Etiqueta de evidencia dentro de la entrada {entry.ref} de la bibliografía: "
-                                             "las afirmaciones van en el cuerpo, separadas de las referencias",
+                issues.append(Issue("error", f"Etiqueta de evidencia dentro de la entrada {entry.ref} de la "
+                                             "bibliografía: las afirmaciones van en el cuerpo, separadas de las "
+                                             "referencias",
                                     entry.line))
     body = {i for i in range(len(doc.lines)) if i not in excluded}
     record_lines: set[int] = set()
@@ -2204,8 +2265,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("error", f"Referencia «{m.group(0)}» mal escrita: escribe {refs} (cada una entre "
                                          "corchetes, para que se compruebe)", i + 1))
         for m in BARE_REF_RE.finditer(scan.text):
-            issues.append(Issue("error", f"Referencia «{m.group(0)}» sin corchetes: escribe [{m.group(1)}] (para que se "
-                                         "compruebe con su entrada de la bibliografía)", i + 1))
+            issues.append(Issue("error", f"Referencia «{m.group(0)}» sin corchetes: escribe [{m.group(1)}] (para que "
+                                         "se compruebe con su entrada de la bibliografía)", i + 1))
         for _pos, name, raw in scan.labels:
             if raw != f"[{name}]":
                 issues.append(Issue("aviso", f"Etiqueta «{raw}» con formato no canónico: cuenta como [{name}]; "
@@ -2215,10 +2276,15 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("aviso", "[DER] sin indicar el cálculo u orden usada (una referencia [Rn] no lo "
                                          "indica)", i + 1))
         if not doc.fence[i]:
-            numeric = next(_numeric_citations(scan.text), None)
+            numeric = next(_numeric_citations(scan.text), None) or next(
+                (m.group(0) for m in REF_WORD_CITATION_RE.finditer(scan.text)), None)
             if numeric:
                 issues.append(Issue("error", f"Cita numérica «{numeric}»: no se puede verificar; cita con [Rn] y su "
                                              "entrada en la bibliografía (sección 20)", i + 1))
+            paren = next(_paren_numeric_citations(scan.text), None)
+            if paren and i not in tables:
+                issues.append(Issue(sev_strict, f"Posible cita numérica «{paren}» al final de la frase: si es una "
+                                                "cita, escríbela como [Rn] (y su entrada en la bibliografía)", i + 1))
             for m in SUPERSCRIPT_CITATION_RE.finditer(scan.text):
                 before = re.search(r"([^\W\d_]+)$", scan.text[:m.start()])
                 if before and before.group(1).lower() in _SUPERSCRIPT_EXEMPT:
@@ -2274,6 +2340,10 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             if j in no_numbers or (j in table_headers and "(" in m.group(0)):
                 continue
             events.append((j, pos, "unit"))
+        for m in STAT_FIGURE_RE.finditer(joined):          # «OR = 2,5», «R² = 0,91»: una medida de efecto
+            j, pos = _locate(m.start(), starts, plines)
+            if j not in no_numbers:
+                events.append((j, pos, "unit"))
         for end in _citation_ends(joined):
             j, pos = _locate(end, starts, plines)
             events.append((j, pos, "cite"))
@@ -2368,12 +2438,12 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                               "respaldo van en la tabla de la sección «## Anexo A»", line_no))
     for line_no, negative in support.refless:
         issues.append(Issue("error" if negative else sev_strict,
-                            "Fila del Anexo A sin referencia [Rn] reconocible: no cuenta como respaldo y su texto no se "
-                            "comprueba como el del cuerpo" + (" (declara no_respalda o no_verificable)" if negative
+                            "Fila del Anexo A sin referencia [Rn] reconocible: no cuenta como respaldo y su texto no "
+                            "se comprueba como el del cuerpo" + (" (declara no_respalda o no_verificable)" if negative
                                                               else ""), line_no))
     for line_no in support.prose:
-        issues.append(Issue("error", "Valoración de respaldo negativa escrita como texto en el Anexo A: va en su fila de "
-                                     "la tabla (| Ref | Afirmación | Respaldo | Motivo |)", line_no))
+        issues.append(Issue("error", "Valoración de respaldo negativa escrita como texto en el Anexo A: va en su fila "
+                                     "de la tabla (| Ref | Afirmación | Respaldo | Motivo |)", line_no))
     if support.header and not support.claim_col:
         issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la columna Afirmación: el respaldo se "
                                         "comprueba por afirmación, no por referencia"))
@@ -2454,7 +2524,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                              f"fila {where})", i + 1))
             elif len(values) > 1:
                 issues.append(Issue("error", f"Filas contradictorias del Anexo A ({where}) para {ref} y la "
-                                             f"afirmación {kind}de la línea {i + 1}: {', '.join(sorted(values))}", i + 1))
+                                             f"afirmación {kind}de la línea {i + 1}: {', '.join(sorted(values))}",
+                                    i + 1))
             elif values == {"no_verificable"}:
                 issues.append(Issue(sev_strict, f"Respaldo de {ref} no verificable: no puede sostener la "
                                                 f"afirmación [{claim.label}] de la línea {i + 1}", i + 1))
@@ -2527,7 +2598,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         content = [doc.lines[j] for j in range(start + 1, doc.section_end(start, 2))]
         labeled = [_plain(c) for c in content if _scan(c).labels]
         ok = ("destino digestivo" in _plain("\n".join(content))
-              and any(re.search(r"rumin|rumen|escape|bypass|by pass|biohidrogen|protegid|proteccion", c) for c in labeled)
+              and any(re.search(r"rumin|rumen|escape|bypass|by pass|biohidrogen|protegid|proteccion", c)
+                      for c in labeled)
               and any(re.search(r"intestin|absor|posrumin|duoden|digestibilidad", c) for c in labeled))
         if not ok:
             issues.append(Issue(sev_strict, "La sección 7 no trata el destino digestivo (regla 5): en rumiantes, "
@@ -2548,7 +2620,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             parts.append(f"{len(pending)} apartado(s) con {PENDING_MARK}")
         if empty:
             parts.append("secciones vacías: " + ", ".join(str(n) for n, _ in empty))
-        issues.append(Issue("aviso", "Informe por completar: " + "; ".join(parts) + " (en revisado o final es un error)"))
+        issues.append(Issue("aviso", "Informe por completar: " + "; ".join(parts)
+                            + " (en revisado o final es un error)"))
 
     # ---- modo estricto: revisión humana y referencias
     if strict:
@@ -2707,8 +2780,9 @@ def check_support_quotes(client, text: str) -> tuple[list[Issue], list[dict]]:
                 abstract, origin = cache[ref]
                 short = quote if len(quote) <= 80 else quote[:77] + "..."
                 if abstract is None:
-                    issues.append(Issue("aviso", f"{ref}: no se pudo comprobar la cita «{short}» del Anexo A: resumen no "
-                                                 f"disponible ({origin}); el texto completo no se comprueba", row.line))
+                    issues.append(Issue("aviso", f"{ref}: no se pudo comprobar la cita «{short}» del Anexo A: resumen "
+                                                 f"no disponible ({origin}); el texto completo no se comprueba",
+                                        row.line))
                     details.append({"ref": ref, "cita": quote, "estado": "sin_resumen"})
                     continue
                 words, needle = _norm_words(abstract), _norm_words(quote)

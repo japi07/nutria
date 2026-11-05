@@ -13,15 +13,17 @@ revisado_por_humano: null
 # {titulo}
 
 > **Convención obligatoria.** Cada afirmación relevante lleva una etiqueta: `[PUB]` resultado publicado
-> (con referencia `[Rn]` verificable y una fila de respaldo por afirmación en el Anexo A), `[DER]` derivado por
-> cálculo propio a partir de datos publicados (indica el cálculo o la orden `nutria` usada), `[HIP]` hipótesis,
-> `[SUP]` supuesto de trabajo, `[DESC]` dato desconocido (indica cómo obtenerlo). Cada frase con una cifra con
-> unidades o con una referencia `[Rn]` lleva su etiqueta, también en las tablas (cada fila es una frase, aunque la
-> unidad esté en la cabecera). Las citas se escriben con `[Rn]` en la misma frase, no como autor-año ni con números
-> entre corchetes; la afirmación de una `[PUB]` va en su propia frase, no en la anterior (una frase que solo dice
+> (con referencia `[Rn]` verificable), `[DER]` derivado por cálculo propio a partir de datos publicados (indica el
+> cálculo o la orden `nutria` usada), `[HIP]` hipótesis, `[SUP]` supuesto de trabajo, `[DESC]` dato desconocido
+> (indica cómo obtenerlo). Toda afirmación que cita una fuente con `[Rn]`, lleve la etiqueta que lleve, tiene su
+> fila de respaldo en el Anexo A. Cada frase con una cifra con unidades, una medida de efecto o una referencia `[Rn]`
+> lleva su etiqueta, también en las tablas (cada fila es una frase, aunque la unidad esté en la cabecera o en la
+> etiqueta de la fila). Las citas se escriben con `[Rn]` en la misma frase: no como autor-año, ni con números entre
+> corchetes, entre paréntesis o volados, ni con un identificador o un enlace al artículo en el texto (van en la
+> bibliografía). La afirmación de una `[PUB]` va en su propia frase, no en la anterior (una frase que solo dice
 > «así lo indica el ensayo» no basta). Las hipótesis generadas por IA nunca se presentan como hallazgos.
 > La marca `[POR COMPLETAR]` señala lo que falta por redactar: en `revisado` o `final` es un error. Para pasar a un
-> informe en `estado: revisado` o `final` hacen falta: el respaldo de cada afirmación `[PUB]` en el Anexo A, la
+> informe en `estado: revisado` o `final` hacen falta: el respaldo de cada afirmación con `[Rn]` en el Anexo A, la
 > revisión adversarial del crítico enlazada en `revision_critica`, la revisión humana registrada por la persona que
 > revisa (`nutria informe revisar`, solo personas) y, después, la verificación en línea completa y sellada
 > (`nutria informe comprobar <informe> --online --sellar`).
@@ -149,13 +151,14 @@ Alegación prevista (Reglamento (CE) 767/2009, art. 13): {alegacion}
 
 ## Anexo A. Tabla de afirmaciones y respaldo
 
-<!-- La rellena verificador-citas leyendo cada fuente: una fila por cada afirmación [PUB] y referencia, con la
-     afirmación copiada tal como aparece en el informe (su frase, hasta «.», «!» o «?»: lo que precede a la
-     etiqueta desde el inicio de la frase o la etiqueta anterior y, si es la última de la frase, también lo que
-     la sigue; en orden, al menos la mitad de sus palabras y un mínimo de 4; «...» separa fragmentos de 2 o más
-     palabras). Una fila que reproduce por igual dos afirmaciones distintas no cuenta para ninguna. Respaldo:
-     respalda | parcial | no_respalda | no_verificable. Una fila no_respalda no se compensa con otra respalda ni
-     se puede dejar sin asignar. Las filas de respaldo van solo en esta sección: una tabla con la columna Respaldo
+<!-- La rellena verificador-citas leyendo cada fuente: una fila por cada afirmación con referencia ([PUB] o
+     cualquier otra etiqueta con su [Rn]) y por cada referencia, con la afirmación copiada tal como aparece en el
+     informe (su frase, hasta «.», «!» o «?»: lo que precede a la etiqueta desde el inicio de la frase o la etiqueta
+     anterior y, si es la última de la frase, también lo que la sigue; en orden, al menos la mitad de sus palabras y
+     un mínimo de 4; «...» separa fragmentos de 2 o más palabras). Una fila que reproduce por igual dos afirmaciones
+     distintas no cuenta para ninguna. Respaldo: respalda | parcial | no_respalda | no_verificable. Una fila
+     no_respalda no se compensa con otra respalda ni se puede dejar sin asignar ni escribir como texto. Las filas de
+     respaldo van solo en esta sección, cada una en una línea que empieza por «|»: una tabla con la columna Respaldo
      en otra parte del informe es un error. Las citas literales entre comillas de la columna Motivo se buscan en el
      resumen de la fuente (no en el texto completo). -->
 
