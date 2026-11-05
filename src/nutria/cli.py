@@ -108,9 +108,14 @@ def _records_text(records) -> str:
 # ============================================================================ órdenes generales
 def cmd_init(args, cfg) -> int:
     import os
-    # Con NUTRIA_HOME, el proyecto se crea allí (como lo buscan las demás órdenes), no en el directorio actual.
-    home = os.environ.get("NUTRIA_HOME", "").strip()
-    root = Path(home).expanduser().resolve() if home else Path.cwd()
+
+    from .config import find_root
+    # Con NUTRIA_HOME, el proyecto se crea en la raíz que usan las demás órdenes (la misma resolución que
+    # `load_config`: config.find_root), no en el directorio actual.
+    home = bool(os.environ.get("NUTRIA_HOME"))
+    root = find_root() if home else Path.cwd()
+    if root.exists() and not root.is_dir():
+        raise NotADirectoryError(20, "NUTRIA_HOME no es un directorio", str(root))
     root.mkdir(parents=True, exist_ok=True)
     conf = root / CONFIG_FILENAME
     if not conf.exists() or args.forzar:
@@ -651,12 +656,21 @@ def cmd_diana(args, cfg) -> int:
     client = _client(cfg)
     avisos: list[str] = []
     tried: list[dict] = []
+    if args.max < 1:
+        raise ValueError("--max debe ser un entero positivo")
     targets = chembl.target_search(client, args.consulta, organism=args.organismo, limit=args.max, tried=tried)
+    nombres = {"nombre_preferido": "nombre preferido", "accesion_uniprot": "número de acceso de UniProt",
+               "sinonimo_o_simbolo": "sinónimo o símbolo de gen", "texto_libre": "texto libre"}
     if args.organismo and not targets:
-        avisos.append(f"ChEMBL no devolvió dianas de «{args.organismo.strip()}» para «{args.consulta}» ni por nombre "
-                      "preferido, ni por número de acceso, ni por sinónimo o símbolo de gen. No demuestra que no exista "
-                      "la diana en esa especie (ChEMBL tiene pocas dianas de especies ganaderas): busca el ortólogo con "
-                      "`nutria proteina` (UniProt) y etiqueta la diana de otra especie como evidencia de otra especie")
+        avisos.append(f"ChEMBL no devolvió dianas de «{args.organismo.strip()}» para «{args.consulta}» (buscado por "
+                      + ", ".join(nombres.get(t["estrategia"], t["estrategia"]) for t in tried) + "). No demuestra "
+                      "que la diana no exista en esa especie (ChEMBL tiene pocas dianas de especies ganaderas): busca "
+                      "el ortólogo con `nutria proteina` (UniProt) y etiqueta la diana de otra especie como evidencia "
+                      "de otra especie")
+    for t in tried:
+        if t.get("truncada"):
+            avisos.append(f"La búsqueda por {nombres.get(t['estrategia'], t['estrategia'])} llegó al máximo "
+                          f"({args.max}): puede haber más dianas que no se han visto (sube --max)")
     if args.actividades and targets:
         for t in targets[:2]:
             t["actividades"] = chembl.activities(client, target_chembl_id=t["target_chembl_id"], limit=25)
@@ -1488,7 +1502,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("diana", parents=[common], help="dianas moleculares en ChEMBL")
     s.add_argument("consulta")
-    s.add_argument("--organismo", default=None, help='p. ej. "Bos taurus" (filtro en el servidor)')
+    s.add_argument("--organismo", default=None,
+                   help='p. ej. "Bos taurus" (filtro en el servidor; busca por nombre, símbolo de gen o sinónimo y '
+                        'número de acceso de UniProt)')
     s.add_argument("--max", type=int, default=20)
     s.add_argument("--actividades", action="store_true")
     s.set_defaults(func=cmd_diana)

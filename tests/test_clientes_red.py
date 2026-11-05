@@ -674,7 +674,7 @@ def test_confidential_search_keeps_only_hashes_in_provenance(proj, router, capsy
 
 
 # ============================================================================ ChEMBL (D7-11)
-def _chembl_handler(by_synonym=None, by_accession=None):
+def _chembl_handler(by_synonym=None, by_accession=None, by_name=None):
     def handler(url, params, kw):
         if url.endswith("status.json"):
             return {"chembl_db_version": "ChEMBL_35", "chembl_release_date": "2025-01-01"}
@@ -682,31 +682,57 @@ def _chembl_handler(by_synonym=None, by_accession=None):
             return {"targets": by_synonym or []}
         if "target_components__accession" in params:
             return {"targets": by_accession or []}
-        return {"targets": []}
+        return {"targets": by_name or []}
     return handler
 
 
+def _component(accession, *synonyms):
+    return [{"accession": accession, "target_component_synonyms": [
+        {"component_synonym": name, "syn_type": "GENE_SYMBOL"} for name in synonyms]}]
+
+
 BOVINE_PPARA = {"target_chembl_id": "CHEMBL9", "pref_name": "Peroxisome proliferator-activated receptor alpha",
-                "organism": "Bos taurus", "target_type": "SINGLE PROTEIN"}
+                "organism": "Bos taurus", "target_type": "SINGLE PROTEIN",
+                "target_components": _component("Q07869", "PPARA", "NR1C1")}
 
 
-def test_chembl_target_by_gene_symbol_falls_back_to_synonyms_on_the_server(cfg):
+def test_chembl_target_by_gene_symbol_is_searched_by_synonym_on_the_server(cfg):
+    # D7-11: una consulta por símbolo de gen («PPARA») no coincide con pref_name (nombre completo): se busca
+    # también por sinónimo o símbolo, con el organismo filtrado en el servidor
     client = FakeClient(cfg, _chembl_handler(by_synonym=[BOVINE_PPARA]))
     tried = []
     rows = chembl.target_search(client, "PPARA", organism="Bos taurus", tried=tried)
-    assert [(r["target_chembl_id"], r["coincidencia"]) for r in rows] == [("CHEMBL9", "sinonimo_o_simbolo")]
+    assert [(r["target_chembl_id"], r["coincidencia"], r["exacta"]) for r in rows] == [
+        ("CHEMBL9", "sinonimo_o_simbolo", True)]
     assert [c[1] for c in client.calls] == [
         {"pref_name__icontains": "PPARA", "organism__iexact": "Bos taurus", "limit": 20},
         {"target_synonym__icontains": "PPARA", "organism__iexact": "Bos taurus", "limit": 20}]
-    assert tried == [{"estrategia": "nombre_preferido", "n": 0}, {"estrategia": "sinonimo_o_simbolo", "n": 1}]
+    assert tried == [{"estrategia": "nombre_preferido", "n": 0, "truncada": False},
+                     {"estrategia": "sinonimo_o_simbolo", "n": 1, "truncada": False}]
     client = FakeClient(cfg, _chembl_handler(by_accession=[BOVINE_PPARA]))
     rows = chembl.target_search(client, "q07869", organism="Bos taurus")
-    assert rows[0]["coincidencia"] == "accesion_uniprot"
+    assert rows[0]["coincidencia"] == "accesion_uniprot" and rows[0]["exacta"]
     assert client.calls[1][1] == {"target_components__accession": "Q07869", "organism__iexact": "Bos taurus",
                                   "limit": 20}
     assert chembl.target_search(FakeClient(cfg, _chembl_handler()), "PPARA", organism="Homo sapiens") == []
     assert chembl.release(FakeClient(cfg, _chembl_handler())) == {"version": "ChEMBL_35",
                                                                   "fecha_publicacion": "2025-01-01"}
+
+
+def test_chembl_name_hits_do_not_hide_the_gene_symbol_match(cfg):
+    # Variante: pref_name__icontains=CAT devuelve dianas que solo contienen «cat» en el nombre; la diana cuyo
+    # símbolo de gen es CAT (catalasa) no debe quedar oculta ni detrás de ellas, aunque se pida un máximo pequeño
+    unrelated = [{"target_chembl_id": f"CHEMBL{100 + i}", "pref_name": name, "organism": "Bos taurus",
+                  "target_type": "SINGLE PROTEIN", "target_components": _component(f"P0000{i}", f"GEN{i}")}
+                 for i, name in enumerate(["Cathepsin B", "Catechol O-methyltransferase"])]
+    catalase = {"target_chembl_id": "CHEMBL7", "pref_name": "Catalase", "organism": "Bos taurus",
+                "target_type": "SINGLE PROTEIN", "target_components": _component("P00432", "CAT")}
+    client = FakeClient(cfg, _chembl_handler(by_name=unrelated + [catalase], by_synonym=[catalase]))
+    tried = []
+    rows = chembl.target_search(client, "cat", organism="Bos taurus", limit=2, tried=tried)
+    assert [r["target_chembl_id"] for r in rows] == ["CHEMBL7", "CHEMBL100"]
+    assert rows[0]["exacta"] and rows[0]["coincidencias"] == ["nombre_preferido", "sinonimo_o_simbolo"]
+    assert tried[0] == {"estrategia": "nombre_preferido", "n": 3, "truncada": True}
 
 
 def test_chembl_molecules_mechanisms_and_activities_parse(cfg):
@@ -744,7 +770,13 @@ def test_diana_cli_reports_strategy_version_and_no_false_negative_claim(proj, ro
     event = events(proj, "diana")[-1]
     assert event["outputs"]["identificadores"] == ["CHEMBL9"] and event["outputs"]["fuente"]["version"] == "ChEMBL_35"
     code, out, _ = run(capsys, ["diana", "XYZ1", "--organismo", "Bos taurus"])
-    assert code == 0 and "No demuestra que no exista" in out
+    assert code == 0 and "No demuestra que la diana no exista" in out
+    assert "nombre preferido, sinónimo o símbolo de gen" in out
+    router.add(r"chembl/api/data/target", (200, {"targets": [dict(BOVINE_PPARA, target_chembl_id=f"CHEMBL{i}")
+                                                               for i in range(3)]}))
+    code, out, _ = run(capsys, ["diana", "receptor", "--organismo", "Bos taurus", "--max", "3"])
+    assert code == 0 and "llegó al máximo (3)" in out
+    assert run(capsys, ["diana", "PPARA", "--max", "0"])[0] == cli.SALIDA_ENTRADA
 
 
 # ============================================================================ PubChem (D7-14)
@@ -1284,6 +1316,11 @@ def test_init_respects_nutria_home(tmp_path, capsys, monkeypatch):
     assert (home / "nutria.toml").is_file() and (home / "research" / "nutria.sqlite").is_file()
     assert not (work / "nutria.toml").exists() and not (work / "research").exists()
     assert run(capsys, ["estado"])[0] == 0
+    assert load_config().db_path == home / "research" / "nutria.sqlite"      # la misma raíz que las demás órdenes
+    (tmp_path / "fichero").write_text("x", "utf-8")
+    monkeypatch.setenv("NUTRIA_HOME", str(tmp_path / "fichero"))
+    code, out, err = run(capsys, ["init"])
+    assert code == cli.SALIDA_ENTRADA and "no es un directorio" in err and "Traceback" not in err
 
 
 def test_network_error_messages_never_recommend_offline(cfg):

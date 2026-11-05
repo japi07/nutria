@@ -30,14 +30,34 @@ def molecule_search(client, query: str, limit: int = 10) -> list[dict]:
     return out
 
 
-def _targets(data: dict, organism: str | None, match: str) -> list[dict]:
+def _component_names(target: dict) -> set[str]:
+    """Números de acceso y sinónimos (símbolos de gen incluidos) de los componentes de una diana, en mayúsculas."""
+    names: set[str] = set()
+    for component in target.get("target_components") or []:
+        if not isinstance(component, dict):
+            continue
+        if component.get("accession"):
+            names.add(str(component["accession"]).strip().upper())
+        for synonym in component.get("target_component_synonyms") or []:
+            value = synonym.get("component_synonym") if isinstance(synonym, dict) else synonym
+            if value:
+                names.add(str(value).strip().upper())
+    return names
+
+
+def _targets(data: dict, organism: str | None, match: str, query: str = "") -> list[dict]:
     out = []
-    for t in data.get("targets", []) or []:
+    wanted = query.strip().upper()
+    for t in (data.get("targets", []) if isinstance(data, dict) else []) or []:
         # Comprobación defensiva: el servidor ya filtra por organismo.
         if organism and (t.get("organism") or "").strip().lower() != organism.lower():
             continue
+        exact = bool(wanted) and (wanted in _component_names(t)
+                                  or wanted in {str(t.get("pref_name") or "").strip().upper(),
+                                                str(t.get("target_chembl_id") or "").strip().upper()})
         out.append({"target_chembl_id": t.get("target_chembl_id"), "nombre": t.get("pref_name"),
-                    "organismo": t.get("organism"), "tipo": t.get("target_type"), "coincidencia": match})
+                    "organismo": t.get("organism"), "tipo": t.get("target_type"), "coincidencia": match,
+                    "coincidencias": [match], "exacta": exact})
     return out
 
 
@@ -46,34 +66,45 @@ def target_search(client, query: str, organism: str | None = None, limit: int = 
     """Dianas de ChEMBL.
 
     Sin organismo se usa la búsqueda de texto libre (`target/search.json`). Con `organism` todos los filtros van
-    al servidor (`organism__iexact`), así el límite se aplica a las dianas de esa especie, y se prueba por orden
-    hasta que alguna estrategia da resultados:
+    al servidor (`organism__iexact`), así el límite se aplica a las dianas de esa especie, y se combinan SIEMPRE
+    estas estrategias (no basta con que la primera dé algo: un nombre que contiene la consulta por casualidad, p.
+    ej. «CAT» en «Cathepsin», no debe ocultar la diana cuyo símbolo de gen es «CAT»):
     1. nombre preferido (`pref_name__icontains`), que es el nombre completo de la diana;
     2. número de acceso de UniProt (`target_components__accession`), si la consulta lo parece;
     3. sinónimo o símbolo de gen (`target_synonym__icontains`), p. ej. «PPARA».
-    Cada fila indica en `coincidencia` qué estrategia la encontró; `tried` (si se pasa) recibe las
-    estrategias probadas y cuántas dianas dio cada una.
+    Las dianas se deduplican; primero van las coincidencias exactas (`exacta`: la consulta es el símbolo de gen,
+    un sinónimo, el número de acceso, el nombre o el identificador de la diana) y después el resto en el orden de
+    las estrategias, hasta `limit`. Cada fila indica en `coincidencia` la primera estrategia que la encontró y en
+    `coincidencias` todas. `tried` (si se pasa) recibe cada estrategia con cuántas dianas dio y si llegó al límite
+    (`truncada`: puede haber más dianas que no se han visto).
     """
     organism = (organism or "").strip() or None
     query = (query or "").strip()
     if not organism:
         data = client.get_json(f"{BASE}/target/search.json", params={"q": query, "limit": limit})
-        rows = _targets(data, None, "texto_libre")
+        rows = _targets(data, None, "texto_libre", query)
         if tried is not None:
-            tried.append({"estrategia": "texto_libre", "n": len(rows)})
+            tried.append({"estrategia": "texto_libre", "n": len(rows), "truncada": len(rows) >= limit})
         return rows
     strategies = [("nombre_preferido", {"pref_name__icontains": query})]
     if _UNIPROT_ACCESSION_RE.fullmatch(query.upper()):
         strategies.append(("accesion_uniprot", {"target_components__accession": query.upper()}))
     strategies.append(("sinonimo_o_simbolo", {"target_synonym__icontains": query}))
+    merged: dict[str, dict] = {}
     for label, flt in strategies:
         data = client.get_json(f"{BASE}/target.json", params={**flt, "organism__iexact": organism, "limit": limit})
-        rows = _targets(data, organism, label)
+        rows = _targets(data, organism, label, query)
         if tried is not None:
-            tried.append({"estrategia": label, "n": len(rows)})
-        if rows:
-            return rows
-    return []
+            tried.append({"estrategia": label, "n": len(rows), "truncada": len(rows) >= limit})
+        for row in rows:
+            key = row["target_chembl_id"] or f"sin_id_{len(merged)}"
+            if key in merged:
+                merged[key]["coincidencias"].append(label)
+                merged[key]["exacta"] = merged[key]["exacta"] or row["exacta"]
+            else:
+                merged[key] = row
+    ordered = sorted(merged.values(), key=lambda row: not row["exacta"])   # estable: exactas primero
+    return ordered[:limit]
 
 
 def release(client) -> dict:
