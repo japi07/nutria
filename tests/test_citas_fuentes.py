@@ -678,8 +678,16 @@ def test_busqueda_que_dice_retractado_avisa_sin_cambiar_el_registro(project, net
                  retracted=True)
     assert _search(monkeypatch, hit, new) == 0
     assert source(sid)["retracted"] == 0 and source("pmid:40000001")["retracted"] is None
-    warned = {e["outputs"]["id"] for e in events("fuente_aviso_retractacion")}
-    assert warned == {sid, "pmid:40000001"}
+    warned = {e["outputs"]["id"]: e for e in events("fuente_aviso_retractacion")}
+    assert set(warned) == {sid, "pmid:40000001"}
+    # el aviso da la orden que vuelve a verificar esa fuente (`verificar --pendientes` no revisa las verificadas)
+    assert f"`nutria fuente agregar --doi {DOI}`" in warned[sid]["outputs"]["motivo"]
+    assert "`nutria fuente agregar --pmid 40000001`" in warned["pmid:40000001"]["outputs"]["motivo"]
+    # la procedencia guarda la huella de la consulta, no la consulta (puede ser confidencial)
+    assert "consulta" not in warned[sid]["inputs"] and len(warned[sid]["inputs"]["consulta_sha256"]) == 64
+    published(net, retracted=True)
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    assert source(sid)["retracted"] == 1
 
 
 def test_verificar_pendientes_sustituye_los_metadatos_de_la_busqueda(project, net, monkeypatch):
@@ -760,13 +768,21 @@ def test_pubmed_con_otro_titulo_solo_vale_si_coinciden_doi_autor_y_ano(net):
 def test_verificacion_no_fusiona_trabajos_distintos_ni_borra_nada(project, net):
     _two_rows_same_work(net, title_pmid_row="Methionine supplementation of grazing ewes")
     claim = add_claim(project, ["pmid:777"])
-    net.pm_by_doi[DOI] = "777"                   # una fuente relaciona por error el DOI con ese PMID
+    net.pm_by_doi[DOI] = "777"                   # PubMed y OpenAlex relacionan por error el DOI con ese PMID
     net.oa[DOI] = oa_work(DOI, pmid="777")
-    assert run(["fuente", "agregar", "--doi", DOI]) != 0
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0        # el DOI se verifica, sin asociarle ese PMID
     assert source("pmid:777")["title"] == "Methionine supplementation of grazing ewes"
     assert source(f"doi:{DOI}")["pmid"] is None
     assert {cl["id"]: cl["source_ids"] for cl in db.list_claims(_conn())}[claim] == ["pmid:777"]
     assert not any("fusión" in d["decision"] for d in db.list_decisions(_conn()))
+    # Si un registro verificado los relacionara de todos modos, el registro tampoco fusiona: error sin tocar nada.
+    conn = _conn()
+    record = {"doi": DOI, "pmid": "777", "title": TITLE, "year": 2020, "verified": True, "verified_via": "crossref",
+              "retracted": False, "extra": {"verified_by": "doi", "title_variants": [TITLE]}}
+    with pytest.raises(db.RegistryError, match="no es el del trabajo verificado"):
+        db.upsert_source(conn, record)
+    assert source("pmid:777")["title"] == "Methionine supplementation of grazing ewes"
+    assert source(f"doi:{DOI}")["pmid"] is None and len(db.list_sources(conn)) == 2
 
 
 def test_no_se_fusiona_si_una_fila_tiene_otro_identificador(project, net):
@@ -778,6 +794,165 @@ def test_no_se_fusiona_si_una_fila_tiene_otro_identificador(project, net):
     with pytest.raises(db.RegistryError, match="tiene el PMID 111"):
         db.upsert_source(conn, record)
     assert {r["id"] for r in db.list_sources(conn)} == {f"doi:{DOI}", "pmid:777"}
+
+
+def test_busqueda_no_fusiona_dos_filas_aunque_tengan_el_mismo_titulo(project, net, monkeypatch):
+    # Mutante M8: unos datos sin verificar no fusionan nunca, tampoco dos filas del mismo trabajo (mismo título):
+    # solo una verificación puede hacerlo.
+    first = Record(source="openalex", doi=DOI, title=TITLE, year=2020)
+    second = Record(source="pubmed", pmid="555", title=TITLE, year=2020)
+    assert _search(monkeypatch, first, second) == 0
+    both = Record(source="europepmc", doi=DOI, pmid="555", title=TITLE, year=2020)
+    assert _search(monkeypatch, both) == 3
+    rows = {r["id"]: r for r in db.list_sources(_conn())}
+    assert set(rows) == {f"doi:{DOI}", "pmid:555"} and rows[f"doi:{DOI}"]["pmid"] is None
+    assert not db.list_decisions(_conn())
+
+
+# ---------------------------------------------------------------- D9-4 a: fila única por el identificador asociado
+EWES = "Methionine supplementation of grazing ewes in late pregnancy"
+
+
+def test_pmid_de_openalex_solo_si_pubmed_lo_confirma(net):
+    # Mutante M23: el PMID que OpenAlex asocia a un DOI solo se acepta si PubMed confirma que es ese trabajo.
+    published(net)
+    net.oa[DOI] = oa_work(DOI, pmid="777")
+    net.pm["777"] = pm_rec("777", DOI)                         # PubMed declara el DOI: se asocia
+    res = c.verify_doi(Client(), DOI)
+    assert res.record.pmid == "777" and "pubmed" in res.retraction_checked_via
+    net.pm["777"] = pm_rec("777", None)                        # sin DOI pero el mismo título: se asocia
+    assert c.verify_doi(Client(), DOI).record.pmid == "777"
+    for other in (pm_rec("777", None, title=EWES), pm_rec("777", "10.5555/otro"), None):
+        if other is None:
+            net.pm.pop("777")                                  # PubMed no tiene ese PMID
+        else:
+            net.pm["777"] = other
+        res = c.verify_doi(Client(), DOI)
+        assert res.record.pmid is None and "no se asocia" in res.message, other
+    net.pm["777"] = pm_rec("777", DOI)
+    net.pm_by_doi[DOI] = "888"                                 # PubMed da otro PMID para el DOI: ninguno
+    net.pm["888"] = pm_rec("888", DOI)
+    res = c.verify_doi(Client(), DOI)
+    assert res.record.pmid is None and "PMID distintos" in res.message
+
+
+def test_openalex_con_otro_titulo_no_aporta_identificadores_ni_no_retractado(net):
+    # OpenAlex puede mezclar obras: si para el DOI da otro título, no se toman su PMID, su identificador ni su "no
+    # retractado" (la retractación queda desconocida); un "retractado" sí cuenta, por prudencia.
+    net.cr[DOI] = cr_msg(DOI)
+    net.oa[DOI] = oa_work(DOI, title=EWES, pmid="777", wid="W9")
+    net.pm["777"] = pm_rec("777", DOI, title=EWES)
+    res = c.verify_doi(Client(), DOI)
+    assert res.retracted is None and res.record.pmid is None and res.record.openalex_id is None
+    assert "OpenAlex da para este DOI otro título" in res.message
+    net.oa[DOI] = oa_work(DOI, title=EWES, retracted=True)
+    assert c.verify_doi(Client(), DOI).retracted is True
+
+
+def test_pmid_de_openalex_sin_respuesta_de_pubmed_no_se_asocia(net, monkeypatch):
+    published(net)
+    net.oa[DOI] = oa_work(DOI, pmid="777")
+
+    def down(client, pmids):
+        raise NetworkError("Sin respuesta válida de PubMed")
+    monkeypatch.setattr(pubmed, "summaries", down)
+    res = c.verify_doi(Client(), DOI)
+    assert res.status == "verificada" and res.record.pmid is None and "no se pudo comprobar en PubMed" in res.message
+
+
+def test_pubmed_con_otro_titulo_sin_corchetes_no_es_una_traduccion(net):
+    # Escenario P de la revisión: PubMed declara por error el DOI en otro trabajo del mismo primer autor y año.
+    published(net)
+    net.pm_by_doi[DOI] = "777"
+    net.pm["777"] = pm_rec("777", DOI, title=EWES)
+    res = c.verify_doi(Client(), DOI)
+    assert res.record.pmid is None and EWES not in res.record.extra["title_variants"]
+    net.pm["777"] = pm_rec("777", DOI, title=f"[{EWES}]")     # entre corchetes sí es una traducción de PubMed
+    assert c.verify_doi(Client(), DOI).record.pmid == "777"
+    assert c.translated_title("[Efecto de la colina en vacas].") and not c.translated_title(EWES)
+
+
+def test_fila_verificada_de_otro_trabajo_no_se_reescribe(project, net):
+    # Regresión R de la ronda 1: pmid:777 verificada (otro trabajo); OpenAlex asocia ese PMID al DOI.
+    net.pm["777"] = pm_rec("777", None, title=EWES, authors=("Ruiz R",), year=2015)
+    assert main(["fuente", "agregar", "--pmid", "777"]) == 0
+    claim = add_claim(project, ["pmid:777"])
+    add_extraction(project, "pmid:777")
+    published(net)
+    net.oa[DOI] = oa_work(DOI, pmid="777")
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    row = source("pmid:777")
+    assert row["title"] == EWES and row["doi"] is None and row["year"] == 2015
+    assert source(f"doi:{DOI}")["pmid"] is None and source(f"doi:{DOI}")["title"] == TITLE
+    assert {cl["id"]: cl["source_ids"] for cl in db.list_claims(_conn())}[claim] == ["pmid:777"]
+    assert {e["source_id"] for e in db.list_extractions(_conn())} == {"pmid:777"}
+
+
+def test_registro_no_reescribe_la_fila_de_otro_trabajo_encontrada_por_el_identificador_asociado(project):
+    # La protección del registro, sin pasar por la verificación (por si una fuente confirma una asociación errónea).
+    conn = _conn()
+    db.upsert_source(conn, {"pmid": "777", "title": EWES, "year": 2015, "authors": ["Ruiz R"], "verified": True,
+                            "verified_via": "pubmed", "retracted": False, "extra": {"verified_by": "pmid"}})
+    record = {"doi": DOI, "pmid": "777", "title": TITLE, "year": 2020, "authors": ["Pérez Juan"], "verified": True,
+              "verified_via": "crossref", "retracted": False, "extra": {"verified_by": "doi", "title_variants": [TITLE]}}
+    changes = []
+    sid = db.upsert_source(conn, record, changes=changes)
+    assert sid == f"doi:{DOI}" and db.get_source(conn, sid)["pmid"] is None
+    other = db.get_source(conn, "pmid:777")
+    assert other["title"] == EWES and other["doi"] is None
+    assert [ch["fuente"] for ch in changes if ch["accion"] == "identificador_no_asociado"] == ["pmid:777"]
+    assert any("PMID 777 no asociado (es de pmid:777)" in d["decision"] for d in db.list_decisions(conn, sid))
+    # Escenario S: PubMed declara para otro PMID el DOI de una fuente verificada que es otro trabajo.
+    record_s = {"pmid": "888", "doi": DOI, "title": EWES, "year": 2015, "authors": ["Ruiz R"], "verified": True,
+                "verified_via": "pubmed", "retracted": False, "extra": {"verified_by": "pmid", "title_variants": [EWES]}}
+    assert db.upsert_source(conn, record_s) == "pmid:888"
+    assert db.get_source(conn, "pmid:888")["doi"] is None and db.get_source(conn, f"doi:{DOI}")["title"] == TITLE
+    # Escenario P: una fila SIN verificar que se llama por ese PMID tampoco se reescribe con otro trabajo.
+    db.upsert_source(conn, {"pmid": "999", "title": EWES, "year": 2015})
+    record_p = dict(record, doi="10.5555/otro.trabajo", pmid="999")
+    assert db.upsert_source(conn, record_p) == "doi:10.5555/otro.trabajo"
+    assert db.get_source(conn, "pmid:999")["title"] == EWES and db.get_source(conn, "pmid:999")["verified"] == 0
+
+
+def test_fila_del_mismo_trabajo_recibe_el_identificador_asociado(project, net, monkeypatch, capsys):
+    # El caso legítimo sigue funcionando: la búsqueda registró pmid:555 y la verificación del DOI lo confirma.
+    assert _search(monkeypatch, Record(source="pubmed", pmid="555", title=TITLE, year=2020, authors=["Pérez J"])) == 0
+    published(net, pmid="555")
+    capsys.readouterr()
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    assert "ya estaba registrada como pmid:555" in capsys.readouterr().out
+    row = source("pmid:555")
+    assert row["doi"] == DOI and row["verified"] == 1 and len(db.list_sources(_conn())) == 1
+    # y una fuente con el título traducido por PubMed también es el mismo trabajo
+    spanish = "Efecto de la colina protegida sobre la producción de leche en vacas en transición"
+    net.cr["10.5555/arch.1"] = cr_msg("10.5555/arch.1", title=spanish, year=2018, journal="Archivos de Zootecnia")
+    assert main(["fuente", "agregar", "--doi", "10.5555/arch.1"]) == 0
+    net.pm["666"] = pm_rec("666", "10.5555/arch.1", title="[Effect of protected choline on milk yield of cows]",
+                           year=2018)
+    assert main(["fuente", "agregar", "--pmid", "666"]) == 0
+    assert source("doi:10.5555/arch.1")["pmid"] == "666" and source("pmid:666") is None
+
+
+def test_verificacion_retira_el_pmid_que_una_busqueda_asocio_a_otro_doi(project, net, monkeypatch):
+    # Una búsqueda asoció el PMID 555 a otro DOI y otro trabajo (fila sin verificar); la verificación del DOI real lo
+    # confirma (PubMed declara ese DOI en el PMID 555): gana la verificación, y la fila de la búsqueda no se toca más.
+    assert _search(monkeypatch, Record(source="europepmc", doi="10.5555/otro", pmid="555", title=EWES)) == 0
+    published(net, pmid="555")
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    other = source("doi:10.5555/otro")
+    assert other["pmid"] is None and other["title"] == EWES and source(f"doi:{DOI}")["pmid"] == "555"
+    assert any("identificador retirado" in d["decision"] for d in db.list_decisions(_conn(), "doi:10.5555/otro"))
+
+
+def test_una_verificacion_no_borra_una_retractacion_conocida(project, net):
+    # Mutante M16: una retractación registrada por una verificación no la borra otra que dice "no retractado".
+    published(net, retracted=True)
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    assert source(f"doi:{DOI}")["retracted"] == 1
+    published(net, retracted=False)
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    assert source(f"doi:{DOI}")["retracted"] == 1
+    assert main(["verificar", "--pendientes"]) == 0 and source(f"doi:{DOI}")["retracted"] == 1
 
 
 # ============================================================================ D7-16: licencias

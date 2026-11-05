@@ -1156,20 +1156,58 @@ def _pubmed_by_doi(client, doi: str) -> Record | None:
     return records[0]
 
 
+def translated_title(title: str | None) -> bool:
+    """¿Es un título traducido por PubMed? PubMed da en inglés y entre corchetes el título de los artículos escritos
+    en otros idiomas ("[Effect of ...]")."""
+    text = (title or "").strip().rstrip(".").strip()
+    return len(text) > 2 and text.startswith("[") and text.endswith("]")
+
+
+def same_first_author(a: str | None, b: str | None, family_a: str | None = None) -> bool:
+    """¿Es el mismo primer autor? Algún apellido en común entre los dos nombres (cualquier formato)."""
+    return bool(a and b and _author_candidates(a, family_a) & _author_candidates(b))
+
+
+def translation_of(title: str | None, other_title: str | None, *, year=None, other_year=None, first_author=None,
+                   other_first_author=None, family=None) -> bool:
+    """¿Puede `title` ser la traducción de PubMed ("[...]") del título `other_title` de un registro que comparte el
+    DOI? Solo si coinciden el primer autor y el año (±1). Un título distinto sin corchetes no es una traducción: es
+    otro trabajo (PubMed puede asociar por error un DOI a otro PMID)."""
+    return bool(translated_title(title) and other_title and year and other_year and abs(year - other_year) <= 1
+                and same_first_author(other_first_author, first_author, family))
+
+
 def _consistent(rec: Record, other: Record, doi: str) -> bool:
     """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI, no.
-    Con otro título solo si es PubMed (traduce los títulos de los artículos en otros idiomas), declara ese mismo DOI
-    y coinciden el primer autor y el año (±1)."""
+    Con otro título solo si es PubMed, declara ese mismo DOI y su título es una traducción ("[...]", ver
+    `translation_of`) con el mismo primer autor y año (±1)."""
     norm = normalize_doi(doi)
     if other.doi and other.doi != norm:
         return False
     if not rec.title or not other.title or titles_same_work(rec.title, other.title):
         return True
-    if other.doi != norm or other.source != "pubmed" or not rec.year or not other.year \
-            or abs(rec.year - other.year) > 1 or not rec.authors or not other.authors:
+    if other.doi != norm or other.source != "pubmed" or not rec.authors or not other.authors:
         return False
     families = (rec.extra or {}).get("families") or [None]
-    return bool(_author_candidates(rec.authors[0], families[0]) & _author_candidates(other.authors[0]))
+    return translation_of(other.title, rec.title, year=other.year, other_year=rec.year,
+                          first_author=other.authors[0], other_first_author=rec.authors[0], family=families[0])
+
+
+def _pubmed_confirms(client, rec: Record, doi: str, pmid: str, notes: list[str]) -> Record | None:
+    """Registro de PubMed del PMID que OpenAlex asocia al DOI, solo si PubMed confirma que es el mismo trabajo (declara
+    ese DOI, o no declara ninguno y el título es el mismo; ver `_consistent`). OpenAlex puede mezclar obras: un PMID
+    sin confirmar no se asocia."""
+    try:
+        found = pubmed.summaries(client, [pmid])
+    except NetworkError as exc:
+        notes.append(f"no se pudo comprobar en PubMed el PMID {pmid} que da OpenAlex "
+                     f"({_redact(str(exc), getattr(client, 'cfg', None))[:120]}): no se asocia")
+        return None
+    cand = found[0] if found else None
+    if cand is None or not cand.title or not _consistent(rec, cand, doi):
+        notes.append(f"PubMed no confirma que el PMID {pmid} que da OpenAlex sea este trabajo: no se asocia")
+        return None
+    return cand
 
 
 def _copy(rec: Record) -> Record:
@@ -1275,25 +1313,41 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
     if retracted is not True and pm_rec is None:
         pm_rec = _pubmed_by_doi(client, doi)
         if pm_rec is not None and not _consistent(rec, pm_rec, doi):
-            notes.append(f"PubMed asocia el DOI al PMID {pm_rec.pmid}, de un trabajo con otro título y sin ese DOI: "
-                         "no se usa")
+            notes.append(f"PubMed asocia el DOI al PMID {pm_rec.pmid}, de un trabajo con otro título: no se usa")
             pm_rec = None
         if pm_rec is not None and pm_rec.retracted is not None:
             checked.append("pubmed")
             retracted = bool(pm_rec.retracted)
 
+    # PMID: solo el que confirma PubMed (búsqueda por el DOI o, para el que da OpenAlex, el resumen de ese PMID).
+    # OpenAlex puede asociar a un DOI el PMID de otro trabajo: sin confirmar, no se asocia (lo usaría el registro
+    # para unir esta fuente con la fila de ese PMID).
+    oa_pmid = oa_rec.pmid if oa_rec is not None else None
+    pmid = pm_rec.pmid if pm_rec is not None else None
+    oa_confirmed = False
+    if oa_pmid and pmid and oa_pmid != pmid:
+        notes.append(f"OpenAlex ({oa_pmid}) y PubMed ({pmid}) dan PMID distintos para este DOI: no se asocia ninguno")
+        pmid = None
+    elif oa_pmid and not pmid:
+        cand = _pubmed_confirms(client, rec, doi, oa_pmid, notes)
+        if cand is not None:
+            pmid, pm_rec, oa_confirmed = oa_pmid, cand, True
+            if retracted is not True and cand.retracted is not None:
+                checked.append("pubmed")
+                retracted = bool(cand.retracted)
+    else:
+        oa_confirmed = bool(oa_pmid)
+
     # Registro verificado para el alta: metadatos de la fuente principal y, de las otras consultas por el mismo
-    # DOI, el PMID (solo si no hay dos distintos), el PMCID, el identificador de OpenAlex y la licencia.
+    # DOI, el PMID confirmado, el PMCID, el identificador de OpenAlex y la licencia.
     full = _copy(rec)
-    pmids = {p for p in (rec.pmid, oa_rec.pmid if oa_rec else None, pm_rec.pmid if pm_rec else None) if p}
-    full.pmid = next(iter(pmids)) if len(pmids) == 1 else None
-    if len(pmids) > 1:
-        notes.append(f"las fuentes dan PMID distintos para este DOI ({', '.join(sorted(pmids))}): no se asocia "
-                     "ninguno")
-    for other in (oa_rec, pm_rec):
-        if other is not None and other is not rec:
-            full.pmcid = full.pmcid or other.pmcid
-            full.openalex_id = full.openalex_id or other.openalex_id
+    full.doi = full.doi or normalize_doi(doi)
+    full.pmid = pmid
+    full.pmcid = pm_rec.pmcid if pm_rec is not None else None
+    if not full.pmcid and oa_rec is not None and (oa_confirmed or not oa_pmid):
+        full.pmcid = oa_rec.pmcid
+    if oa_rec is not None and oa_rec is not rec:
+        full.openalex_id = full.openalex_id or oa_rec.openalex_id
     license_ = (rec.extra or {}).get("license") or ((oa_rec.extra or {}).get("license") if oa_rec else None)
     full.extra["license"] = license_
     full.retracted = retracted
@@ -1312,6 +1366,7 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
             journals.append(other.journal)
     titles = list(dict.fromkeys(_clean_meta(t) for t in titles if t and _clean_meta(t)))
     full.extra["title_variants"] = titles     # para comprobar fusiones de registros (`db.upsert_source`)
+    full.extra["verified_by"] = "doi"         # identificador que avala esta verificación (el PMID es asociado)
     if notes:
         _add_message(result, f"Metadatos de {rec.source} ({'; '.join(notes)}).")
     return _apply_citation(result, full, citation_text, titles, [j for j in journals if j])
@@ -1332,6 +1387,7 @@ def verify_pmid(client, pmid: str, citation_text: str | None = None) -> Verifica
     full = _copy(rec)
     full.retracted = bool(rec.retracted)
     full.extra["title_variants"] = [rec.title] if rec.title else []
+    full.extra["verified_by"] = "pmid"        # el DOI que declara PubMed es un dato asociado
     result = Verification(pmid, "pmid", "verificada", title=rec.title, year=rec.year, journal=rec.journal,
                           authors=rec.authors[:5], retracted=bool(rec.retracted),
                           retraction_checked_via=["pubmed"], source="pubmed", record=full)

@@ -261,6 +261,57 @@ def _trusted_retraction(row: sqlite3.Row) -> int | None:
     return value if (value == 1 or row["verified"]) else None
 
 
+def _anchor(record: dict, fields: dict) -> str:
+    """Identificador que avala una verificación: el consultado (`extra["verified_by"]`: el DOI en `verify_doi`, el
+    PMID en `verify_pmid`). El otro es un dato que las fuentes asocian (el PMID que confirma PubMed para un DOI, el
+    DOI que declara PubMed para un PMID) y puede ser de otro trabajo. Sin la marca, el DOI."""
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    anchor = extra.get("verified_by")
+    if anchor in ("doi", "pmid"):
+        return anchor
+    return "doi" if fields.get("doi") else "pmid"
+
+
+def _authors_of(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return value
+    try:
+        data = json.loads(value) if value else []
+    except ValueError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _row_mismatch(row: sqlite3.Row, found_by: str, fields: dict, record: dict) -> list[str]:
+    """Motivos por los que `row`, encontrada solo por un identificador que la verificación asocia pero no avala
+    (`found_by`), no es el trabajo verificado: título distinto (ninguna variante verificada, ni la traducción de
+    PubMed "[...]" con el mismo primer autor y año) o años incompatibles. Vacío si es el mismo trabajo."""
+    from .verify.citations import titles_same_work, translation_of
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    titles = [t for t in [fields.get("title"), *(extra.get("title_variants") or [])] if t]
+    problems = []
+    if not row["title"]:
+        if _primary_field(row) != found_by:
+            problems.append(f"{row['id']} no tiene título con el que comparar")
+    elif not titles:
+        problems.append("el registro verificado no trae título con el que comparar")
+    elif not any(titles_same_work(t, row["title"]) for t in titles):
+        row_first = next(iter(_authors_of(row["authors"])), None)
+        rec_first = next(iter(_authors_of(fields.get("authors"))), None)
+        rec_title = fields.get("title")
+        translated = (
+            translation_of(rec_title, row["title"], year=fields.get("year"), other_year=row["year"],
+                           first_author=rec_first, other_first_author=row_first)
+            or translation_of(row["title"], rec_title, year=row["year"], other_year=fields.get("year"),
+                              first_author=row_first, other_first_author=rec_first))
+        if not translated:
+            problems.append(f"el título de {row['id']} («{row['title'][:90]}») no es el del trabajo verificado "
+                            f"(«{str(rec_title or '')[:90]}»)")
+    if fields.get("year") and row["year"] and abs(int(fields["year"]) - int(row["year"])) > 1:
+        problems.append(f"años incompatibles ({row['year']} en {row['id']}, {fields['year']} verificado)")
+    return problems
+
+
 def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict, record: dict):
     """Antes de fusionar dos filas (una con el DOI y otra con el PMID de un registro VERIFICADO) comprueba que son
     el mismo trabajo: la verificación relaciona ese DOI con ese PMID (`fields`), ninguna fila tiene otro DOI u otro
@@ -324,14 +375,22 @@ def _merge_duplicate_sources(conn: sqlite3.Connection, keep: sqlite3.Row, drop: 
     changes.append({"id": keep_id, "accion": "fusion", "eliminada": drop_id})
 
 
+def _reverify_command(sid: str) -> str:
+    """Orden que vuelve a verificar una fuente, también si ya está verificada (`verificar --pendientes` solo revisa
+    las no verificadas o con la retractación desconocida)."""
+    kind, _, value = sid.partition(":")
+    if kind in ("doi", "pmid") and value:
+        return f"`nutria fuente agregar --{kind} {value}`"
+    return "`nutria fuente agregar --doi <DOI>` o `--pmid <PMID>` (la fuente no tiene DOI ni PMID con que verificarla)"
+
+
 def _retraction_warning(sid: str, record: dict, current: int | None, changes: list) -> None:
     """Unos datos sin verificar que dicen "retractado" no cambian el registro, pero no se callan: se avisa (y queda
-    en la procedencia) para que una verificación lo compruebe."""
+    en la procedencia) con la orden que lo comprueba."""
     if record.get("retracted") is True and current != 1:
         changes.append({"id": sid, "accion": "aviso_retractacion", "motivo": (
             "los datos sin verificar indican que el trabajo está RETRACTADO; solo una verificación cambia la "
-            "retractación del registro: comprueba con `nutria fuente agregar --doi/--pmid` o "
-            "`nutria verificar --pendientes`")})
+            f"retractación del registro: vuelve a verificarla con {_reverify_command(sid)}")})
 
 
 def _apply_unverified(conn: sqlite3.Connection, existing: sqlite3.Row, fields: dict, record: dict,
@@ -493,19 +552,41 @@ def _upsert_source(conn: sqlite3.Connection, fields: dict, record: dict, verifie
         existing = conn.execute("SELECT * FROM sources WHERE id = ?", (keep["id"],)).fetchone()
     else:
         existing = by_doi or by_pmid
+    not_linked = None
+    if verified and existing is not None and (by_doi is None or by_pmid is None):
+        # Una sola fila, encontrada por el identificador que la verificación asocia pero no avala (el PMID de un DOI,
+        # el DOI que PubMed declara para un PMID): si es una fila verificada o se llama por ese identificador, debe
+        # ser el mismo trabajo. Si no lo es, no se toca: el registro verificado entra aparte, sin ese identificador.
+        found_by = "doi" if by_doi is not None else "pmid"
+        if found_by != _anchor(record, fields) and (existing["verified"] or _primary_field(existing) == found_by):
+            problems = _row_mismatch(existing, found_by, fields, record)
+            if problems:
+                not_linked = (found_by, fields[found_by], existing["id"], problems)
+                fields = dict(fields, **{found_by: None})
+                existing = None
     if existing is None and fields["openalex_id"]:
         # Solo una fila sin DOI ni PMID se reconoce por el identificador de OpenAlex (OpenAlex puede unir en una
         # obra dos DOI distintos, p. ej. preprint y artículo).
         existing = conn.execute(
             "SELECT * FROM sources WHERE id = ? OR (openalex_id = ? AND doi IS NULL AND pmid IS NULL) LIMIT 1",
             (f"openalex:{fields['openalex_id']}", fields["openalex_id"])).fetchone()
+    sid = None
     if existing is not None:
         if not verified:
             return _apply_unverified(conn, existing, fields, record, changes)
         sid = _apply_verified(conn, existing, fields, record, actor, changes)
-        if sid is not None:
-            return sid
-    return _insert_source(conn, fields, record, verified, actor, changes)
+    if sid is None:
+        sid = _insert_source(conn, fields, record, verified, actor, changes)
+    if not_linked is not None:
+        key, value, other, problems = not_linked
+        label = {"doi": "DOI", "pmid": "PMID"}[key]
+        motive = (f"La verificación ({record.get('verified_via') or 'sin indicar'}) asocia el {label} {value} a este "
+                  f"trabajo, pero {other}, la fuente registrada con ese {label}, es otro trabajo: " + "; ".join(problems)
+                  + f". No se ha cambiado {other}; revisa a qué trabajo corresponde ese {label}.")
+        _log_decision(conn, sid, f"{label} {value} no asociado (es de {other})", motive, actor)
+        changes.append({"id": sid, "accion": "identificador_no_asociado", "campos": [key], "fuente": other,
+                        "motivo": motive})
+    return sid
 
 
 def get_source(conn: sqlite3.Connection, source_id: str) -> dict | None:

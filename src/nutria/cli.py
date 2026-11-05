@@ -206,7 +206,8 @@ def cmd_buscar(args, cfg) -> int:
               outputs={"total": res.get("count"), "devueltos": len(records), "registrados": len(registered),
                        "conflictos": len(conflicts)},
               actor=args.agente)
-    _log_source_changes(cfg, args, changes, {"fuente": args.fuente, "consulta": args.consulta})
+    # Los cambios del registro de fuentes no llevan la consulta en claro (puede ser confidencial): solo su huella.
+    _log_source_changes(cfg, args, changes, {"fuente": args.fuente, "consulta_sha256": sha256_text(args.consulta)})
     header = f"{args.fuente}: {res.get('count', 0)} resultados totales; mostrando {len(records)}"
     if res.get("query_translation"):
         header += f"\nTraducción de la consulta: {res['query_translation']}"
@@ -311,9 +312,15 @@ def cmd_fuente(args, cfg) -> int:
         warn = "  ATENCIÓN: no se pudo comprobar la retractación; no servirá para [PUB] hasta comprobarla"
     lines = [f"Registrada y verificada ({via}): {source_id}{warn}", f"  {rec.get('title')}",
              f"  licencia: {ver.license or 'la fuente no la indica'}"]
+    if ver.message:                    # p. ej. un PMID que da OpenAlex y PubMed no confirma, y no se asocia
+        lines.append(f"  verificación: {ver.message}")
     if args.doi and args.pmid and rec.get("pmid") != str(args.pmid).strip():
         lines.append(f"  AVISO: no se asocia el PMID {args.pmid}: la verificación del DOI no lo confirma "
                      f"(PMID confirmado: {rec.get('pmid') or 'ninguno'}).")
+    requested = f"{ver.kind}:{ver.identifier}"
+    if source_id != requested:
+        lines.append(f"  AVISO: la fuente ya estaba registrada como {source_id} (mismo trabajo): usa {source_id}, no "
+                     f"{requested}, en afirmaciones y extracciones.")
     lines += _change_lines(changes)
     _emit(args, {"id": source_id, "registro": rec, "cambios": changes}, "\n".join(lines))
     return 0
