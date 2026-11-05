@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from ..http import NetworkError
+
 BASE = "https://www.ebi.ac.uk/chembl/api/data"
 # Formato de un número de acceso de UniProtKB.
 _UNIPROT_ACCESSION_RE = re.compile(r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})")
@@ -76,7 +78,8 @@ def target_search(client, query: str, organism: str | None = None, limit: int = 
     un sinónimo, el número de acceso, el nombre o el identificador de la diana) y después el resto en el orden de
     las estrategias, hasta `limit`. Cada fila indica en `coincidencia` la primera estrategia que la encontró y en
     `coincidencias` todas. `tried` (si se pasa) recibe cada estrategia con cuántas dianas dio y si llegó al límite
-    (`truncada`: puede haber más dianas que no se han visto).
+    (`truncada`: puede haber más dianas que no se han visto). Si una estrategia falla (p. ej. el servicio rechaza un
+    filtro), las demás siguen y su entrada en `tried` lleva el `error`; si fallan todas, se lanza el primer error.
     """
     organism = (organism or "").strip() or None
     query = (query or "").strip()
@@ -91,8 +94,15 @@ def target_search(client, query: str, organism: str | None = None, limit: int = 
         strategies.append(("accesion_uniprot", {"target_components__accession": query.upper()}))
     strategies.append(("sinonimo_o_simbolo", {"target_synonym__icontains": query}))
     merged: dict[str, dict] = {}
+    errors: list[NetworkError] = []
     for label, flt in strategies:
-        data = client.get_json(f"{BASE}/target.json", params={**flt, "organism__iexact": organism, "limit": limit})
+        try:
+            data = client.get_json(f"{BASE}/target.json", params={**flt, "organism__iexact": organism, "limit": limit})
+        except NetworkError as exc:
+            errors.append(exc)
+            if tried is not None:
+                tried.append({"estrategia": label, "n": 0, "truncada": False, "error": str(exc)})
+            continue
         rows = _targets(data, organism, label, query)
         if tried is not None:
             tried.append({"estrategia": label, "n": len(rows), "truncada": len(rows) >= limit})
@@ -103,6 +113,8 @@ def target_search(client, query: str, organism: str | None = None, limit: int = 
                 merged[key]["exacta"] = merged[key]["exacta"] or row["exacta"]
             else:
                 merged[key] = row
+    if errors and len(errors) == len(strategies):
+        raise errors[0]
     ordered = sorted(merged.values(), key=lambda row: not row["exacta"])   # estable: exactas primero
     return ordered[:limit]
 

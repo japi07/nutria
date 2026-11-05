@@ -1733,6 +1733,8 @@ def test_buscar_europepmc_pages_and_logs_identifiers_of_records_without_doi(proj
     router.add(r"europepmc/webservices/rest/search", epmc)
     code, out, _ = run(capsys, ["buscar", "europepmc", "rumen", "--max", "3"])
     assert code == 0 and "(2 páginas)" in out and "Hay más resultados" in out
+    code, out, _ = run(capsys, ["--json", "buscar", "europepmc", "rumen", "--max", "3"])   # desde la caché
+    assert code == 0 and json.loads(out)["siguiente_cursor"] == "C3"                      # para seguir después
     event = events(proj, "busqueda")[-1]
     assert event["outputs"]["paginas"] == 2 and event["outputs"]["total"] == 9
     assert event["outputs"]["identificadores"] == [{"europepmc": "PPR/PPR1"},
@@ -1754,3 +1756,22 @@ def test_network_errors_are_labelled_by_their_cause(proj, router, capsys, monkey
     assert code == cli.SALIDA_RED and err.startswith("Respuesta no válida del servicio:")
     code, out, err = run(capsys, ["buscar", "pubmed", "x"])                          # bloqueado por el proxy
     assert code == cli.SALIDA_RED and err.startswith("Error de red:")
+
+
+def test_a_failing_chembl_strategy_does_not_hide_the_others(proj, router, capsys):
+    # Si ChEMBL rechaza un filtro (p. ej. HTTP 400 en la búsqueda por sinónimo), las demás estrategias siguen y el
+    # resultado se marca incompleto; si fallan todas, error de red
+    def target(method, url):
+        if "target_synonym__icontains" in url:
+            return 400, '{"error": "filtro no admitido"}'
+        return 200, {"targets": [BOVINE_PPARA]}
+
+    router.add(r"chembl/api/data/target", target)
+    router.add(r"chembl/api/data/status\.json", (200, {"chembl_db_version": "ChEMBL_35"}))
+    code, out, _ = run(capsys, ["--json", "diana", "Peroxisome", "--organismo", "Bos taurus"])
+    data = json.loads(out)
+    assert code == cli.SALIDA_RESULTADO and data["incompleto"] and data["resultados"][0]["target_chembl_id"] == "CHEMBL9"
+    assert any("sinónimo o símbolo de gen falló" in a for a in data["avisos"])
+    assert events(proj, "diana")[-1]["outputs"]["incompleto"] is True
+    router.add(r"chembl/api/data/target", (400, '{"error": "x"}'))                 # otra consulta: sin copias
+    assert run(capsys, ["diana", "Catalase", "--organismo", "Bos taurus"])[0] == cli.SALIDA_RED

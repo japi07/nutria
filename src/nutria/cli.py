@@ -583,7 +583,7 @@ def cmd_buscar(args, cfg) -> int:
     extra = _red_lineas(cfg, client, api_avisos, notas)
     _emit(args, {"total": total, "registros": [r.to_dict() for r in records], "registradas": registered,
                  "devueltos": len(records), "paginas": res.get("paginas"), "incompleto": incompleto,
-                 **_red_salida(client, api_avisos), "notas": notas},
+                 "siguiente_cursor": res.get("next_cursor"), **_red_salida(client, api_avisos), "notas": notas},
           header + "\n" + _records_text(records) + ("\n" + "\n".join(extra) if extra else ""))
     return SALIDA_RESULTADO if incompleto else SALIDA_OK
 
@@ -775,9 +775,14 @@ def cmd_diana(args, cfg) -> int:
     targets = chembl.target_search(client, args.consulta, organism=args.organismo, limit=args.max, tried=tried)
     nombres = {"nombre_preferido": "nombre preferido", "accesion_uniprot": "número de acceso de UniProt",
                "sinonimo_o_simbolo": "sinónimo o símbolo de gen", "texto_libre": "texto libre"}
+    failed = [t for t in tried if t.get("error")]
+    for t in failed:
+        avisos.append(f"La búsqueda por {nombres.get(t['estrategia'], t['estrategia'])} falló ({t['error']}): los "
+                      "resultados están INCOMPLETOS")
     if args.organismo and not targets:
         avisos.append(f"ChEMBL no devolvió dianas de «{args.organismo.strip()}» para «{args.consulta}» (buscado por "
-                      + ", ".join(nombres.get(t["estrategia"], t["estrategia"]) for t in tried) + "). No demuestra "
+                      + ", ".join(nombres.get(t["estrategia"], t["estrategia"]) for t in tried
+                                  if not t.get("error")) + "). No demuestra "
                       "que la diana no exista en esa especie (ChEMBL tiene pocas dianas de especies ganaderas): busca "
                       "el ortólogo con `nutria proteina` (UniProt) y etiqueta la diana de otra especie como evidencia "
                       "de otra especie")
@@ -791,13 +796,14 @@ def cmd_diana(args, cfg) -> int:
     fuente = {"nombre": "ChEMBL", **_version_fuente(chembl.release, client, "ChEMBL", avisos)}
     log_event(cfg, "diana", inputs={"consulta": args.consulta, "organismo": args.organismo},
               outputs={"n": len(targets), "identificadores": [t["target_chembl_id"] for t in targets],
-                       "estrategias": tried, "fuente": fuente, "cache": _red_procedencia(client)}, actor=args.agente)
+                       "estrategias": tried, "incompleto": bool(failed), "fuente": fuente,
+                       "cache": _red_procedencia(client)}, actor=args.agente)
     lines = [_json_text(targets),
              "Estrategias: " + ", ".join(f"{t['estrategia']} ({t['n']})" for t in tried), _fuente_texto(fuente)]
     lines += _red_lineas(cfg, client, avisos)
-    _emit(args, {"resultados": targets, "estrategias": tried, "fuente": fuente, **_red_salida(client, avisos)},
-          "\n".join(lines))
-    return SALIDA_OK
+    _emit(args, {"resultados": targets, "estrategias": tried, "incompleto": bool(failed), "fuente": fuente,
+                 **_red_salida(client, avisos)}, "\n".join(lines))
+    return SALIDA_RESULTADO if failed else SALIDA_OK
 
 
 def cmd_proteina(args, cfg) -> int:
