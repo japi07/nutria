@@ -181,7 +181,8 @@ _LABEL_RE = re.compile(r"\b(?:doi|pmid|pmcid)\b\s*:?", re.IGNORECASE)
 _BOUNDARY_RE = re.compile(
     r"[.?!]+[\"'”’»)\]*_]*\s+"                                    # fin de frase
     r"|\(\s*(?:1[6-9]|20)\d{2}[a-z]?\s*\)"                         # (2020) o (2020a)
-    r"|(?<=[,;])\s*(?:1[6-9]|20)\d{2}[a-z]?\s*(?=[,.;:])")         # , 2020,
+    r"|(?<=[,;])\s*(?:1[6-9]|20)\d{2}[a-z]?\s*(?=[,.;:])"          # , 2020,
+    r"|(?<=\w)[\"'”’»]\s*,\s+|,[\"”’»]\s+")                         # 'Título', Revista (Harvard); "Título," (IEEE)
 
 
 _MONTHS = frozenset({
@@ -391,14 +392,33 @@ _NUMBER_WORDS = {w: str(i) for i, w in enumerate(
     ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"), 1)}
 
 
+def _series_marker(text: str, tok: _Tok) -> str | None:
+    """Número de una parte de una serie al principio del título o de un subtítulo ("...: I. A review of ...", "II.
+    Milk production", "2) ..."): un romano o una cifra tras ":", "." o "—" y seguido de "." o ")"; o None."""
+    if not re.fullmatch(r"\s*[.)]", text[tok.end:tok.end + 1] or "x") or not text[tok.end:].strip(" .)"):
+        return None                   # sin punto detrás, o al final del título (el punto final de PubMed)
+    before = text[:tok.start].rstrip()
+    if before and before[-1] not in ":.—–":
+        return None
+    if _ROMAN_RE.fullmatch(tok.norm):
+        return str(_roman(tok.norm))
+    return tok.norm if tok.norm.isdigit() and len(tok.norm) <= 2 else None
+
+
 def _title_tokens(text: str | None) -> list[str]:
-    toks = _tokens_of(_title_text(text))
+    """Palabras de un título para compararlo: las significativas y las cifras; los calificativos unidos a su palabra
+    ("vitamin_d3", "part_2") y los números de parte de una serie ("series_1" en "...: I. A review")."""
+    text = _title_text(text)
+    toks = _tokens_of(text)
     out = []
     for i, tok in enumerate(toks):
         norm = _NUMBER_WORDS.get(tok.norm, tok.norm)
         qualifier = _qualifier(norm) if i and toks[i - 1].norm in _LETTER_HEADS else None
+        series = None if qualifier is not None else _series_marker(text, tok)
         if qualifier is not None:
             out.append(f"{toks[i - 1].norm}_{qualifier}")
+        elif series is not None:
+            out.append(f"series_{series}")
         elif _title_word(norm):
             out.append(norm)
     return out
@@ -900,33 +920,48 @@ def _bibliographic(text: str, run: list[_Tok], other_year: bool) -> bool:
                 or any(t.norm in _BIB_LABELS for t in run))
 
 
-def _journal_suffix(toks: list[_Tok], journals: list[str]) -> int:
-    """Número de palabras finales de `toks` que nombran la revista del registro (0 si no). No incluye cifras ni
-    negaciones: "... fed 100 J Dairy Sci" no esconde el 100 dentro de la revista."""
-    for size in range(min(10, len(toks) - 1), 0, -1):
-        suffix = toks[-size:]
-        if any(_has_digit(t.norm) or t.norm in _CRITICAL_WORDS for t in suffix):
+def _after_journal(tok: _Tok) -> bool:
+    """¿Puede ir tras la revista en una cita (año, volumen, número, páginas, mes, etiquetas)?"""
+    norm = tok.norm
+    return (_has_digit(norm) or not _is_sig(norm) or norm in _NOISE or norm in _MONTHS or norm in _JOURNAL_END
+            or norm in _BIB_LABELS) and not (norm in _CRITICAL_WORDS and norm != "no")
+
+
+def _journal_start(toks: list[_Tok], journals: list[str]) -> int | None:
+    """Posición en `toks` donde empieza la revista del registro seguida solo de año, volumen, número o páginas
+    ("... Title J Dairy Sci 2020 103 1-10"), o None. La revista no incluye cifras ni negaciones ("... fed 100 J
+    Dairy Sci" no esconde el 100 en ella) ni empieza por el calificativo de la palabra anterior ("... vitamin E
+    Journal of Dairy Science": la E es del título)."""
+    n = len(toks)
+    for start in range(max(1, n - 24), n):
+        if _is_qualifier(toks[:start + 1]):
             continue
-        if any(journal_matches(" ".join(t.raw for t in suffix), j) for j in journals):
-            return size
-    return 0
+        for end in range(min(n, start + 10), start, -1):
+            part = toks[start:end]
+            if any(_has_digit(t.norm) or t.norm in _CRITICAL_WORDS for t in part):
+                continue
+            if not all(_after_journal(t) for t in toks[end:]):
+                continue
+            if any(journal_matches(" ".join(t.raw for t in part), j) for j in journals):
+                return start
+    return None
 
 
-def _sensitive_lead(tok: _Tok, before: list[_Tok], authors: set[str], other_year: bool) -> bool:
+def _sensitive_lead(tok: _Tok, all_toks: list[_Tok], authors: set[str], real: set[str]) -> bool:
     """¿Es `tok`, justo delante del título citado, parte de él? Una negación ("No effect of ...") o una cifra ("2
-    Effects of ...") sí; un año solo si la cita da otro (entonces este no es el de la cita). Nunca un nombre de
-    autor del registro (un apellido "No" o "Ni")."""
+    Effects of ...") sí; un año solo si la cita da otro que no es del título real (entonces este no es el de la cita).
+    Nunca un nombre de autor del registro (un apellido "No" o "Ni")."""
     if _name_norm(tok.norm) in authors:
         return False
     if tok.norm in _CRITICAL_WORDS:
         return True
     if not _has_digit(tok.norm):
         return False
-    return not _is_year(tok) or other_year or any(_is_year(t) for t in before)
+    return not _is_year(tok) or any(_is_year(t) and t is not tok and t.norm not in real for t in all_toks)
 
 
 def _trim_span(text: str, span: list[_Tok], all_toks: list[_Tok], real: set[str], authors: set[str],
-               journals: list[str], lead: bool, tail: bool) -> list[_Tok]:
+               journals: list[str], lead: bool, tail: bool, firsts: frozenset = frozenset()) -> list[_Tok]:
     """Quita del principio del tramo los nombres de autor del registro, iniciales, el año y fórmulas de cita, y del
     final el año, el volumen, las páginas y la revista del registro (citas sin puntos entre autores, título y
     revista). Nunca quita palabras del título real, ni lo que puede ser parte del título citado: una negación o una
@@ -935,27 +970,40 @@ def _trim_span(text: str, span: list[_Tok], all_toks: list[_Tok], real: set[str]
     toks = list(span)
     if lead:
         k = 0
-        while k < len(toks) and toks[k].norm not in real and (
+        while k < len(toks) and (toks[k].norm not in real or (
+                # el año de la cita aunque el título lo contenga, si el título empieza justo detrás
+                _is_year(toks[k]) and k + 1 < len(toks) and toks[k + 1].norm in firsts)) and (
                 _name_norm(toks[k].norm) in authors or _is_initial(toks[k].raw) or not _is_sig(toks[k].norm)
                 or toks[k].norm in _NOISE):
             k += 1
-        while k > 0 and _sensitive_lead(toks[k - 1], toks[:k - 1], authors, _other_year(all_toks, span)):
+        while k > 0 and _sensitive_lead(toks[k - 1], all_toks, authors, real):
             k -= 1
         toks = toks[k:]
     if tail:
-        for _ in range(4):
-            k = len(toks)
-            while k > 0 and toks[k - 1].norm not in real and not _is_qualifier(toks[:k]) and (
-                    _has_digit(toks[k - 1].norm) or not _is_sig(toks[k - 1].norm) or toks[k - 1].norm in _NOISE):
-                k -= 1
-            size = _journal_suffix(toks[:k], journals)
-            if size:
-                toks = toks[:k - size]
-                continue
-            if k < len(toks) and _bibliographic(text, toks[k:], _other_year(all_toks, toks[k:])):
-                toks = toks[:k]
-            break
+        start = _journal_start(toks, journals)
+        if start is not None:
+            toks = toks[:start]
+        k = len(toks)
+        while k > 0 and toks[k - 1].norm not in real and not _is_qualifier(toks[:k]) and (
+                _has_digit(toks[k - 1].norm) or not _is_sig(toks[k - 1].norm) or toks[k - 1].norm in _NOISE):
+            k -= 1
+        if k < len(toks) and _bibliographic(text, toks[k:], _other_year(all_toks, toks[k:])):
+            toks = toks[:k]
     return toks
+
+
+def _quick_words(span: list[_Tok]) -> set[str]:
+    """Palabras significativas de un tramo para elegirlo, con los calificativos unidos como en `_title_tokens`
+    ("Part II" -> "part_2"), para que un tramo con la parte final del título no pierda frente al que no la tiene."""
+    out = set()
+    for i, tok in enumerate(span):
+        norm = _NUMBER_WORDS.get(tok.norm, tok.norm)
+        qualifier = _qualifier(norm) if i and span[i - 1].norm in _LETTER_HEADS else None
+        if qualifier is not None:
+            out.add(f"{span[i - 1].norm}_{qualifier}")
+        elif _is_sig(norm):
+            out.add(norm)
+    return out
 
 
 def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors: set[str],
@@ -967,7 +1015,7 @@ def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors:
     for a in range(len(segs)):
         for b in range(a, min(len(segs), a + 6)):
             span = [t for t in toks if segs[a] <= t.seg <= segs[b]]
-            sig = {t.norm for t in span if _is_sig(t.norm)}
+            sig = _quick_words(span)
             if not sig:
                 continue
             quick = max(2 * len(set(v) & sig) / (len(set(v)) + len(sig)) for v in variants)
@@ -976,13 +1024,14 @@ def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors:
         return None
     span = max(spans, key=lambda item: (item[0], -len(item[1])))[1]
     real_all = {w for v in variants for w in v}
+    firsts = frozenset(v[0] for v in variants if v)
     chosen = None
     # Primero el tramo recortado: a igual coincidencia gana (un año o una revista pegados al final del título no
     # quedan dentro de él, donde no se comprobarían). El recorte nunca quita palabras del título real ni partes del
     # título citado que lo distinguen (cifras, negaciones, calificativos): ver `_trim_span`.
     for lead in (True, False):
         for tail in (True, False):
-            cut = _trim_span(text, span, toks, real_all, authors, journals, lead, tail)
+            cut = _trim_span(text, span, toks, real_all, authors, journals, lead, tail, firsts)
             if not cut:
                 continue
             region = text[cut[0].start:cut[-1].end]

@@ -483,6 +483,159 @@ def test_registro_de_openalex_nombre_de_pila_no_es_el_apellido(net):
     assert good.author_ok and good.ok
 
 
+# ---------------------------------------------------------------- D3-7 (ronda 3): el recorte del tramo del título
+# Estilos en que el tramo del título lleva pegados autores, año, revista o páginas (y se recortan) o va solo.
+STYLES = {
+    "ADSA": "Pérez J, García A. 2020. {t}. J Dairy Sci 103:1-10.",
+    "Vancouver": "Pérez J, García A. {t}. J Dairy Sci. 2020;103(1):1-10.",
+    "Harvard": "Pérez, J. and García, A. (2020) '{t}', Journal of Dairy Science, 103(1), pp. 1-10.",
+    "sin puntos": "Pérez J García A 2020 {t} J Dairy Sci 103 1-10",
+    "sin puntos, año tras la revista": "Pérez J García A {t} J Dairy Sci 2020 103 1-10",
+    "comas": "Pérez J, García A, 2020, {t}, J Dairy Sci 103:1-10",
+    "numerada": "(1) Pérez J García A 2020 {t} J Dairy Sci 103 1-10",
+    "sin revista": "Pérez J, García A (2020) {t}",
+}
+EFFECT = "Effect of rumen-protected choline on milk production and liver health in transition dairy cows"
+VIT_E = "Mastitis and somatic cell count in grazing dairy cows supplemented with selenium and vitamin E"
+SERIES = "Rumen-protected choline in transition dairy cows: effects on milk production and liver triglycerides"
+
+
+@pytest.mark.parametrize("real, cited", [
+    # una negación o una cifra delante del título (antes se recortaban como "no" = número o como el año)
+    (EFFECT, "No effect" + EFFECT[len("Effect"):]),
+    (EFFECT, "2 Effect" + EFFECT[len("Effect"):]),
+    (EFFECT, "2019 Effect" + EFFECT[len("Effect"):]),
+    # un calificativo final cambiado por una palabra con cifras (antes se recortaba la cifra final)
+    (VIT_E, VIT_E.replace("vitamin E", "vitamin D3")),
+    (VIT_E, VIT_E.replace("vitamin E", "vitamin B12")),
+    (VIT_E, VIT_E.replace("vitamin E", "vitamin")),
+    (SERIES + ". Part I", SERIES + ". Part 2"),
+    (SERIES + ". Part II", SERIES + ". Part 1"),
+    (SERIES + ". Part II", SERIES),
+    (SERIES + ". Experiment I", SERIES + ". Experiment 2"),
+    # cifras o negaciones añadidas al final que no son año, volumen ni páginas
+    (EFFECT, EFFECT + " fed 100 g/d"),
+    (EFFECT, EFFECT + " 100"),
+    (EFFECT, EFFECT + " in 2019"),
+    (EFFECT, EFFECT + " without monensin"),
+])
+@pytest.mark.parametrize("style", sorted(STYLES))
+def test_recorte_del_titulo_no_esconde_cifras_negaciones_ni_calificativos(real, cited, style):
+    check = c.compare_citation(STYLES[style].format(t=cited), titles=[real],
+                               **{k: v for k, v in REC.items() if k != "titles"})
+    assert check.title_ok is False, (style, cited, check)
+
+
+def test_negacion_o_calificativo_recortado_no_se_sella(net):
+    for real, cited in ((EFFECT, "No effect" + EFFECT[len("Effect"):]), (VIT_E, VIT_E.replace("vitamin E", "vitamin D3")),
+                        (SERIES + ". Part I", SERIES + ". Part 2")):
+        published(net, title=real)
+        entry = f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10. DOI: {DOI}"
+        res = c.verify_entry(Client(), entry)[0]
+        assert res.mismatch and not res.ok and res.title_ok is False, cited
+        issues, details, summary = check_report_online(Client(), report(entry))
+        assert summary["con_error"] == 1 and not summary["completa"], cited
+
+
+@pytest.mark.parametrize("real, cited", [
+    (EFFECT, EFFECT),
+    (VIT_E, VIT_E),                                            # mutante MS: la letra final no se recorta
+    (SERIES + ". Part II", SERIES + ". Part II"),
+    (SERIES + ". Part II", SERIES + ". Part 2"),                # romanos = arábigos
+    (SERIES + ". Experiment 2", SERIES + ". Experiment 2"),
+    ("No effect of rumen-protected choline on milk yield in early lactation",
+     "No effect of rumen-protected choline on milk yield in early lactation"),
+    ("2020 survey of mycotoxins in total mixed rations of dairy farms in Spain",
+     "2020 survey of mycotoxins in total mixed rations of dairy farms in Spain"),
+    ("Milk yield responses during the 2019–2020 grazing season in Ireland",
+     "Milk yield responses during the 2019–2020 grazing season in Ireland"),
+    ("Methane emissions in dairy cows fed 3-nitrooxypropanol for 12 weeks",
+     "Methane emissions in dairy cows fed 3-nitrooxypropanol for twelve weeks"),
+    ("Effects of 25-hydroxyvitamin D<sub>3</sub> on calcium metabolism in periparturient dairy cows",
+     "Effects of 25-hydroxyvitamin D(3) on calcium metabolism in periparturient dairy cows"),    # MEDLINE
+    (EFFECT + "1,2", EFFECT),                                  # llamadas de nota al pie del registro
+    (EFFECT + " 1", EFFECT),
+    (EFFECT + "*", EFFECT),
+    (EFFECT + " 1", EFFECT + " 1"),
+    (EFFECT + ": a meta-analysis", EFFECT),                    # sin un subtítulo que no distingue el trabajo
+])
+@pytest.mark.parametrize("style", sorted(STYLES))
+def test_recorte_del_titulo_sigue_quitando_autores_ano_revista_y_paginas(real, cited, style):
+    check = c.compare_citation(STYLES[style].format(t=cited), titles=[real],
+                               **{k: v for k, v in REC.items() if k != "titles"})
+    assert not _bad(check) and check.year_in_citation == 2020, (style, cited, check)
+
+
+def test_subtitulo_y_nota_al_pie_que_distinguen_el_trabajo():
+    rec = {k: v for k, v in REC.items() if k != "titles"}
+    # un subtítulo de serie ("Part 2", "I. ...", cifras) no se puede omitir; una nota al pie no es una cifra del título
+    for real in (SERIES + ": Part 2", SERIES + ": I. Milk production", SERIES + ": a meta-analysis of 52 studies"):
+        assert c.compare_citation(f"Pérez J, García A. 2020. {SERIES}. J Dairy Sci 103:1-10.", titles=[real],
+                                  **rec).title_ok is False, real
+    assert c.compare_citation(f"Pérez J. 2020. {EFFECT} 2. J Dairy Sci 103:1-10.", titles=[EFFECT + " 1"],
+                              **rec).title_ok is False
+    assert c.compare_titles(EFFECT + "1,2", EFFECT).ok and not c.compare_titles(EFFECT + " 1", EFFECT + " 2").ok
+    assert c.compare_titles(SERIES + ". Experiment 1", SERIES).ok is False      # "Experiment 1" no es una nota
+
+
+def test_subtitulo_de_crossref_que_distingue_el_trabajo_no_se_puede_omitir(net):
+    main_title = "Rumen-protected choline in transition dairy cows"
+    for subtitle, omit_ok in (("Effects on milk production and liver health", True), ("Experiment 2", False),
+                              ("II. Liver triglycerides", False)):
+        net.cr[DOI] = cr_msg(DOI, title=main_title, subtitle=[subtitle])
+        net.oa[DOI] = oa_work(DOI, title=f"{main_title}: {subtitle}")
+        short = c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {main_title}. J Dairy Sci 103:1-10.")
+        full = c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {main_title}: {subtitle}. J Dairy Sci 103:1-10.")
+        assert full.ok and short.ok is omit_ok, (subtitle, short.message)
+
+
+def test_subindice_de_medline_no_separa_pubmed_de_crossref(net):
+    # Regresión de la ronda 2: "D<sub>3</sub>" (Crossref, -> "D3") y "D(3)" (PubMed) son el mismo título: se usan el
+    # PMID y la retractación de PubMed (sin clave de OpenAlex, la retractación no queda desconocida).
+    real = "Effects of 25-hydroxyvitamin D<sub>3</sub> on calcium metabolism in periparturient dairy cows"
+    net.cr[DOI] = cr_msg(DOI, title=real)
+    net.oa_key = False
+    net.pm_by_doi[DOI] = "777"
+    net.pm["777"] = pm_rec("777", DOI, title=real.replace("D<sub>3</sub>", "D(3)"))
+    entry = f"Pérez J, García A. 2020. {real.replace('D<sub>3</sub>', 'D3')}. J Dairy Sci 103:1-10. DOI: {DOI}"
+    res = c.verify_doi(Client(), DOI, entry)
+    assert res.record.pmid == "777" and res.retracted is False and res.ok, res.message
+    assert c.titles_same_work(real, real.replace("D<sub>3</sub>", "D(3)"))
+    assert check_report_online(Client(), report(entry))[2]["completa"]
+
+
+def test_cita_que_no_empieza_por_los_autores_es_discrepancia(net):
+    published(net)
+    for entry in (f"(2020). {TITLE}. J Dairy Sci 103:1-10. DOI: {DOI}", f"{TITLE}. J Dairy Sci 103:1-10. DOI: {DOI}",
+                  f"et al. 2020. {TITLE}. J Dairy Sci 103:1-10. DOI: {DOI}"):
+        res = c.verify_entry(Client(), entry)[0]
+        assert res.author_ok is False and res.mismatch and not res.ok, entry
+        issues, details, summary = check_report_online(Client(), report(entry))
+        assert summary["con_error"] == 1 and not summary["completa"], entry
+    res = c.verify_entry(Client(), f"(2020). {TITLE}. J Dairy Sci 103:1-10. DOI: {DOI}")[0]
+    assert "no empieza por los autores" in res.message and "Pérez" in res.message
+    # marcadores de lista y partículas no son "sin autores"
+    for entry in (f"(1) Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.",
+                  f"[1] Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10."):
+        assert c.verify_doi(Client(), DOI, entry).ok, entry
+    net.cr[DOI] = cr_msg(DOI, authors=[("D'Angelo", "Marco"), ("García", "Ana")])
+    assert c.verify_doi(Client(), DOI, f"d'Angelo M, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.").ok
+
+
+def test_titulo_del_registro_en_otra_escritura_se_compara_literalmente():
+    rec = {k: v for k, v in REC.items() if k != "titles"}
+    for native in ("Влияние защищённого холина на молочную продуктивность коров", "过瘤胃保护胆碱对围产期奶牛产奶量的影响"):
+        other = c.compare_citation("Pérez J, García A. 2020. Methionine for goats in late pregnancy.", titles=[native],
+                                   **rec)
+        assert other.title_ok is False and "otra escritura" in " ".join(other.notes), native
+        same = c.compare_citation(f"Pérez J, García A. 2020. {native}. J Dairy Sci 103:1-10.", titles=[native], **rec)
+        assert same.title_ok and not _bad(same), native
+        # con el título en inglés de otra fuente (OpenAlex, PubMed), vale cualquiera de los dos
+        both = c.compare_citation(f"Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.", titles=[native, TITLE],
+                                  **rec)
+        assert both.title_ok and not _bad(both), native
+
+
 # ============================================================================ D3-15: doi.org, DataCite y PubMed
 def test_doi_de_datacite_se_verifica_con_sus_metadatos(net):
     doi = "10.5555/dryad.abc123"
