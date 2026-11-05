@@ -592,3 +592,37 @@ def test_coord_ranking_cuenta_evaluadores_normalizados_en_registros_antiguos(pro
     code, out, _ = _run(capsys, ["--agente", "orquestador", "--json", "puntuar", "ranking", "--sim", "200"])
     fila = next(r for r in json.loads(out) if r["opportunity_id"] == "O-0001")
     assert fila["raters"] == 2
+
+
+# ============================================================================ fase de coordinación (2): P7 + P1
+def test_coord_regulatoria_superada_exige_la_clasificacion_del_triage(project, capsys):
+    """Petición de P7 a P1: la compuerta regulatoria no se propone ni se firma 'superada' mientras la ruta del registro
+    siga sin clasificar ('indeterminada'); 'bloqueada' y 'no_resuelta' sí. Tras `oportunidad clasificar`, se puede."""
+    from nutria import db
+    from nutria.config import load_config
+    _oportunidad(project)
+    code, _, err = _run(capsys, ["--agente", "regulacion-seguridad", "puntuar", "compuerta", "O-0001", "regulatoria",
+                                 "superada", "--motivo", "propuesta"])
+    assert code == 3 and "oportunidad clasificar O-0001" in err
+    code, _, err = _run(capsys, ["puntuar", "compuerta", "O-0001", "regulatoria", "superada", "--motivo", "revisado",
+                                 SIGN, "Ana"])
+    assert code == 3 and "no tiene clasificación regulatoria" in err
+    for estado in ("no_resuelta", "bloqueada"):
+        code, _, err = _run(capsys, ["--agente", "regulacion-seguridad", "puntuar", "compuerta", "O-0001",
+                                     "regulatoria", estado, "--motivo", "m"])
+        assert code == 0, err
+    code, _, err = _run(capsys, ["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta",
+                                 "materia_prima", "--motivo", "triage"])
+    assert code == 0, err
+    triage = project / "research" / "revisiones" / "O-0001_descarte_regulatoria.md"
+    triage.parent.mkdir(parents=True, exist_ok=True)
+    triage.write_text("# Triage regulatorio de O-0001\n\nMateria prima [SUP].\n", "utf-8")
+    code, _, err = _run(capsys, ["puntuar", "compuerta", "O-0001", "regulatoria", "superada", "--motivo", "revisado",
+                                 SIGN, "Ana", "--evidencia", str(triage)])
+    assert code == 0, err
+    conn = db.connect(load_config().db_path)
+    try:
+        assert db.CLASSIFICATION_OWNER == db.GATE_OWNERS["regulatoria"]
+        assert db.effective_gates(conn, "O-0001", ["regulatoria"])["regulatoria"] == "superada"
+    finally:
+        conn.close()

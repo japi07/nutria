@@ -938,6 +938,8 @@ def test_el_hook_de_escritura_protege_registro_procedencia_y_sellos(path, blocke
 # ============================================================================ compuertas por rol propietario (D1-2, D8-2)
 def test_sin_firma_cada_compuerta_la_propone_solo_su_rol_propietario(project, capsys):
     _new_opportunity(project)
+    # la regulatoria no pasa a superada sin la clasificación del triage (fase de coordinación)
+    assert _code(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo", "triage"]) == 0
     for gate, owner in db.GATE_OWNERS.items():
         other = next(o for o in db.GATE_OWNERS.values() if o != owner)
         assert _code(["--agente", other, "puntuar", "compuerta", "O-0001", gate, "superada", "--motivo", "m",

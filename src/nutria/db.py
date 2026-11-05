@@ -1966,7 +1966,8 @@ def list_claims(conn: sqlite3.Connection, entity_id: str | None = None) -> list[
 # ---------------------------------------------------------------------------- oportunidades
 CLASSIFICATION_FIELDS = ("ruta_regulatoria_preliminar", "grupo_funcional", "situacion")
 # Rol que hace el triage regulatorio y propone la compuerta regulatoria (CLAUDE.md, equipo).
-CLASSIFICATION_OWNER = "regulacion-seguridad"
+# Quien clasifica dentro del alcance es el propietario de la compuerta regulatoria (una sola fuente: GATE_OWNERS).
+CLASSIFICATION_OWNER = GATE_OWNERS["regulatoria"]
 
 
 def _block_regulatory_gate(conn: sqlite3.Connection, opp_id: str, route: str, actor: str | None) -> str | None:
@@ -2341,6 +2342,12 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
             and not signed:
         raise RegistryError(f"{opp_id} tiene la ruta '{opp['regulatory_route']}': la compuerta regulatoria solo "
                             "puede cambiarse con --firma-humana (y conviene corregir antes la ruta)")
+    if gate == "regulatoria" and status == "superada" and opp.get("regulatory_route") in (None, "", "indeterminada"):
+        # petición de P7: la compuerta regulatoria no se da por superada sin la clasificación del triage
+        raise RegistryError(f"{opp_id} no tiene clasificación regulatoria (ruta '{opp.get('regulatory_route') or 'sin ruta'}'): "
+                            f"la compuerta regulatoria no se propone ni se firma 'superada' sin ella. "
+                            f"{CLASSIFICATION_OWNER} la registra antes con nutria --agente {CLASSIFICATION_OWNER} "
+                            f"oportunidad clasificar {opp_id} --ruta <ruta> --motivo \"...\"")
     if not signed and status != "bloqueada":
         owner = GATE_OWNERS.get(gate)
         role = declared_agent(actor)

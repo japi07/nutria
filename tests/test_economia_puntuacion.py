@@ -751,6 +751,8 @@ def test_cli_ranking_con_propuestas_reales(project, capsys):
         assert _register_scores("O-0001", rater, 0.75) == 0
         assert _register_scores("O-0002", rater, 0.5) == 0
     for opp in ("O-0001", "O-0002"):
+        # la compuerta regulatoria no pasa a superada sin la clasificación del triage (fase de coordinación)
+        assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", opp, "--ruta", "materia_prima", "--motivo", "triage"]) == 0
         for gate in GATES:
             state = "no_resuelta" if (opp, gate) == ("O-0001", "seguridad") else "superada"
             assert main(["--agente", OWNER[gate], "puntuar", "compuerta", opp, gate, state, "--motivo",

@@ -1151,6 +1151,7 @@ def test_clasificar_registra_la_decision_del_triage_con_su_actor(project, capsys
 
 def test_clasificar_fuera_de_alcance_bloquea_y_salir_exige_firma(project, capsys):
     assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
+    assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo", "triage"]) == 0       # clasificación previa (coordinación)
     assert main(["puntuar", "compuerta", "O-0001", "regulatoria", "superada", "--motivo", "ok", SIGN, "Ana"]) == 0
     assert db.effective_gates(_conn(), "O-0001", GATES)["regulatoria"] == "superada"
     assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta",

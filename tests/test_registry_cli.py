@@ -44,6 +44,7 @@ def _three_raters(project):
 
 def test_gates_need_human_signature_and_ranking_respects_it(project, capsys):
     assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
+    assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo", "triage"]) == 0       # clasificación previa (coordinación)
     _three_raters(project)
     # propuestas de agentes (sin firma, cada una de su rol propietario): no cuentan como superadas
     for gate in GATES:
@@ -70,6 +71,7 @@ def test_gates_need_human_signature_and_ranking_respects_it(project, capsys):
 
 def test_status_transitions_require_signature_and_gates(project):
     assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
+    assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo", "triage"]) == 0       # clasificación previa (coordinación)
     assert main(["oportunidad", "estado", "O-0001", "en_validacion", "--motivo", "x"]) == 3
     assert main(["oportunidad", "estado", "O-0001", "en_validacion", "--motivo", "x", SIGN, "Ana"]) == 3
     for gate in GATES:
