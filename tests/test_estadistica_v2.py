@@ -297,6 +297,10 @@ def test_cli_lectura_estricta_del_csv(project, capsys):
     (project / "coma.csv").write_text("estudio,yi,vi\nA,0,5,0.1\nB,0.4,0.2\nC,0.3,0.1\n", "utf-8")
     code, _, err = _json(capsys, "meta", "analizar", str(project / "coma.csv"))
     assert code == 2 and "más campos que la cabecera" in err
+    # Una coma final (campo sobrante vacío) no desplaza nada y se acepta
+    (project / "final.csv").write_text("estudio,yi,vi\nA,0.5,0.1,\nB,0.4,0.2,\nC,0.3,0.1\n", "utf-8")
+    code, out, _ = _json(capsys, "meta", "analizar", str(project / "final.csv"))
+    assert code == 0 and out["k"] == 3
     (project / "coma2.csv").write_text("estudio;yi;vi\nA;0,5;0,1\nB;0,4;0,2\nC;0,3;0,1\n", "utf-8")
     code, out, _ = _json(capsys, "meta", "analizar", str(project / "coma2.csv"), "--sep", ";", "--decimal", ",")
     assert code == 0 and out["k"] == 3

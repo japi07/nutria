@@ -642,7 +642,10 @@ def _read_table(path: str, sep: str, decimal: str, huella: dict | None = None) -
     if huella is not None:
         huella["sha256"] = sha256_text(raw)
     rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""), delimiter=sep))
-    largas = [i for i, r in enumerate(rows, 2) if None in r]
+    # Campos sobrantes vacíos (p. ej. una coma final) se ignoran; con contenido, desplazarían las columnas.
+    largas = [i for i, r in enumerate(rows, 2) if any(str(x).strip() for x in (r.get(None) or []))]
+    for r in rows:
+        r.pop(None, None)
     if largas:
         raise ValueError(f"{path}: la(s) línea(s) {', '.join(map(str, largas[:10]))} tienen más campos que la cabecera: "
                          "revisa --sep y --decimal (¿coma decimal sin comillas en un CSV separado por comas?)")
