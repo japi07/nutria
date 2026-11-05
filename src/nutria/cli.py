@@ -644,18 +644,23 @@ def cmd_buscar(args, cfg) -> int:
     api_avisos = list(res.get("avisos") or [])
     incompleto = bool(res.get("incompleto"))
     total = res.get("count") or 0
-    registered = []
+    registered, conflicts, changes = [], [], []
     if args.registrar and records:
         conn = _conn(cfg)
         with registry.transaction(conn):
             for rec in records:
                 if rec.key:
-                    registered.append(registry.upsert_source(conn, {**rec.to_dict(), "verified": False}, args.agente))
+                    try:  # un conflicto (p. ej. DOI y PMID en dos fuentes distintas) no se registra ni deshace el resto
+                        registered.append(registry.upsert_source(conn, {**rec.to_dict(), "verified": False},
+                                                                 args.agente, changes))
+                    except registry.RegistryError as exc:
+                        conflicts.append({"registro": rec.key, "error": str(exc)})
     identifiers = record_identifiers(records)
     inputs = {"fuente": args.fuente, "max": args.max, "desde": args.desde, "hasta": args.hasta,
               "sensibilidad": "confidencial" if confidencial else "normal"}
     outputs = {"total": total, "devueltos": len(records), "registrados": len(registered),
-               "paginas": res.get("paginas"), "incompleto": incompleto, "cache": _red_procedencia(client)}
+               "conflictos": len(conflicts), "paginas": res.get("paginas"), "incompleto": incompleto,
+               "cache": _red_procedencia(client)}
     if confidencial:
         # Ni la consulta ni lo que devolvió quedan en claro en el registro versionado.
         inputs["consulta_sha256"] = sha256_text(args.consulta)
@@ -666,6 +671,8 @@ def cmd_buscar(args, cfg) -> int:
         outputs["identificadores"] = identifiers
         outputs["avisos"] = api_avisos
     log_event(cfg, "busqueda", inputs=inputs, outputs=outputs, actor=args.agente)
+    # Los cambios del registro de fuentes no llevan la consulta en claro (puede ser confidencial): solo su huella.
+    _log_source_changes(cfg, args, changes, {"fuente": args.fuente, "consulta_sha256": sha256_text(args.consulta)})
     notas = []
     if confidencial:
         notas.append("consulta confidencial: la procedencia guarda solo su huella SHA-256 (y la de los identificadores "
@@ -683,24 +690,76 @@ def cmd_buscar(args, cfg) -> int:
     if res.get("query_translation"):
         header += f"\nTraducción de la consulta: {res['query_translation']}"
     if registered:
-        header += (f"\nRegistradas {len(registered)} fuentes SIN verificar (no sirven para [PUB] hasta "
-                   "`nutria verificar --pendientes`)")
+        new = sum(1 for c in changes if c.get("accion") == "alta")
+        header += (f"\nRegistradas {new} fuentes nuevas SIN verificar (no sirven para [PUB] hasta "
+                   "`nutria verificar --pendientes`)"
+                   + (f"; {len(registered) - new} ya estaban en el registro" if len(registered) > new else ""))
+    if changes and _change_lines(changes):
+        header += "\nCambios y avisos del registro de fuentes:\n" + "\n".join(_change_lines(changes))
     extra = _red_lineas(cfg, client, api_avisos, notas)
     _emit(args, {"total": total, "registros": [r.to_dict() for r in records], "registradas": registered,
+                 "cambios": [c for c in changes if c.get("accion") != "alta"], "conflictos": conflicts,
                  "devueltos": len(records), "paginas": res.get("paginas"), "incompleto": incompleto,
                  "siguiente_cursor": res.get("next_cursor"), **_red_salida(client, api_avisos), "notas": notas},
           header + "\n" + _records_text(records) + ("\n" + "\n".join(extra) if extra else ""))
+    if conflicts:
+        _imprimir(sys.stderr, f"Error de registro: {len(conflicts)} resultado(s) NO registrado(s) por conflicto con "
+                              "el registro:\n" + "\n".join(f"  {c['registro']}: {c['error']}" for c in conflicts))
+        return SALIDA_REGISTRO
     return SALIDA_RESULTADO if incompleto else SALIDA_OK
 
 
+def _license_label(value) -> str:
+    """Etiqueta corta de la licencia de una fuente (URL de Creative Commons, código de OpenAlex u otra URL)."""
+    import re
+    if not value:
+        return "?"
+    text = str(value).strip()
+    qualifier = re.search(r"\s(\([^()]*\))\s*$", text)       # "(manuscrito aceptado; embargo: 365 días)"
+    note = f" {qualifier.group(1)}" if qualifier else ""
+    if qualifier:
+        text = text[:qualifier.start()].strip()
+    match = re.search(r"creativecommons\.org/licenses/([a-z-]+)/(\d(?:\.\d)?)", text, re.IGNORECASE)
+    if match:
+        return f"CC {match.group(1).upper()} {match.group(2)}{note}"
+    if re.search(r"creativecommons\.org/publicdomain/zero|^cc0", text, re.IGNORECASE):
+        return "CC0" + note
+    if re.fullmatch(r"cc-by(?:-[a-z]{2})*", text, re.IGNORECASE):
+        return "CC " + text[3:].upper() + note
+    return (text if len(text) <= 40 else text[:37] + "...") + note
+
+
+def _change_lines(changes: list[dict]) -> list[str]:
+    """Texto de los cambios del registro de fuentes que no son un alta (rellenos, correcciones, fusiones, avisos)."""
+    lines = []
+    for change in changes:
+        action = change.get("accion")
+        if action == "alta":
+            continue
+        detail = change.get("motivo") or change.get("eliminada") or change.get("campos") or ""
+        if isinstance(detail, dict):
+            detail = ", ".join(detail)
+        elif isinstance(detail, list):
+            detail = ", ".join(map(str, detail))
+        lines.append(f"  {change.get('id')}: {action.replace('_', ' ')}" + (f" ({detail})" if detail else ""))
+    return lines
+
+
+def _log_source_changes(cfg, args, changes: list[dict], inputs: dict) -> None:
+    """Deja en la procedencia cada cambio del registro de fuentes que no es un alta."""
+    for change in changes:
+        if change.get("accion") != "alta":
+            log_event(cfg, f"fuente_{change.get('accion')}", inputs=inputs, outputs=change, actor=args.agente)
+
+
 def cmd_fuente(args, cfg) -> int:
-    from .http import NotFoundError
     from .verify.citations import verify_doi, verify_pmid
     conn = _conn(cfg)
     if args.accion == "listar":
         rows = registry.list_sources(conn, unverified_only=args.no_verificadas)
         text = "\n".join(f"{r['id']:<45} {'✓' if r['verified'] else '·'} "
                          f"{'RETRACTADO ' if r.get('retracted') == 1 else ('retractación? ' if r.get('retracted') is None else '')}"
+                         f"[licencia {_license_label(r.get('license'))}] "
                          f"{(r.get('title') or '')[:90]}" for r in rows) or "(sin fuentes)"
         _emit(args, rows, text)
         return 0
@@ -708,38 +767,53 @@ def cmd_fuente(args, cfg) -> int:
         row = registry.get_source(conn, args.id)
         if not row:
             raise SystemExit(f"No existe la fuente {args.id}")
+        row["licencia"] = _license_label(row.get("license")) if row.get("license") else None
         _emit(args, row)
         return 0
-    # agregar: verifica contra la fuente autoritativa antes de registrar
-    from .sources import crossref, openalex, pubmed
+    # agregar: verifica contra la fuente autoritativa y registra lo que dio esa verificación (sin otra consulta)
     client = _client(cfg, fresh=True)
     if args.doi:
         ver = verify_doi(client, args.doi)
-        if ver.status != "verificada":
-            raise ErrorOrden(f"No se registra: {ver.status} ({ver.message})", _salida_verificacion(ver))
-        try:
-            rec, via = crossref.work(client, ver.identifier).to_dict(), "crossref"
-        except NotFoundError:
-            rec, via = openalex.work_by_doi(client, ver.identifier).to_dict(), "openalex"
-        rec["retracted"] = ver.retracted
     elif args.pmid:
         ver = verify_pmid(client, args.pmid)
-        if ver.status != "verificada":
-            raise ErrorOrden(f"No se registra: {ver.status} ({ver.message})", _salida_verificacion(ver))
-        rec, via = pubmed.summaries(client, [args.pmid])[0].to_dict(), "pubmed"
-        rec["retracted"] = ver.retracted
     else:
         raise SystemExit("Indica --doi o --pmid")
-    rec.update(verified=True, verified_via=via, study_type=args.tipo_estudio, species=args.especie, notes=args.notas)
-    source_id = registry.upsert_source(conn, rec, args.agente)
+    if ver.status != "verificada" or ver.record is None:
+        raise ErrorOrden(f"No se registra: {ver.status} ({ver.message})",
+                         _salida_verificacion(ver) or SALIDA_RESULTADO)
+    rec = ver.record.to_dict()
+    via = ver.record.source
+    rec.update(verified=True, verified_via=via, retracted=ver.retracted, study_type=args.tipo_estudio,
+               species=args.especie, notes=args.notas)
+    changes: list[dict] = []
+    source_id = registry.upsert_source(conn, rec, args.agente, changes)
     log_event(cfg, "fuente_agregada", inputs={"doi": args.doi, "pmid": args.pmid},
-              outputs={"id": source_id, "via": via, "retractado": rec.get("retracted")}, actor=args.agente)
+              outputs={"id": source_id, "via": via, "retractado": ver.retracted, "licencia": ver.license},
+              actor=args.agente)
+    _log_source_changes(cfg, args, changes, {"doi": args.doi, "pmid": args.pmid})
     warn = ""
-    if rec.get("retracted"):
+    if ver.retracted:
         warn = "  ATENCIÓN: trabajo RETRACTADO"
-    elif rec.get("retracted") is None:
+    elif ver.retracted is None:
         warn = "  ATENCIÓN: no se pudo comprobar la retractación; no servirá para [PUB] hasta comprobarla"
-    _emit(args, {"id": source_id, "registro": rec}, f"Registrada y verificada: {source_id}{warn}\n  {rec.get('title')}")
+    lines = [f"Registrada y verificada ({via}): {source_id}{warn}", f"  {rec.get('title')}",
+             f"  licencia: {ver.license or 'la fuente no la indica'}"]
+    if ver.message:                    # p. ej. un PMID que da OpenAlex y PubMed no confirma, y no se asocia
+        lines.append(f"  verificación: {ver.message}")
+    if args.doi and args.pmid and rec.get("pmid") != str(args.pmid).strip():
+        lines.append(f"  AVISO: no se asocia el PMID {args.pmid}: la verificación del DOI no lo confirma "
+                     f"(PMID confirmado: {rec.get('pmid') or 'ninguno'}).")
+    requested = f"{ver.kind}:{ver.identifier}"
+    if source_id != requested:
+        if not any(c.get("accion") == "alta" and c.get("id") == source_id for c in changes):
+            where = f"la fuente ya estaba registrada como {source_id} (mismo trabajo)"
+        elif source_id.startswith("doi:"):     # alta nueva: se nombra por el DOI que da la verificación
+            where = f"la fuente se registra como {source_id} (por el DOI que da la verificación)"
+        else:
+            where = f"la fuente se registra como {source_id} (el identificador que da la verificación)"
+        lines.append(f"  AVISO: {where}: usa {source_id}, no {requested}, en afirmaciones y extracciones.")
+    lines += _change_lines(changes)
+    _emit(args, {"id": source_id, "registro": rec, "cambios": changes}, "\n".join(lines))
     return 0
 
 
@@ -750,6 +824,9 @@ def _verification_text(res) -> str:
         text += " | DISCREPANCIA con la cita"
     if res.title:
         text += f"\n  {res.title} ({res.year}) {res.journal or ''}"
+    if res.source or res.registration_agency:
+        text += f"\n  fuente: {res.source or '-'} | agencia de registro: {res.registration_agency or '-'}"
+        text += f" | licencia: {res.license or 'no indicada'}"
     if res.message:
         text += f"\n  {res.message}"
     return text
@@ -784,21 +861,48 @@ def cmd_verificar(args, cfg) -> int:
         rows = [r for r in rows if not r.get("verified") or r.get("retracted") is None]
         out, codes = [], []
         for r in rows:
-            res = verify_doi(client, r["doi"]) if r.get("doi") else (verify_pmid(client, r["pmid"]) if r.get("pmid") else None)
-            if res is None:
+            if registry.get_source(conn, r["id"]) is None:   # fusionada con otra en esta misma pasada
                 continue
-            if res.status == "verificada":
-                registry.upsert_source(conn, {"doi": r.get("doi"), "pmid": r.get("pmid"), "verified": True,
-                                              "verified_via": res.kind, "retracted": res.retracted}, args.agente)
+            # Se verifica por el identificador que da nombre a la fuente (pmid:... por su PMID).
+            by_pmid = r.get("pmid") and (r["id"].startswith("pmid:") or not r.get("doi"))
+            res = verify_pmid(client, r["pmid"]) if by_pmid else (verify_doi(client, r["doi"]) if r.get("doi") else None)
+            if res is None:
+                out.append({"id": r["id"], "estado": "sin_identificador", "retractado": None,
+                            "detalle": "sin DOI ni PMID: no se puede verificar"})
+                codes.append(SALIDA_RESULTADO)
+                continue
+            entry = {"id": r["id"], "estado": res.status, "retractado": res.retracted}
+            changes: list[dict] = []
+            if res.status == "verificada" and res.record is not None:
+                # Se registra el registro verificado completo: sus metadatos sustituyen a los de la búsqueda.
+                rec = res.record.to_dict()
+                rec.update(verified=True, verified_via=res.record.source, retracted=res.retracted)
+                try:
+                    entry["registro"] = registry.upsert_source(conn, rec, args.agente, changes)
+                except registry.RegistryError as exc:
+                    entry.update(estado="conflicto", detalle=str(exc))
+            elif res.message:
+                entry["detalle"] = res.message
+            entry["cambios"] = changes
             log_event(cfg, "verificacion_fuente", inputs={"id": r["id"]},
-                      outputs={"estado": res.status, "retractado": res.retracted}, actor=args.agente)
-            out.append({"id": r["id"], "estado": res.status, "retractado": res.retracted})
-            codes.append(_salida_verificacion(res))
-        _emit(args, out, "\n".join(f"{o['id']}: {o['estado']} | retractación "
-                                   f"{ {True: 'SÍ', False: 'no', None: 'desconocida'}[o['retractado']] }" for o in out)
-              or "No hay fuentes pendientes de verificar")
-        # Lote: red caída o sin red (4) antes que un resultado negativo o incompleto (1); 0 solo si todo es válido.
-        return SALIDA_RED if SALIDA_RED in codes else (SALIDA_RESULTADO if any(codes) else SALIDA_OK)
+                      outputs={"estado": entry["estado"], "retractado": res.retracted,
+                               "detalle": entry.get("detalle")}, actor=args.agente)
+            _log_source_changes(cfg, args, changes, {"id": r["id"]})
+            out.append(entry)
+            codes.append(SALIDA_REGISTRO if entry["estado"] == "conflicto" else _salida_verificacion(res))
+        lines = []
+        for o in out:
+            lines.append(f"{o['id']}: {o['estado']} | retractación "
+                         f"{ {True: 'SÍ', False: 'no', None: 'desconocida'}[o['retractado']] }")
+            if o.get("detalle"):
+                lines.append(f"  {o['detalle']}")
+            lines += _change_lines(o.get("cambios") or [])
+        _emit(args, out, "\n".join(lines) or "No hay fuentes pendientes de verificar")
+        # Lote: conflicto con el registro (3), después red caída o sin red (4), después negativo o incompleto (1).
+        for code in (SALIDA_REGISTRO, SALIDA_RED):
+            if code in codes:
+                return code
+        return SALIDA_RESULTADO if any(codes) else SALIDA_OK
     if not targets:
         raise SystemExit("Indica --doi, --pmid, --pendientes, un fichero .md o 'manual <URL>'")
     args.sin_secciones = True  # verificar comprueba referencias; la estructura de informe la exige `informe comprobar`
