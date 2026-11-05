@@ -56,8 +56,10 @@ requieren revisión de un profesional de asuntos regulatorios.
      (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación en el texto
      consolidado). La prohibición no se limita a los antibióticos como promotores del crecimiento: vale sea cual sea
      la finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej.
-     ionóforos como la monensina)** y a los reductores de metano que sean antibióticos. Para esa finalidad no hay vía
-     como pienso ni como aditivo: un "sí" aquí es `bloqueada` salvo rediseño del activo (no basta cambiar la
+     ionóforos como la monensina)** y a los reductores de metano que sean antibióticos. La única excepción es su
+     autorización como coccidiostático o histomonóstato (categoría propia de aditivos, para las especies y condiciones
+     de esa autorización), que no ampara el uso como modulador ruminal (pendiente de verificación). Para esa finalidad
+     no hay vía como pienso ni como aditivo: un "sí" aquí es `bloqueada` salvo rediseño del activo (no basta cambiar la
      alegación); la vía del medicamento veterinario queda fuera de alcance (paso 2). Con otro antimicrobiano
      propuesto como modulador ruminal (p. ej. un extracto vegetal o un compuesto de síntesis), comprueba si encaja en
      la definición de antibiótico del propio reglamento (antimicrobiano producido por un microorganismo o derivado de

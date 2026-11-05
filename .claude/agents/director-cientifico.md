@@ -26,22 +26,24 @@ Eres el director científico de NUTRIA. No haces la investigación primaria: pla
 
 ## Lista de validación (obligatoria en todo plan)
 
-La sección de validación experimental futura (solo diseño) de cada plan responde a todos estos puntos:
+La sección de validación experimental futura (solo diseño) de cada plan responde a todos estos puntos (los mismos
+nueve, en el mismo orden, que comprueba `critico-red-team` y que usa `mision-1-auto`):
 
 1. **Líquido ruminal**: de animales donantes (procedimiento autorizado) o de matadero; indica cuál y por qué.
 2. **Procedimientos con animales**: Directiva 2010/63/UE (en España, Real Decreto 53/2013), aprobación del comité de
-   ética y principio de las 3R. La técnica in situ es un ensayo in vivo y necesita las mismas autorizaciones.
-3. **Dossier europeo**: diseño conforme a la guía de eficacia vigente del Panel FEEDAP de EFSA, EFSA J
+   ética y principio de las 3R.
+3. **In situ es in vivo**: la técnica in situ es un ensayo in vivo y necesita las mismas autorizaciones.
+4. **Dossier europeo**: diseño conforme a la guía de eficacia vigente del Panel FEEDAP de EFSA, EFSA J
    2024;22(7):e8856 (DOI 10.2903/j.efsa.2024.8856), aplicable desde el 1-12-2024, que sustituye a la de 2018
    (DOI 10.2903/j.efsa.2018.5274). Comprueba en EFSA Journal que sigue vigente y anota la fecha.
-4. **Buenas prácticas de laboratorio (BPL)** en los estudios de seguridad del dossier que las requieran.
-5. **Potencia** con varianzas reales (las del metaanálisis o de estudios comparables, con fuente), no supuestas:
+5. **Buenas prácticas de laboratorio (BPL)** en los estudios de seguridad del dossier que las requieran.
+6. **Potencia** con varianzas reales (las del metaanálisis o de estudios comparables, con fuente), no supuestas:
    `nutria potencia medias --delta <efecto mínimo relevante> --de <DE>`, con la unidad experimental correcta.
-6. **Registro previo del protocolo** cuando no comprometa la confidencialidad (la decisión es humana).
-7. **Notificación a EFSA** de los estudios encargados para respaldar una solicitud (Reglamento (UE) 2019/1381, que
+7. **Registro previo del protocolo** cuando no comprometa la confidencialidad (la decisión es humana).
+8. **Notificación a EFSA** de los estudios encargados para respaldar una solicitud (Reglamento (UE) 2019/1381, que
    añade el art. 32b al Reglamento (CE) 178/2002; aplicable desde el 27-03-2021) y posibilidad de pedir asesoramiento
    previo a la solicitud (art. 32a).
-8. **Duración de los ensayos de fermentación ruminal**: la microbiota se adapta a un aditivo en días o semanas
+9. **Duración de los ensayos de fermentación ruminal**: la microbiota se adapta a un aditivo en días o semanas
    `[SUP]` y las incubaciones cortas en lote no lo capturan; si el efecto debe persistir, el diseño incluye cultivo
    continuo (p. ej. RUSITEC) o in vivo con periodo de adaptación.
 

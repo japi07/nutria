@@ -106,8 +106,10 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   aditivos para piensos (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación
   en el texto consolidado). La prohibición no se limita a los promotores del crecimiento: vale sea cual sea la
   finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos
-  como la monensina)** y a los reductores de metano que sean antibióticos. Para esa finalidad no hay vía como pienso
-  ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no basta cambiar la
+  como la monensina)** y a los reductores de metano que sean antibióticos. La única excepción es su autorización como
+  coccidiostático o histomonóstato (categoría propia de aditivos, para las especies y condiciones de esa
+  autorización), que no ampara el uso como modulador ruminal (pendiente de verificación). Para esa finalidad no hay
+  vía como pienso ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no basta cambiar la
   alegación), y la vía del medicamento veterinario queda fuera de alcance. Con otros antimicrobianos (p. ej.
   extractos vegetales o compuestos de síntesis) propuestos con esa finalidad, hay que comprobar si encajan en la
   definición de antibiótico del reglamento (antimicrobiano producido por un microorganismo o derivado de él; art. 2,
@@ -149,7 +151,7 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 |---|---|---|---|
 | [Reglamento (CE) 178/2002](https://eur-lex.europa.eu/eli/reg/2002/178/oj) | Legislación alimentaria general (incluye piensos), EFSA; arts. 32a y 32b añadidos por el Reglamento (UE) 2019/1381 | Siempre; antes de preparar una solicitud | verificada (2026-11-04) solo los arts. 32a y 32b; resto pendiente |
 | [Reglamento (UE) 2019/1381](https://eur-lex.europa.eu/eli/reg/2019/1381/oj) | Transparencia: asesoramiento previo de EFSA (art. 32a del Reglamento (CE) 178/2002) y notificación a EFSA de los estudios encargados para respaldar una solicitud (art. 32b); aplicable desde el 27-03-2021 | Antes de encargar estudios para un dossier | verificada (2026-11-04) |
-| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) (CELEX 32003R1831) | Aditivos: autorización, categorías, etiquetado, protección de datos; art. 11, apartado 2: los antibióticos distintos de coccidiostáticos e histomonóstatos no pueden autorizarse como aditivos, sea cual sea la finalidad (incluidos los moduladores ruminales antimicrobianos que sean antibióticos, como los ionóforos) | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente, incluido el art. 11, apartado 2 |
+| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) (CELEX 32003R1831) | Aditivos: autorización, categorías, etiquetado, protección de datos; art. 11, apartado 2: los antibióticos distintos de coccidiostáticos e histomonóstatos no pueden autorizarse como aditivos, sea cual sea la finalidad (incluidos los moduladores ruminales antimicrobianos que sean antibióticos, como los ionóforos, salvo su autorización como coccidiostáticos o histomonóstatos, que no ampara ese uso) | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente, incluido el art. 11, apartado 2 |
 | [Reglamento (CE) 429/2008](https://eur-lex.europa.eu/eli/reg/2008/429/oj) | Preparación y presentación de solicitudes de aditivos | Nuevas autorizaciones | pendiente |
 | [Reglamento (CE) 378/2005](https://eur-lex.europa.eu/eli/reg/2005/378/oj) | Laboratorio de referencia de la UE para aditivos (EURL-FA), según la auditoría externa | Nuevas autorizaciones (método analítico) | pendiente |
 | [Reglamento (UE) 2019/962](https://eur-lex.europa.eu/eli/reg/2019/962/oj) | Grupos funcionales nuevos: estabilizadores de las condiciones fisiológicas (zootécnicos; animales sanos, resiliencia frente a factores de estrés) y otros aditivos tecnológicos | Productos de resiliencia frente al estrés oxidativo o calórico, si no son medicamento por función | verificada (2026-11-04) |

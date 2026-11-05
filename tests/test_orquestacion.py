@@ -1025,6 +1025,32 @@ def test_p8_evaluar_falla_en_cerrado_si_no_puede_leer_el_registro(respuesta):  #
 
 
 @requires_node
+@pytest.mark.parametrize("estado", ["bloqueada", "descartada"])
+def test_p8_estado_detenido_sin_compuertas_bloqueadas(estado, project, capsys):  # D1-7, D4-3: el estado también detiene
+    paso0_vacio = _regla_paso0(project, capsys)  # el paso 0 de la misión ve el registro antes del alta
+    _registrar_oportunidades(project, capsys, 3)
+    salida = _ver(capsys, "O-0003")
+    vista = json.loads(salida["salida"])
+    assert "bloqueada" not in vista["compuertas_efectivas"].values()
+    vista["status"] = estado  # salir de ese estado exige firma humana
+    detenida = {**salida, "salida": json.dumps(vista)}
+    ev = run_workflow("evaluar-oportunidad-auto", "O-0003", [{"labelPrefix": "compuertas-registro:", "respuesta": detenida}])
+    assert labels(ev) == ["compuertas-registro:inicio"]
+    assert ev["resultado"]["detenida_en"] == "Compuertas del registro" and f'estado "{estado}"' in ev["resultado"]["motivo"]
+    planes = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0003"]},
+                          [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0003", "respuesta": detenida}])
+    assert "plan:O-0003" not in labels(planes)
+    assert f'estado "{estado}": no se redacta el plan' in planes["resultado"]["planes"][0]["motivo"]
+    titulo = vista["title"]
+    ops = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1},
+                       [paso0_vacio, {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp(titulo)]}}, *_reglas_novedad(),
+                        {"label": "registro:1", "respuesta": {"id": "O-0003"}}, {"labelPrefix": "compuertas-registro:", "respuesta": detenida},
+                        {"labelPrefix": "triage:", "respuesta": {"compuerta": "x", "estado": "no_resuelta", "motivo": "m", "resumen": "r"}}])
+    assert not any(l.startswith("puntuacion:") for l in labels(ops))
+    assert f'estado "{estado}"' in ops["resultado"]["oportunidades"][0]["sin_puntuar"]
+
+
+@requires_node
 def test_p8_evaluar_falla_en_cerrado_si_la_salida_es_de_otra_oportunidad(project, capsys):  # D1-7
     _registrar_oportunidades(project, capsys, 3)
     out = run_workflow("evaluar-oportunidad-auto", "O-0003", [{"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0002")}])
@@ -1149,6 +1175,10 @@ SELLOS_NO_VALIDOS = {
     "declarado-por-el-llm": {"comprobar": {"orden": "x", "codigo_salida": 0, "salida": "Todo correcto"},
                              "sello": {"orden": "x", "codigo_salida": 0, "salida": "sello_valido: true"}},
     "sin-resultado": None,
+    # cada comprobación de la salida de `informe comprobar`, por separado (las demás no la cubren)
+    "solo-incompleta": {"comprobar": _comprobar(False, codigo=0, pendientes=2), "sello": _sello()},
+    "solo-errores": {"comprobar": _comprobar(errores=("[R2] sin fila en el Anexo A",), codigo=0), "sello": _sello()},
+    "solo-codigo": {"comprobar": _comprobar(codigo=1), "sello": _sello()},
 }
 
 
@@ -1771,8 +1801,12 @@ def test_p8_mision1_planes_critica_con_la_lista_y_etica_repropuesta(project, cap
     reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": _ver(capsys, "O-0001")},
               {"label": "compuertas-registro:planes:O-0002", "respuesta": _ver(capsys, "O-0002")},
               {"label": "plan:O-0001", "respuesta": plan}, {"label": "revision-plan:O-0001", "respuesta": plan},
-              {"label": "critica-plan:O-0001", "respuesta": critica},
-              {"label": "etica-plan:O-0001", "respuesta": {"compuerta": "etica", "estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION", "resumen": "r"}}]
+              {"label": "critica-plan:O-0001", "respuesta": critica}]
+    # lo que hace el agente de ética: registra la propuesta con la CLI real y devuelve su salida literal
+    registro_etica = _salida(capsys, "--agente", "sostenibilidad-bienestar", "--json", "puntuar", "compuerta", "O-0001", "etica",
+                             "bloqueada", "--motivo", "DONANTES-SIN-AUTORIZACION")
+    reglas.append({"label": "etica-plan:O-0001", "respuesta": {"compuerta": "etica", "estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION",
+                                                              "resumen": "r", "registro": registro_etica}})
     out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002"]}, reglas)
     ls = labels(out)
     assert "plan:O-0002" not in ls  # compuerta bloqueada en el registro: no se redacta el plan
@@ -1784,14 +1818,36 @@ def test_p8_mision1_planes_critica_con_la_lista_y_etica_repropuesta(project, cap
     assert ls.index("revision-plan:O-0001") < ls.index("etica-plan:O-0001")
     etica = call(out, "etica-plan:O-0001")
     assert etica["agentType"] == "sostenibilidad-bienestar"
-    assert "nutria --agente sostenibilidad-bienestar puntuar compuerta O-0001 etica" in etica["prompt"]
+    assert "nutria --agente sostenibilidad-bienestar --json puntuar compuerta O-0001 etica" in etica["prompt"]
     assert "research/revisiones/O-0001_etica_plan_2026-11-04.md" in etica["prompt"]
+    assert "registro" in etica["schema"]["required"]  # la salida literal de la orden, no solo el estado declarado
     res = {p["id"]: p for p in out["resultado"]["planes"]}
     assert res["O-0001"]["lista_validacion"] == {"omitidos": [2], "mal_cubiertos": [4], "sin_respuesta": [9]}
-    assert res["O-0001"]["etica"] == {"estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION"} and res["O-0001"]["bloqueada"]
+    assert res["O-0001"]["etica"] == {"estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION", "registrada": True,
+                                      "rechazo": None} and res["O-0001"]["bloqueada"]
     assert res["O-0002"]["plan"] is None and res["O-0002"]["bloqueada"]
     assert any("Compuerta ética repropuesta" in m for m in out["logs"])
     assert len(ls) <= _maximo_logueado(out, r"Estimación: (\d+) agentes")
+
+
+@requires_node
+def test_p8_mision1_etica_repropuesta_rechazada_por_la_cli(project, capsys):  # D1-12 (con la CLI del rol propietario, P1)
+    _registrar_oportunidades(project, capsys, 1)
+    plan = {"archivo": "research/planes/O-0001.md", "resumen": "r"}
+    # una persona ya firmó la ética: la CLI rechaza la propuesta sin firma (código distinto de 0, mensaje por stderr)
+    rechazada = {"orden": "nutria --agente sostenibilidad-bienestar --json puntuar compuerta O-0001 etica superada --motivo m",
+                 "codigo_salida": 3, "salida": ""}
+    reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": _ver(capsys, "O-0001")},
+              {"label": "plan:O-0001", "respuesta": plan}, {"label": "revision-plan:O-0001", "respuesta": plan},
+              {"label": "etica-plan:O-0001", "respuesta": {"compuerta": "etica", "estado": "superada", "motivo": "m", "resumen": "r",
+                                                            "registro": rechazada}}]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)
+    etica = out["resultado"]["planes"][0]["etica"]
+    assert etica["estado"] == "superada" and etica["registrada"] is False and "código 3" in etica["rechazo"]
+    assert any("Compuerta ética repropuesta de O-0001 sin registrar" in m for m in out["logs"])
+    # sin la salida de la orden tampoco consta como registrada
+    sin_salida = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas[:-1])
+    assert sin_salida["resultado"]["planes"][0]["etica"]["registrada"] is False
 
 
 @requires_node
@@ -1803,6 +1859,31 @@ def test_p8_mision1_estimacion_de_las_fases_mapa_y_planes(project, capsys):  # D
                                                 for i in (1, 2, 3)]
     planes = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002", "O-0003"]}, reglas)
     assert len(labels(planes)) == _maximo_logueado(planes, r"Estimación: (\d+) agentes")
+
+
+@requires_node
+def test_p8_readme_cifras_de_agentes_coinciden_con_los_workflows():  # D10-3, indicación (10): README coherente
+    fila = {f.split("|")[1].strip().strip("`"): f for f in _text(ROOT / "README.md").splitlines()
+            if f.startswith("| `") and "Del orden de" in f}
+    # evaluar-oportunidad-auto: máximo por defecto y agentes fijos, según su propio registro
+    ev = run_workflow("evaluar-oportunidad-auto", "O-0003")
+    fijos = int(re.search(r"si no se detiene antes, (\d+) fijos", " ".join(ev["logs"])).group(1))
+    assert f"como máximo {_maximo_logueado(ev)} por defecto" in fila["evaluar-oportunidad-auto"]
+    assert f"{fijos} fijos si no se detiene antes" in fila["evaluar-oportunidad-auto"]
+    assert "3 registros de puntuación solo con sello válido" in fila["evaluar-oportunidad-auto"]
+    # red-team-auto: por defecto y con el tope de 30 afirmaciones
+    reglas = [{"label": "extraccion", "respuesta": {"afirmaciones": [{"id": f"A{i}", "texto": "t"} for i in range(1, 31)]}}]
+    rt15 = _maximo_logueado(run_workflow("red-team-auto", "research/informes/O-0003.md", reglas))
+    rt30 = _maximo_logueado(run_workflow("red-team-auto", {"archivo": "research/informes/O-0003.md", "max_afirmaciones": 30}, reglas))
+    assert f"como máximo {rt15} por defecto y {rt30} con 30 afirmaciones" in fila["red-team-auto"]
+    # mision-1-auto: mapa, planes y máximo de la fase oportunidades con 8 problemas y 12 oportunidades
+    mapa = _maximo_logueado(run_workflow("mision-1-auto", {"fase": "mapa"}), r"Estimación: (\d+) agentes")
+    assert f"**{mapa}** en la fase `mapa`" in fila["mision-1-auto"]
+    planes = [_maximo_logueado(run_workflow("mision-1-auto", {"fase": "planes", "seleccion": [f"O-000{i}" for i in range(1, n + 1)]}),
+                               r"Estimación: (\d+) agentes") for n in (1, 2)]
+    assert f"**1 + {planes[1] - planes[0]} por oportunidad elegida**" in fila["mision-1-auto"] and planes[0] == 1 + planes[1] - planes[0]
+    ops = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [f"P{i}" for i in range(1, 9)], "n_oportunidades": 12})
+    assert f"{_maximo_logueado(ops)} con 8 problemas y 12 oportunidades" in fila["mision-1-auto"]
 
 
 # ------------------------------------------------------------------ compuertas: rol propietario y --agente
@@ -1845,6 +1926,25 @@ def test_p8_antibioticos_y_moduladores_ruminales_antimicrobianos():  # D5-4
             assert fragmento in texto, (nombre, fragmento)
     assert "verificar artículo" not in textos["skill"] + textos["agente"]
     assert "ionóforos" in _norm(_agent("compuestos-toxicologia")[1])
+    # precisión: la excepción de los coccidiostáticos (categoría propia de aditivos) no ampara el uso como modulador ruminal
+    for nombre, texto in {**textos, "toxicologia": _norm(_agent("compuestos-toxicologia")[1])}.items():
+        assert "coccidiostático o histomonóstato" in texto and "no ampara el uso como modulador ruminal" in texto, nombre
+
+
+def test_p8_lista_de_validacion_igual_en_director_critico_y_workflow():  # D1-12: la misma lista de 9 puntos
+    def seccion(texto: str, titulo: str) -> str:
+        return texto.split(titulo, 1)[1].split("\n## ", 1)[0]
+    secciones = {"director": seccion(_agent("director-cientifico")[1], "## Lista de validación"),
+                 "critico": seccion(_agent("critico-red-team")[1], "## Planes: lista de validación")}
+    js = _text(WORKFLOWS_DIR / "mision-1-auto.js")
+    lista = js.split("const LISTA_VALIDACION = [", 1)[1].split("]\n", 1)[0]
+    assert len(re.findall(r"^  '", lista, re.M)) == 9
+    for nombre, cuerpo in secciones.items():
+        assert [m.group(1) for m in re.finditer(r"^(\d+)\. ", cuerpo, re.M)] == [str(n) for n in range(1, 10)], nombre
+        # mismo orden: in situ (3), FEEDAP (4), BPL (5), notificación a EFSA (8), duración de los ensayos (9)
+        puntos = re.split(r"^\d+\. ", cuerpo, flags=re.M)
+        assert "in situ" in puntos[3] and "FEEDAP" in puntos[4] and "BPL" in puntos[5] and "32b" in puntos[8], nombre
+        assert "Duración de los ensayos de fermentación ruminal" in _norm(puntos[9]).replace("**", ""), nombre
 
 
 def test_p8_omg_microorganismos_y_qps():  # D5-13

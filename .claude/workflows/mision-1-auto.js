@@ -143,6 +143,9 @@ const COMPUERTA = S({
   compuerta: STR, estado: { type: 'string', enum: ESTADOS_COMPUERTA }, motivo: STR, resumen: STR,
   archivo: STR, fuentes: STRS,
 }, ['compuerta', 'estado', 'motivo', 'resumen'])
+// La compuerta ética repropuesta sobre el diseño devuelve además la salida literal de la orden con que se registró: la
+// CLI puede rechazarla (p. ej. una propuesta sin firma no sustituye una decisión que ya firmó una persona).
+const COMPUERTA_REGISTRADA = S({ ...COMPUERTA.properties, registro: SALIDA_ORDEN }, [...COMPUERTA.required, 'registro'])
 const CRITICA = S({
   veredicto: { type: 'string', enum: ['sostenida', 'debilitada', 'refutada', 'no_verificable'] }, debilidades: STRS, experimento_decisivo: STR,
 }, ['veredicto', 'debilidades', 'experimento_decisivo'])
@@ -894,9 +897,10 @@ const planes = await pipeline(
         `${REGLAS}\nEl plan ${(r.plan_revisado || r.plan).archivo} de ${id} ya tiene el diseño de la validación experimental (F10). Revisa ese diseño con la ética de la ` +
         'validación: 3R; Directiva 2010/63/UE y, en España, Real Decreto 53/2013 (procedimientos con animales, incluidos los donantes de líquido ruminal; la técnica ' +
         'in situ es in vivo); alternativas (líquido de matadero, métodos in vitro) y bienestar. VUELVE A PROPONER la compuerta "etica" con este diseño y regístrala como ' +
-        `propuesta, sin --firma-humana: nutria --agente sostenibilidad-bienestar puntuar compuerta ${id} etica <superada|no_resuelta|bloqueada> --motivo "...". ` +
-        `Devuelve el mismo estado que registres. Guarda tu análisis en ${RUTAS_PLAN[id].etica}. No modifiques el plan.`,
-        { label: `etica-plan:${id}`, phase: 'Planes', agentType: 'sostenibilidad-bienestar', schema: COMPUERTA },
+        `propuesta, sin --firma-humana: nutria --agente sostenibilidad-bienestar --json puntuar compuerta ${id} etica <superada|no_resuelta|bloqueada> --motivo "...". ` +
+        'Devuelve el estado que propones y, en "registro", esa orden, su código de salida y su salida literal y completa (si la CLI la rechaza, p. ej. porque ' +
+        `una persona ya firmó la compuerta, no lo ocultes ni la fuerces). Guarda tu análisis en ${RUTAS_PLAN[id].etica}. No modifiques el plan.`,
+        { label: `etica-plan:${id}`, phase: 'Planes', agentType: 'sostenibilidad-bienestar', schema: COMPUERTA_REGISTRADA },
       ),
       () => verificarCitas((r.plan_revisado || r.plan).archivo, `plan:${id}`, 'Planes'),
     ]).then(([etica, v]) => ({ ...r, etica, verificacion_citas: v }))
@@ -913,8 +917,21 @@ const resumenLista = (lista) => {
 }
 const sinFirma = planes.filter((r) => r && r.plan && !(r.registro && r.registro.seleccion_firmada)).map((r) => r.id)
 if (sinFirma.length) log(`Selección sin firma humana en el registro: los planes de ${sinFirma.join(', ')} son provisionales`)
+// Lo que dice la salida literal de nutria puntuar compuerta: registrada (código 0 y el JSON de la compuerta) o rechazada.
+const registroEtica = (id, etica) => {
+  const reg = etica && esObjeto(etica.registro) ? etica.registro : null
+  if (!reg) return { registrada: false, rechazo: 'sin la salida de la orden de registro: no consta que se registrara' }
+  const q = parsear(reg.salida)
+  if (reg.codigo_salida === 0 && q.ok && esObjeto(q.valor) && q.valor.id === id && q.valor.compuerta === 'etica' && q.valor.estado === etica.estado) {
+    return { registrada: true, rechazo: null }
+  }
+  return { registrada: false, rechazo: `la CLI no confirma la propuesta (código ${reg.codigo_salida}): ${recorte(reg.salida)}` }
+}
+planes.forEach((r) => { if (r && r.plan && r.etica) r.etica_registro = registroEtica(r.id, r.etica) })
 const conEticaBloqueada = planes.filter((r) => r && r.plan && r.etica && r.etica.estado === 'bloqueada').map((r) => r.id)
 if (conEticaBloqueada.length) log(`Compuerta ética repropuesta "bloqueada" sobre el diseño: ${conEticaBloqueada.join(', ')}`)
+planes.filter((r) => r && r.etica_registro && !r.etica_registro.registrada)
+  .forEach((r) => log(`Compuerta ética repropuesta de ${r.id} sin registrar: ${r.etica_registro.rechazo}`))
 
 return {
   fase: FASE,
@@ -933,7 +950,9 @@ return {
       lista_validacion: r.critica_plan ? resumenLista(r.critica_plan.lista_validacion) : 'sin crítica (fallo de agente)',
       revisado_tras_critica: Boolean(r.plan_revisado),
       seleccion_firmada: Boolean(r.registro && r.registro.seleccion_firmada),
-      etica: r.etica ? { estado: r.etica.estado, motivo: r.etica.motivo } : 'sin propuesta (fallo de agente)',
+      etica: r.etica
+        ? { estado: r.etica.estado, motivo: r.etica.motivo, registrada: r.etica_registro.registrada, rechazo: r.etica_registro.rechazo }
+        : 'sin propuesta (fallo de agente)',
       bloqueada: Boolean(r.etica && r.etica.estado === 'bloqueada'),
       verificacion_citas: r.verificacion_citas || null,
     }

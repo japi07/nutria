@@ -31,8 +31,10 @@ persona.
    coccidiostáticos e histomonóstatos como aditivos**, sea cual sea la finalidad: promotores del crecimiento, pero
    también **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos como la monensina) o reductores de
    metano que sean antibióticos**. No pueden autorizarse como aditivos (Reglamento (CE) 1831/2003, art. 11,
-   apartado 2; CELEX 32003R1831; pendiente de verificación en el texto consolidado), así que no hay vía como pienso
-   ni como aditivo para esa finalidad y la propuesta es `bloqueada` salvo rediseño del activo. Con otro
+   apartado 2; CELEX 32003R1831; pendiente de verificación en el texto consolidado); la única excepción, su
+   autorización como coccidiostático o histomonóstato para las especies y condiciones de esa autorización, no ampara
+   el uso como modulador ruminal (pendiente de verificación). Así que no hay vía como pienso ni como aditivo para esa
+   finalidad y la propuesta es `bloqueada` salvo rediseño del activo. Con otro
    antimicrobiano propuesto como modulador ruminal, comprueba si encaja en la definición de antibiótico del
    reglamento (art. 2, pendiente de verificación) y si es medicamento por función; mientras no esté claro,
    `no_resuelta` con revisión profesional, nunca `superada`. Una sustancia prohibida bloquea la compuerta
