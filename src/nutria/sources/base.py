@@ -133,11 +133,14 @@ class Record:
 
 
 def record_identifiers(records) -> list[dict]:
-    """Identificadores de cada registro (DOI, PMID, PMCID, OpenAlex), sin campos vacíos: lo que la
-    procedencia guarda para poder reconstruir qué devolvió una búsqueda."""
+    """Identificadores de cada registro (DOI, PMID, PMCID, OpenAlex y, para Europe PMC, su fuente e identificador,
+    p. ej. «PPR/PPR12345» de un preprint sin DOI), sin campos vacíos y en el orden devuelto: lo que la procedencia
+    guarda para poder reconstruir qué devolvió una búsqueda."""
     out = []
     for rec in records:
-        ids = {"doi": rec.doi, "pmid": rec.pmid, "pmcid": rec.pmcid, "openalex": rec.openalex_id}
+        extra = rec.extra or {}
+        epmc = f"{extra.get('epmc_source') or '?'}/{extra['epmc_id']}" if extra.get("epmc_id") else None
+        ids = {"doi": rec.doi, "pmid": rec.pmid, "pmcid": rec.pmcid, "openalex": rec.openalex_id, "europepmc": epmc}
         out.append({k: v for k, v in ids.items() if v})
     return out
 

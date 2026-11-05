@@ -348,6 +348,8 @@ def cmd_doctor(args, cfg) -> int:
               "red": {}, "versiones": {}, "webfetch": {}}
     dominios, origen_dominios = _webfetch_dominios(cfg.root)
     report["webfetch_origen"] = origen_dominios
+    # Fuera de un proyecto (sin nutria.toml), doctor no deja procedencia: no crea research/ donde no lo hay.
+    record = bool(report["config"])
     for nombre, url, esencial in FUENTES_DOCTOR:
         url = url or f"{stringdb.api_url(cfg)}/json/version"
         params = None
@@ -356,7 +358,7 @@ def cmd_doctor(args, cfg) -> int:
                 report["red"][nombre] = {"estado": "sin_clave", "url": url, "esencial": esencial}
                 continue
             params = {"api_key": cfg.secret("OPENALEX_API_KEY")}
-        res = client.probe(url, params=params, headers={"Accept": "*/*"})
+        res = client.probe(url, params=params, headers={"Accept": "*/*"}, record=record)
         res.update(nombre=nombre, url=url, esencial=esencial)
         report["versiones"].update({k: v for k, v in _doctor_versiones(res).items() if v})
         res.pop("texto", None)
@@ -365,7 +367,7 @@ def cmd_doctor(args, cfg) -> int:
     if cfg.secret("LENS_API_TOKEN"):
         res = client.probe(patents.LENS_URL, method="POST",
                            json_body={"query": {"query_string": {"query": "rumen"}}, "size": 1},
-                           headers={"Authorization": f"Bearer {cfg.secret('LENS_API_TOKEN')}"})
+                           headers={"Authorization": f"Bearer {cfg.secret('LENS_API_TOKEN')}"}, record=record)
         res.pop("texto", None)
         report["red"]["Lens"] = {**res, "url": patents.LENS_URL, "esencial": False}
     else:
@@ -378,7 +380,7 @@ def cmd_doctor(args, cfg) -> int:
         except (OSError, ValueError, AttributeError):
             allowed = None
     for domain in dominios:
-        res = client.probe(f"https://{domain}/", headers={"Accept": "*/*"})
+        res = client.probe(f"https://{domain}/", headers={"Accept": "*/*"}, record=record)
         res.pop("texto", None)
         res["permitido_en_settings"] = None if allowed is None else f"WebFetch(domain:{domain})" in allowed
         report["webfetch"][domain] = res
@@ -392,11 +394,12 @@ def cmd_doctor(args, cfg) -> int:
         fallos.append("intérprete del hook")
     report["fallos_esenciales"] = fallos
     report["resultado"] = "ok" if not fallos else "fallos_esenciales"
-    log_event(cfg, "doctor", inputs={"offline": cfg.offline},
-              outputs={"red": {n: r["estado"] for n, r in report["red"].items()}, "versiones": report["versiones"],
-                       "webfetch": {d: r["estado"] for d, r in report["webfetch"].items()},
-                       "hook": report["hook"]["estado"], "r": report["r"]["estado"], "fallos_esenciales": fallos},
-              actor=args.agente)
+    if record:
+        log_event(cfg, "doctor", inputs={"offline": cfg.offline},
+                  outputs={"red": {n: r["estado"] for n, r in report["red"].items()}, "versiones": report["versiones"],
+                           "webfetch": {d: r["estado"] for d, r in report["webfetch"].items()},
+                           "hook": report["hook"]["estado"], "r": report["r"]["estado"], "fallos_esenciales": fallos},
+                  actor=args.agente)
 
     lines = [f"nutria {__version__} | raíz: {cfg.root}",
              f"  nutria.toml: {'sí' if report['config'] else 'NO (ejecuta nutria init)'} | "
@@ -2027,6 +2030,13 @@ def main(argv: list[str] | None = None) -> int:
         return _error(args, str(exc), SALIDA_RED, "Sin red (modo offline)", cfg, exc.motivo)
     except NetworkError as exc:
         return _error(args, str(exc), SALIDA_RED, "Error de red", cfg, exc.motivo)
+    except BrokenPipeError:   # quien lee la salida la cerró antes (p. ej. `| head`): no es un error de la orden
+        import os
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        return SALIDA_RESULTADO
     except (requests.RequestException, ConnectionError, TimeoutError) as exc:
         return _error(args, f"{type(exc).__name__}: {exc}", SALIDA_RED, "Error de red", cfg)
     except OSError as exc:  # IsADirectoryError, PermissionError, NotADirectoryError, FileNotFoundError...

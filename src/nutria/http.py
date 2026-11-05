@@ -842,10 +842,10 @@ class HttpClient:
 
     # ------------------------------------------------------------------ comprobación (doctor)
     def probe(self, url: str, *, method: str = "GET", params: dict | None = None, json_body=None,
-              headers: dict | None = None, timeout: float = 15.0) -> dict:
+              headers: dict | None = None, timeout: float = 15.0, record: bool = True) -> dict:
         """Una sola petición, sin caché ni reintentos y sin excepción por respuestas HTTP de error (la usa
-        `nutria doctor`). En modo offline no hace ninguna petición. Respeta los límites de uso y deja un
-        evento `http_sonda`. Devuelve {"estado": ok|http|bloqueado|sin_conexion|no_comprobado, ...}."""
+        `nutria doctor`). En modo offline no hace ninguna petición. Respeta los límites de uso y, con `record`,
+        deja un evento `http_sonda`. Devuelve {"estado": ok|http|bloqueado|sin_conexion|no_comprobado, ...}."""
         method = method.upper()
         params = {k: v for k, v in (params or {}).items() if v is not None}
         if self.cfg.offline:
@@ -871,11 +871,12 @@ class HttpClient:
             if status >= 400:
                 result["detalle"] = redact(text[:2000], self.cfg)[:200]
             result["texto"] = text[:20000]
-        try:
-            log_event(self.cfg, "http_sonda", inputs=trace,
-                      outputs={k: v for k, v in result.items() if k != "texto"})
-        except OSError:
-            pass
+        if record:
+            try:
+                log_event(self.cfg, "http_sonda", inputs=trace,
+                          outputs={k: v for k, v in result.items() if k != "texto"})
+            except OSError:
+                pass
         return result
 
 

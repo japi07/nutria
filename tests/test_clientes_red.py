@@ -1254,6 +1254,9 @@ def test_doctor_fails_without_project(tmp_path, router, capsys, monkeypatch):
     monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
     code, out, _ = run(capsys, ["--offline", "--json", "doctor"])
     assert code == cli.SALIDA_RESULTADO and json.loads(out)["fallos_esenciales"] == ["nutria.toml", "base de datos"]
+    code, out, _ = run(capsys, ["--json", "doctor"])                       # con red (bloqueada) tampoco
+    assert code == cli.SALIDA_RESULTADO and router.calls
+    assert not (tmp_path / "research").exists()                             # fuera de un proyecto no deja procedencia
 
 
 def test_doctor_reads_the_webfetch_domains_from_docs_fuentes(tmp_path):
@@ -1688,3 +1691,24 @@ def test_pubmed_abstracts_are_fetched_in_batches_and_a_failure_flags_the_result(
 
     res = pubmed.search_records(FakeClient(cfg, failing), "rumen", retmax=3, with_abstracts=True)
     assert res["incompleto"] and any("no se pudieron descargar los resúmenes" in a for a in res["avisos"])
+
+
+def test_buscar_europepmc_pages_and_logs_identifiers_of_records_without_doi(proj, router, capsys, monkeypatch):
+    # D7-7 y D7-13: con Europe PMC, cursorMark hasta --max; un preprint sin DOI ni PMID queda identificado igualmente
+    monkeypatch.setattr(europepmc, "PAGE_MAX", 2)
+    pages = {"%2A": ("C2", [{"id": "PPR1", "source": "PPR", "title": "Preprint"},
+                            {"id": "123", "source": "MED", "pmid": "123", "doi": "10.1000/x", "title": "Art"}]),
+             "C2": ("C3", [{"id": "PPR2", "source": "PPR", "title": "Otro"}])}
+
+    def epmc(method, url):
+        following, hits = pages[re.search(r"cursorMark=([^&]+)", url).group(1)]
+        return 200, {"hitCount": 9, "nextCursorMark": following, "resultList": {"result": hits}}
+
+    router.add(r"europepmc/webservices/rest/search", epmc)
+    code, out, _ = run(capsys, ["buscar", "europepmc", "rumen", "--max", "3"])
+    assert code == 0 and "(2 páginas)" in out and "Hay más resultados" in out
+    event = events(proj, "busqueda")[-1]
+    assert event["outputs"]["paginas"] == 2 and event["outputs"]["total"] == 9
+    assert event["outputs"]["identificadores"] == [{"europepmc": "PPR/PPR1"},
+                                                   {"doi": "10.1000/x", "pmid": "123", "europepmc": "MED/123"},
+                                                   {"europepmc": "PPR/PPR2"}]
