@@ -31,6 +31,12 @@ GENERICOS = ["", "   ", "-", "--", "?", "n/a", "N/A", "nd", "xxx", "desconocido"
 
 
 # ------------------------------------------------------------------ utilidades
+@pytest.fixture(autouse=True)
+def _sin_agente_del_entorno(monkeypatch):
+    """Las identidades de cada prueba las fija --agente: un NUTRIA_AGENT del entorno no debe cambiarlas."""
+    monkeypatch.delenv("NUTRIA_AGENT", raising=False)
+
+
 def _example(name: str):
     return json.loads((EXAMPLES / f"{name}.json").read_text("utf-8"))
 
