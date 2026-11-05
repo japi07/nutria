@@ -294,7 +294,12 @@ def test_review_command_rejects_abbreviated_signature_option(project, capsys):
         with pytest.raises(SystemExit) as exc:
             main(["informe", "revisar", str(path), abbreviation, "Ana"])
         assert exc.value.code == 2
+        # tampoco en `verificar manual` (una URL dada por verificada sin la opción completa reabriría el sello)
+        with pytest.raises(SystemExit) as exc:
+            main(["verificar", "manual", "https://example.org/norma", abbreviation, "Ana"])
+        assert exc.value.code == 2
     assert db.report_reviews(_conn()) == []
+    assert db.get_manual_verification(_conn(), "https://example.org/norma") is None
 
 
 def test_review_keeps_crlf_line_endings(project):
@@ -1316,6 +1321,7 @@ def test_author_year_citations_need_a_reference_in_the_same_sentence(body):
     ("| Estudio | Leche | Grasa |\n|---|---|---|\n| | kg/d | % |\n| Ensayo de campo | 2,5 | 0,1 |",
      ("Cifra con unidades",)),                                                               # fila de unidades
     ("| Referencia | Resultado |\n|---|---|\n| García y Pérez 2018 | más leche |", ("Cita autor-año",)),
+    ("Estudio | Leche (kg/d)\n--- | ---\nGarcía 2018 | 2,5", ("Cita autor-año", "Cifra con unidades")),   # sin barras
 ])
 def test_tables_are_checked_by_their_structure(body, expected):
     errors = _body_errors(body)
@@ -1399,6 +1405,10 @@ def test_support_tables_outside_annex_a_are_errors():
     emphasized = ok.replace("| Ref | Afirmación | Respaldo | Motivo |", "| **Ref** | **Afirmación** | **Respaldo** | "
                                                                        "**Motivo** |")
     assert not [e for e in _errors(emphasized, require_sections=False) if "Anexo A" in e]
+    # GFM admite filas sin «|» inicial dentro de una tabla: una negativa escrita así tampoco queda sin leer
+    pipeless = ok.rstrip("\n") + "\nR1 | La colina reduce la incidencia de cetosis en vacas lecheras | no_respalda | x\n"
+    assert any("R1 NO respalda" in e for e in _errors(pipeless.replace("estado: final", "estado: borrador"),
+                                                       require_sections=False))
 
 
 @pytest.mark.parametrize("body", [

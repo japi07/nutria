@@ -24,9 +24,9 @@ Sin red (`check_report`):
   necesita etiqueta o referencia, y una referencia `[Rn]`, una etiqueta (si no, eludiría el Anexo A); error en
   revisado o final y aviso en borrador. La cifra y su unidad se buscan en el texto del párrafo entero (también
   partidas por un salto de línea, con varios espacios o con la unidad entre paréntesis: «2,5 (kg/d)») y, en las
-  tablas, por su estructura: un número de una columna cuya cabecera lleva la unidad («Leche (kg/d)»), o de una fila
-  con una celda de unidades (la primera, «Leche (kg/d) | 30,1», una columna «Unidad» o una fila de unidades bajo la
-  cabecera). Una cita autor-año necesita su `[Rn]` en la misma frase (error siempre): entre paréntesis
+  tablas (también las escritas sin «|» en los extremos), por su estructura: un número de una columna cuya cabecera
+  lleva la unidad («Leche (kg/d)»), o de una fila con una celda de unidades (la primera, «Leche (kg/d) | 30,1», una
+  columna «Unidad» o una fila de unidades bajo la cabecera). Una cita autor-año necesita su `[Rn]` en la misma frase (error siempre): entre paréntesis
   («(García, 2018)»), narrativa («García (2018)», «García et al. (2018, p. 3)», «Smith J. (2019)»), con coautores sin
   paréntesis («García et al. 2018»), tras «según» o «véase» («según García 2018») o, en una columna de estudios o
   fuentes de una tabla, «García 2018». Una cita numérica «[1]» y una referencia «(R1)» son error. Solo quedan
@@ -914,7 +914,9 @@ def _norm_words(text: str) -> list[str]:
     return [value for kind, value, _pos in _scan(text).tokens if kind == "word"]
 
 
-def _paragraphs(doc: _Doc, body: set[int]) -> list[list[int]]:
+def _paragraphs(doc: _Doc, body: set[int], tables: set[int] | None = None) -> list[list[int]]:
+    """Párrafos del cuerpo; cada encabezado, línea de código y fila de tabla (`tables`, o las líneas que empiezan
+    por «|») es un párrafo de una línea."""
     paras: list[list[int]] = []
     current: list[int] = []
 
@@ -928,7 +930,8 @@ def _paragraphs(doc: _Doc, body: set[int]) -> list[list[int]]:
         if i not in body or not stripped:
             flush()
             continue
-        if doc.heading_at(i) or doc.fence[i] or stripped.lstrip(">").strip().startswith("|"):
+        if (doc.heading_at(i) or doc.fence[i] or stripped.lstrip(">").strip().startswith("|")
+                or (tables is not None and i in tables)):
             flush()
             paras.append([i])
             continue
@@ -941,6 +944,26 @@ def _paragraphs(doc: _Doc, body: set[int]) -> list[list[int]]:
 
 def _is_table_text(line: str) -> bool:
     return line.strip().lstrip(">").strip().startswith("|")
+
+
+# Fila de separación de una tabla GFM, con o sin barras en los extremos: «|---|:--:|», «--- | ---».
+_DELIM_ROW_RE = re.compile(r"^\s*(?:>\s*)*(?:\|\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?|:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?)\s*$")
+
+
+def _table_lines(doc: _Doc, body: set[int]) -> set[int]:
+    """Líneas de tabla del cuerpo: las que empiezan por «|» y las de una tabla GFM escrita sin barras en los
+    extremos («Leche (kg/d) | Control» / «--- | ---» / «30,1 | 32,4»), reconocida por su fila de separación."""
+    def usable(k: int) -> bool:
+        return k in body and not doc.fence[k] and bool(doc.lines[k].strip())
+    out = {i for i in body if not doc.fence[i] and _is_table_text(doc.lines[i])}
+    for i in range(1, len(doc.lines)):
+        if usable(i) and usable(i - 1) and _DELIM_ROW_RE.match(doc.lines[i]) and "|" in doc.lines[i - 1]:
+            out |= {i - 1, i}
+            j = i + 1
+            while j < len(doc.lines) and usable(j) and "|" in doc.lines[j]:
+                out.add(j)
+                j += 1
+    return out
 
 
 def _joined(para: list[int], scans: dict[int, _Line]) -> tuple[str, list[int], list[int]]:
@@ -997,8 +1020,8 @@ def _has_figure(cell: str) -> bool:
     return bool(re.search(r"\d", REF_RE.sub("", cell)))
 
 
-def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers: set[int]
-                  ) -> dict[int, list[tuple[int, str]]]:
+def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers: set[int],
+                  tables: set[int] | None = None) -> dict[int, list[tuple[int, str]]]:
     """Cifras con unidades y citas que solo se ven por la estructura de una tabla (GFM: cabecera y fila de
     separación): un número de una columna cuya cabecera lleva la unidad («Leche (kg/d)»), o de una fila con una celda
     de unidades («Leche (kg/d) | 30,1» o «2,5 | kg/d»), y una celda «Autor Año» en una columna de estudios o fuentes
@@ -1007,8 +1030,10 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
     n = len(doc.lines)
     i = 0
 
+    tables = _table_lines(doc, body) if tables is None else tables
+
     def table_line(k: int) -> bool:
-        return k in body and not doc.fence[k] and _is_table_text(doc.lines[k])
+        return k in tables
     while i < n:
         if not table_line(i):
             i += 1
@@ -1155,6 +1180,7 @@ class _Support:
 
 
 _NEGATIVE_SUPPORT = ("no_respalda", "no_verificable")
+_PIPE_RE = re.compile(r"(?<!\\)\|")
 
 
 def _header_cells(cells: list[str]) -> list[str]:
@@ -1168,7 +1194,7 @@ def _support_rows(doc: _Doc) -> _Support:
     bloque de código o en una cita («> | R1 | ... |») tampoco cuentan, y se señalan (una negativa, como error).
     Fuera del «## Anexo A» (p. ej. en la sección 13, bajo «## Anexo A1» o «## Annex A») una tabla con la columna
     Respaldo, o una fila con una referencia y una valoración negativa, no cuenta como respaldo y se señala (`outside`):
-    ninguna valoración queda sin leer."""
+    ninguna valoración queda sin leer. Una fila sin «|» inicial (GFM la admite dentro de una tabla) también cuenta."""
     rows: list[SupportRow] = []
     issues: list[Issue] = []
     lines: set[int] = set()
@@ -1179,7 +1205,7 @@ def _support_rows(doc: _Doc) -> _Support:
     annex = _annex_ranges(doc, r"anexo\s+a\b")
     in_annex = {i for start, end in annex for i in range(start, end)}
     for i, line in enumerate(doc.lines):
-        if i in in_annex or doc.in_front_matter(i) or not _is_table_text(line):
+        if i in in_annex or doc.in_front_matter(i) or not _PIPE_RE.search(line):
             continue
         cells = _cells(line.strip().lstrip(">").strip())
         if "respaldo" in _header_cells(cells):
@@ -1194,11 +1220,11 @@ def _support_rows(doc: _Doc) -> _Support:
             quoted = stripped.startswith(">")
             if doc.fence[i] or quoted:
                 inner = stripped.lstrip("> \t") if quoted else stripped
-                cells = _cells(inner) if inner.startswith("|") else []
+                cells = _cells(inner) if _PIPE_RE.search(inner) else []
                 if cells and not all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
                     hidden.append((i + 1, any(_support_value(c) in _NEGATIVE_SUPPORT for c in cells)))
                 continue
-            if not stripped.startswith("|"):
+            if not _PIPE_RE.search(stripped):
                 continue
             cells = _cells(stripped)
             if all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
@@ -1740,7 +1766,8 @@ def _sentences(para: list[int], scans: dict[int, _Line]) -> list[tuple[list[str]
     return [s for s in out if s[0] or s[1]]
 
 
-def _anaphora_issues(doc: _Doc, paragraphs: list[list[int]], scans: dict[int, _Line], sev: str) -> list[Issue]:
+def _anaphora_issues(doc: _Doc, paragraphs: list[list[int]], scans: dict[int, _Line], sev: str,
+                     tables: set[int] = frozenset()) -> list[Issue]:
     """Una frase con [PUB] que remite a la anterior («Así lo indica el ensayo», «Esto se observó...», «Este efecto...»,
     «... lo confirma») cuando la frase anterior (del mismo párrafo, o la última del párrafo inmediatamente anterior)
     no lleva etiqueta: la afirmación real quedaría sin etiqueta y el Anexo A solo comprobaría la frase de la [PUB]."""
@@ -1748,7 +1775,7 @@ def _anaphora_issues(doc: _Doc, paragraphs: list[list[int]], scans: dict[int, _L
     previous: tuple[bool, list[str], int] | None = None    # (tiene etiqueta, palabras, última línea del párrafo)
     for para in paragraphs:
         first = para[0]
-        if doc.heading_at(first) or doc.fence[first] or _is_table_text(doc.lines[first]):
+        if doc.heading_at(first) or doc.fence[first] or first in tables or _is_table_text(doc.lines[first]):
             previous = None
             continue
         if previous is not None and any(doc.lines[k].strip() for k in range(previous[2] + 1, first)):
@@ -1923,8 +1950,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     # unidades) y, en las tablas, también por su estructura (unidad en la cabecera o en otra celda; «Autor Año» en
     # una columna de estudios). Cada frase con una cifra necesita una etiqueta o una referencia; cada frase con una
     # referencia, una etiqueta; y cada frase con una cita autor-año, su [Rn].
-    paragraphs = _paragraphs(doc, body)
-    table_extra = _table_events(doc, body, scans, no_numbers)
+    tables = _table_lines(doc, body)
+    paragraphs = _paragraphs(doc, body, tables)
+    table_extra = _table_events(doc, body, scans, no_numbers, tables)
     uncited: list[int] = []
     pub_by_line: dict[int, list[str]] = {}
     for para in paragraphs:
@@ -1946,7 +1974,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 elif kind == "istop" or (kind == "stop" and value in ".!?"):
                     events.append((j, pos, "stop"))
             events += [(j, pos, kind) for pos, kind in table_extra.get(j, [])]
-        in_table = _is_table_text(doc.lines[plines[0]])
+        in_table = plines[0] in tables
         if in_table:
             # Una fila de tabla es un registro: sus celdas forman una sola «frase» (un punto dentro de una celda no
             # separa la cita de la celda «García et al. 2017.» de la referencia de otra celda de la misma fila).
@@ -2147,7 +2175,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
 
     # ---- [PUB] que remite a una frase anterior sin etiqueta («La colina aumenta la leche. Así lo indica el ensayo
     # [PUB] [R1].»): la afirmación quedaría sin etiqueta y la fila del Anexo A solo reproduciría «así lo indica».
-    issues += _anaphora_issues(doc, paragraphs, scans, sev_strict)
+    issues += _anaphora_issues(doc, paragraphs, scans, sev_strict, tables)
 
     # ---- registro: oportunidad del front matter y fuentes
     reg = _registry_opportunity(conn, doc) if conn is not None else None

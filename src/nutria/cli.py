@@ -1124,7 +1124,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("id")
     s.set_defaults(func=cmd_fuente)
 
-    s = sub.add_parser("verificar", parents=[common],
+    # Sin abreviaturas: «--firma» no puede valer por la opción de firma de `verificar manual` (el hook de Bash solo
+    # reconoce la opción completa).
+    s = sub.add_parser("verificar", parents=[common], allow_abbrev=False,
                        help="verifica DOI/PMID, las referencias de un documento, o registra una verificación manual")
     s.add_argument("objetivos", nargs="*", help="<documento.md>, o 'manual <URL>' (solo personas)")
     s.add_argument("--doi")
