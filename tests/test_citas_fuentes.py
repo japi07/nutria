@@ -429,14 +429,21 @@ def test_citas_legitimas_que_daban_falso_error():
 
 def test_variantes_sistematicas_del_titulo_y_metadatos_con_etiquetas():
     rec = dict(authors=["Smith Alan"], families=["Smith"], journals=["Animal"])
+    # Metadatos con etiquetas o entidades: el mismo título normalizado («&» = «and»)
+    for real, cited in (("CH<sub>4</sub> emissions from dairy cows fed 3-NOP",
+                         "CH4 emissions from dairy cows fed 3-NOP"),
+                        ("Rumen fermentation &amp; methane in sheep", "Rumen fermentation & methane in sheep"),
+                        ("Rumen fermentation &amp; methane in sheep", "Rumen fermentation and methane in sheep")):
+        check = c.compare_citation(f"Smith A. 2019. {cited}. Animal 13:1-9.", titles=[real], **rec)
+        assert check.title_ok and check.journal_ok, (real, check)
+    # Fase de coordinación (D3-7 en cerrado): la ortografía británica o estadounidense ya no se empareja; la cita copia
+    # el título del registro tal cual (`nutria fuente ver`)
     for real, cited in (("Effects of dietary fiber on rumen fermentation in sheep",
                          "Effects of dietary fibre on rumen fermentation in sheep"),
                         ("Antibody titers in calves", "Antibody titres in calves"),
-                        ("Estrus detection in dairy cows", "Oestrus detection in dairy cows"),
-                        ("CH<sub>4</sub> emissions from dairy cows fed 3-NOP", "CH4 emissions from dairy cows fed 3-NOP"),
-                        ("Rumen fermentation &amp; methane in sheep", "Rumen fermentation & methane in sheep")):
+                        ("Estrus detection in dairy cows", "Oestrus detection in dairy cows")):
         check = c.compare_citation(f"Smith A. 2019. {cited}. Animal 13:1-9.", titles=[real], **rec)
-        assert check.title_ok and check.journal_ok, (real, check)
+        assert check.title_ok is False and check.title_exact is False, (real, check)
     # nitrate/nitrite no son una variante ortográfica
     check = c.compare_citation("Smith A. 2019. Nitrite in sheep. Animal 13:1-9.", titles=["Nitrate in sheep"], **rec)
     assert check.title_ok is False
@@ -529,16 +536,16 @@ def test_recorte_del_titulo_no_esconde_cifras_negaciones_ni_calificativos(real, 
 
 def test_negacion_delante_del_titulo_se_compara_o_se_senala():
     rec = {k: v for k, v in REC.items() if k != "titles"}
-    # pegada al título, entra en el tramo y se compara (sobra "no")...
+    # pegada al título, es texto ajeno delante del título completo (fase de coordinación: antes «sobra "no"»)...
     check = c.compare_citation(f"Pérez J García A 2020 No effect{EFFECT[len('Effect'):]} J Dairy Sci 103 1-10",
                                titles=[EFFECT], **rec)
-    assert check.title_ok is False and "no" in check.title_extra, check
+    assert check.title_ok is False and "No" in check.text_before_title, check
     # ...y separada del título por un punto, es texto ajeno delante del título
     for cite in (f"Pérez J, García A. 2020. No. {EFFECT}. J Dairy Sci 103:1-10.",
                  f"Pérez J, García A. No. {EFFECT}. J Dairy Sci. 2020;103:1-10.",
                  f"Pérez J, García A. 2020. No 2. {EFFECT}. J Dairy Sci 103:1-10."):   # entre el año y el título
         check = c.compare_citation(cite, titles=[EFFECT], **rec)
-        assert check.title_ok is False and check.text_before_title == ["No"], (cite, check)
+        assert check.title_ok is False and "No" in check.text_before_title, (cite, check)
 
 
 def test_titulo_que_contiene_el_nombre_de_la_revista():
@@ -588,14 +595,13 @@ def test_negacion_o_calificativo_recortado_no_se_sella(net):
     ("Milk yield responses during the 2019–2020 grazing season in Ireland",
      "Milk yield responses during the 2019–2020 grazing season in Ireland"),
     ("Methane emissions in dairy cows fed 3-nitrooxypropanol for 12 weeks",
-     "Methane emissions in dairy cows fed 3-nitrooxypropanol for twelve weeks"),
+     "Methane emissions in dairy cows fed 3-nitrooxypropanol for 12 weeks"),
     ("Effects of 25-hydroxyvitamin D<sub>3</sub> on calcium metabolism in periparturient dairy cows",
      "Effects of 25-hydroxyvitamin D(3) on calcium metabolism in periparturient dairy cows"),    # MEDLINE
-    (EFFECT + "1,2", EFFECT),                                  # llamadas de nota al pie del registro
-    (EFFECT + " 1", EFFECT),
+    (EFFECT + "1,2", EFFECT),                                  # llamadas de nota al pie del registro (pegadas)
     (EFFECT + "*", EFFECT),
     (EFFECT + " 1", EFFECT + " 1"),
-    (EFFECT + ": a meta-analysis", EFFECT),                    # sin un subtítulo que no distingue el trabajo
+    (EFFECT + ": a meta-analysis", EFFECT + ": a meta-analysis"),
 ])
 @pytest.mark.parametrize("style", sorted(STYLES))
 def test_recorte_del_titulo_sigue_quitando_autores_ano_revista_y_paginas(real, cited, style):
@@ -621,8 +627,9 @@ def test_subtitulo_y_nota_al_pie_que_distinguen_el_trabajo():
 
 
 def test_subtitulo_de_crossref_que_distingue_el_trabajo_no_se_puede_omitir(net):
+    # Fase de coordinación (D3-7 en cerrado): ningún subtítulo se puede omitir, distinga o no el trabajo a simple vista
     main_title = "Rumen-protected choline in transition dairy cows"
-    for subtitle, omit_ok in (("Effects on milk production and liver health", True), ("Experiment 2", False),
+    for subtitle, omit_ok in (("Effects on milk production and liver health", False), ("Experiment 2", False),
                               ("II. Liver triglycerides", False)):
         net.cr[DOI] = cr_msg(DOI, title=main_title, subtitle=[subtitle])
         net.oa[DOI] = oa_work(DOI, title=f"{main_title}: {subtitle}")
@@ -1300,3 +1307,217 @@ def test_migracion_anade_la_columna_de_licencia_a_una_base_existente(tmp_path):
     sid = db.upsert_source(conn, {"doi": "10.5555/nuevo", "title": "Nueva", "verified": True, "retracted": False,
                                   "verified_via": "crossref", "extra": {"license": "cc-by"}})
     assert db.get_source(conn, sid)["license"] == "cc-by"
+
+
+# ============================================================================ fase de coordinación: D3-7 en cerrado
+# Bloqueante de la revisión final de P3 (ronda 3): el recorte heurístico del tramo del título quitaba lo que distingue
+# el trabajo. Criterio nuevo (`citations._exact_title`): la cita solo corresponde si contiene el título COMPLETO del
+# registro como secuencia contigua de palabras (normalizado: minúsculas, sin acentos ni signos, «&» = «and», romanos =
+# arábigos), con el subtítulo, y delante y detrás solo hay autores, iniciales de los autores del registro, año, revista
+# y datos de la cita. Casos de la revisión (pt3/test_rev3_citas.py y test_rev3_registro.py) convertidos en pruebas.
+CLA = "CLA supplementation reduces milk fat synthesis in grazing dairy cows fed pasture-based diets"
+TMR = "TMR feeding frequency effects on rumination and milk yield in grazing dairy cows during early lactation"
+REV3_STYLES = ("Pérez J, García A. 2020. {t}. J Dairy Sci 103:1-10. DOI: " + DOI,
+               "Pérez J, García A. {t}. J Dairy Sci. 2020;103(1):1-10. doi:" + DOI,
+               "Pérez, J., & García, A. (2020). {t}. Journal of Dairy Science, 103(1), 1-10. https://doi.org/" + DOI)
+
+
+@pytest.mark.parametrize("style", REV3_STYLES)
+@pytest.mark.parametrize("real, cited", [
+    (CLA, CLA.replace("CLA", "DHA", 1)),
+    (CLA, CLA.replace("CLA", "EPA", 1)),
+    (TMR, TMR.replace("TMR", "PMR", 1)),
+    (CLA[len("CLA "):].capitalize(), CLA),     # una sigla delante del título que no es inicial de ningún autor
+])
+def test_coord_sigla_inicial_cambiada_o_anadida_es_discrepancia(net, style, real, cited):
+    published(net, title=real)
+    entry = style.format(t=cited)
+    res = c.verify_entry(Client(), entry)[0]
+    issues, details, summary = check_report_online(Client(), report(entry))
+    assert res.mismatch and not summary["completa"], (entry, res.to_dict(), summary)
+
+
+COMPANION_A = "Rumen-protected choline in transition dairy cows: effects on milk production and composition"
+COMPANION_B = "Rumen-protected choline in transition dairy cows: effects on liver function and health"
+
+
+def test_coord_subtitulo_omitido_de_un_trabajo_companero_es_discrepancia(net):
+    net.pm["31000777"] = pm_rec("31000777", None, title=COMPANION_B)
+    for cited in ("Rumen-protected choline in transition dairy cows", COMPANION_A):
+        entry = f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10. PMID: 31000777"
+        res = c.verify_entry(Client(), entry)[0]
+        assert res.mismatch and res.title_ok is False, (cited, res.to_dict())
+    good = c.verify_entry(Client(), f"Pérez J, García A. 2020. {COMPANION_B}. J Dairy Sci 103:1-10. PMID: 31000777")
+    assert good[0].ok, good[0].message
+
+
+def test_coord_letra_suelta_y_negaciones_fuera_de_la_lista_cuentan():
+    rec = dict(authors=["Pérez Juan", "García Ana"], families=["Pérez", "García"],
+               journals=["Journal of Dairy Science"])
+    real = "Dietary N supplementation and milk urea nitrogen in grazing dairy cows"
+    ch = c.compare_citation("Pérez J, García A. 2020. " + real.replace(" N ", " P ") + ". J Dairy Sci 103:1-10.",
+                            titles=[real], **rec)
+    assert ch.title_ok is False, ch
+    for real, cited in (
+            ("Rumen-protected choline can improve liver health of dairy cows",
+             "Rumen-protected choline can't improve liver health of dairy cows"),
+            ("Rumen-protected choline improves milk yield and liver health in transition dairy cows",
+             "Rumen-protected choline doesn't improve milk yield and liver health in transition dairy cows"),
+            ("Effect of rumen-protected choline on milk production and liver health in transition dairy cows",
+             "Lack of effect of rumen-protected choline on milk production and liver health in transition dairy cows"),
+            ("Effect of rumen-protected choline on milk production and liver health in transition dairy cows",
+             "Absence of effect of rumen-protected choline on milk production and liver health in transition dairy "
+             "cows")):
+        ch = c.compare_citation(f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10.", titles=[real], **rec)
+        assert ch.title_ok is False, (cited, ch)
+
+
+@pytest.mark.parametrize("cite", ["Pérez J, García A, 2020, {t}, Animals", "Pérez J García A 2020 {t} Animals"])
+def test_coord_revista_de_una_palabra_sin_volumen_no_se_absorbe(cite):
+    t = "Effects of rumen-protected choline on milk production and liver health in transition dairy cows"
+    ch = c.compare_citation(cite.format(t=t), titles=[t], authors=["Pérez Juan", "García Ana"],
+                            families=["Pérez", "García"], journals=["Journal of Dairy Science"])
+    assert ch.journal_ok is False or ch.title_ok is False, ch
+
+
+SPAIN = "Effects of heat stress on rumination and milk yield of grazing dairy cows in Spain"
+
+
+@pytest.mark.parametrize("kind, journal", [("proceedings-article", "Proceedings of the ADSA Annual Meeting"),
+                                           ("book-chapter", "Heat stress in dairy cattle")])
+@pytest.mark.parametrize("style", ["Pérez J, García A, 2020, {t}, 103:1-10. DOI: " + DOI,
+                                   "Pérez J García A 2020 {t} 103 1-10 DOI: " + DOI])
+def test_coord_palabra_final_cambiada_sin_revista_que_comparar(net, kind, journal, style):
+    # Las palabras finales solo se apartan como revista si la revista se compara de verdad: «in Spain» citado como «in
+    # Portugal» en un registro que no es de revista pasaba con el sello completo.
+    published(net, title=SPAIN, kind=kind, journal=journal)
+    entry = style.format(t=SPAIN.replace("Spain", "Portugal"))
+    res = c.verify_entry(Client(), entry)[0]
+    issues, details, summary = check_report_online(Client(), report(entry))
+    assert res.mismatch and not summary["completa"], (entry, res.to_dict(), summary)
+    # un título corto del registro contenido en uno más largo de la cita tampoco vale
+    published(net, title=SPAIN[:-len(" in Spain")], kind=kind, journal=journal)
+    longer = c.verify_entry(Client(), style.format(t=SPAIN))[0]
+    assert longer.mismatch, longer.to_dict()
+
+
+@pytest.mark.parametrize("real, cited", [
+    ("Effects of dietary fiber on rumen fermentation in sheep",
+     "Effects of dietary fibre on rumen fermentation in sheep"),
+    ("Effects of two levels of rumen-protected choline on milk production in transition dairy cows",
+     "Effects of 2 levels of rumen-protected choline on milk production in transition dairy cows"),
+    (TITLE + ": a meta-analysis", TITLE),
+    ("Milk fatty acid profile of grazing dairy cows supplemented with omega 3",
+     "Milk fatty acid profile of grazing dairy cows supplemented with omega"),
+    ("Milk yield of dairy cows fed rumen-protected choline from calving to week 12",
+     "Milk yield of dairy cows fed rumen-protected choline from calving to week 13-14"),
+    (TITLE, TITLE.replace("milk production and liver health", "liver health and milk production")),
+])
+def test_coord_sin_tolerancias_variantes_numeros_subtitulos_ni_orden(real, cited):
+    # Lo que la heurística toleraba ya no basta: la cita copia el título del registro tal cual
+    rec = dict(authors=["Pérez Juan", "García Ana"], families=["Pérez", "García"],
+               journals=["Journal of Dairy Science"])
+    ch = c.compare_citation(f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10.", titles=[real], **rec)
+    assert ch.title_ok is False and ch.title_exact is False, ch
+    assert any("palabra a palabra" in n for n in ch.notes), ch.notes
+
+
+@pytest.mark.parametrize("real, cited", [
+    ("Rumen fermentation &amp; methane in sheep", "Rumen fermentation and methane in sheep"),
+    ("Responses of dairy cows to 2 levels of dietary starch. Part II. Milk yield",
+     "Responses of dairy cows to 2 levels of dietary starch. Part 2. Milk yield"),
+    ("Efecto de la colina protegida en vacas en transición", "EFECTO DE LA COLINA PROTEGIDA EN VACAS EN TRANSICION"),
+    (TITLE + "1,2", TITLE),
+])
+def test_coord_normalizacion_permitida(real, cited):
+    rec = dict(authors=["Pérez Juan", "García Ana"], families=["Pérez", "García"],
+               journals=["Journal of Dairy Science"])
+    ch = c.compare_citation(f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10.", titles=[real], **rec)
+    assert ch.title_ok and ch.title_exact and not _bad(ch), ch
+
+
+@pytest.mark.parametrize("first, cited", [("Op den Camp Huub", "op den Camp HJM"), ("'t Hart Leendert", "'t Hart LA"),
+                                          ("auf der Heide Jan", "auf der Heide J"), ("Ben Ami Yael", "ben Ami Y"),
+                                          ("abu Bakr Omar", "abu Bakr O"), ("zum Felde Karl", "zum Felde K")])
+def test_coord_particulas_de_apellido_en_minuscula(first, cited):
+    # una cita que empieza por una partícula en minúscula no es una cita «sin autores»
+    ch = c.compare_citation(f"{cited}, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.", titles=[TITLE],
+                            authors=[first, "García Ana"], journals=["Journal of Dairy Science"])
+    assert ch.author_ok is True and not ch.author_absent and ch.title_ok, ch
+
+
+MAIN_TITLE = "Rumen-protected choline"
+SUBTITLE = "effects on milk production, liver health and reproduction in transition dairy cows"
+FULL_TITLE = f"{MAIN_TITLE}: {SUBTITLE}"
+
+
+def _crossref_with_subtitle(net, pmid="777"):
+    """Crossref deposita título y subtítulo por separado; OpenAlex y PubMed dan el título completo."""
+    net.cr[DOI] = cr_msg(DOI, title=MAIN_TITLE, subtitle=[SUBTITLE])
+    net.oa[DOI] = oa_work(DOI, title=FULL_TITLE)
+    net.pm_by_doi[DOI] = pmid
+    net.pm[pmid] = pm_rec(pmid, DOI, title=FULL_TITLE + ".")
+
+
+def test_coord_subtitulo_de_crossref_no_hace_de_openalex_y_pubmed_otro_trabajo(net):
+    _crossref_with_subtitle(net)
+    res = c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {FULL_TITLE}. J Dairy Sci 103:1-10.")
+    assert res.ok and res.retracted is False and res.record.pmid == "777", res.message
+    assert res.title == FULL_TITLE                      # lo que muestra `fuente ver` y la cita debe copiar
+    short = c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {MAIN_TITLE}. J Dairy Sci 103:1-10.")
+    assert short.mismatch and short.title_ok is False
+
+
+def test_coord_fuente_agregar_pmid_tras_doi_con_subtitulo_no_duplica(project, net, capsys):
+    _crossref_with_subtitle(net)
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    assert main(["fuente", "agregar", "--pmid", "777"]) == 0
+    rows = [(r["id"], r["doi"], r["pmid"], r["title"]) for r in db.list_sources(_conn())]
+    decisions = [d["decision"] for d in db.list_decisions(_conn())]
+    assert len(rows) == 1 and rows[0][2] == "777" and rows[0][3].rstrip(".") == FULL_TITLE, rows
+    assert not any("no asociado" in d for d in decisions), decisions
+
+
+def test_coord_fila_antigua_con_el_titulo_sin_subtitulo_sigue_siendo_el_mismo_trabajo(project, net):
+    # Filas guardadas antes de unir título y subtítulo: la verificación nueva las reconoce y corrige el título
+    conn = _conn()
+    db.upsert_source(conn, {"doi": DOI, "title": MAIN_TITLE, "year": 2020, "verified": True, "retracted": False,
+                            "verified_via": "crossref"})
+    conn.close()
+    _crossref_with_subtitle(net)
+    assert main(["fuente", "agregar", "--pmid", "777"]) == 0
+    rows = [(r["id"], r["pmid"], r["title"].rstrip(".")) for r in db.list_sources(_conn())]
+    assert rows == [(f"doi:{DOI}", "777", FULL_TITLE)], rows
+
+
+def test_coord_mutantes_sin_prueba_de_la_revision(project):
+    # N19: una cifra tras mayúscula («CH4», «D3») no es una llamada de nota al pie
+    real = "Methane emissions of dairy cows fed 3-nitrooxypropanol measured as CH4"
+    assert c.compare_titles(real, real[:-1]).ok is False
+    rec = dict(authors=["Pérez Juan", "García Ana"], families=["Pérez", "García"],
+               journals=["Journal of Dairy Science"])
+    assert c.compare_citation(f"Pérez J, García A. 2020. {real[:-1]}. J Dairy Sci 103:1-10.", titles=[real],
+                              **rec).title_ok is False
+    # N36: un apellido «Ni» o «No» del registro no es una negación delante del título
+    ch = c.compare_citation(f"Wang Y, Ni X. 2020. {TITLE}. J Dairy Sci 103:1-10.", titles=[TITLE],
+                            authors=["Wang Yu", "Ni Xiaoming"], families=["Wang", "Ni"],
+                            journals=["Journal of Dairy Science"])
+    assert ch.title_ok and not ch.text_before_title, ch
+    # N27: con el identificador que avala la verificación, solo se compara el título (un año distinto entre dos bases
+    # bibliográficas no basta para decir que es otro trabajo)
+    conn = _conn()
+    db.upsert_source(conn, {"doi": "10.5555/anio", "title": TITLE, "year": 2019, "verified": True, "retracted": False,
+                            "verified_via": "crossref"})
+    sid = db.upsert_source(conn, {"doi": "10.5555/anio", "title": TITLE, "year": 2021, "verified": True,
+                                  "retracted": False, "verified_via": "crossref"})
+    assert sid == "doi:10.5555/anio" and len(db.list_sources(conn)) == 1
+
+
+def test_coord_inicial_ajena_entre_el_ano_y_el_titulo():
+    # Tras el año solo caben iniciales de autores del registro: «CLA» no lo es aunque le siga un mes
+    rec = dict(authors=["Pérez Juan", "García Ana"], families=["Pérez", "García"],
+               journals=["Journal of Dairy Science"])
+    ch = c.compare_citation(f"Pérez J, García A. 2020 CLA Jan. {TITLE}. J Dairy Sci 103:1-10.", titles=[TITLE], **rec)
+    assert ch.title_ok is False and "CLA" in ch.text_before_title, ch
+    ok = c.compare_citation(f"Pérez J, García A. 2020 Jan. {TITLE}. J Dairy Sci 103:1-10.", titles=[TITLE], **rec)
+    assert ok.title_ok, ok

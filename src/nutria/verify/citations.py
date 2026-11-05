@@ -15,19 +15,21 @@ Comprueba lo que un LLM suele fallar:
      debe ser el PRIMER autor del registro, no uno cualquiera;
    - año: el de la cita (sin contar identificadores, volumen, páginas, fechas de consulta ni el propio
      título) debe estar a ±1 año del real;
-   - título: si el registro lo tiene, la cita debe traerlo (sin él, o con solo el identificador, es
-     discrepancia). Se compara de forma simétrica (palabras significativas normalizadas en los dos sentidos;
-     ver `TITLE_MIN`), sin admitir sustituciones de palabras ni que falte o sobre una cifra, una negación o un
-     calificativo ("50 g/d" frente a "100 g/d", "does not improve" frente a "improves", "vitamin E" frente a
-     "vitamin D3", "Part I" frente a "Part 2", la parte "I." de una serie); y no puede haber delante texto que no
-     sea de los autores del registro (también sus nombres de pila junto al apellido) ni el año (un título
-     inventado delante del real). El tramo del título se recorta de autores, año, revista, volumen y páginas
-     pegados (citas sin puntos), pero nunca de una negación o una cifra pegada delante ni de un calificativo o
-     unas cifras finales que no son año, volumen ni páginas (`_trim_span`). Son el mismo título los subíndices
-     de MEDLINE ("D(3)" = "D3"), los romanos y los arábigos de una parte ("Part II" = "Part 2"), los números en
-     inglés ("two" = "2"), la llamada de nota al pie final del registro ("cattle1,2") y el título sin un
-     subtítulo que no distingue el trabajo dentro de una serie; un título del registro en otra escritura
-     (cirílico, chino...) se compara literalmente;
+   - título (en cerrado, `_exact_title`): si el registro lo tiene, la cita debe traer su título COMPLETO como
+     secuencia contigua de palabras, normalizado (minúsculas, sin acentos ni signos, "&" = "and", romanos =
+     arábigos: "Part II" = "Part 2", subíndices de MEDLINE "D(3)" = "D3") y con el subtítulo, también cuando
+     Crossref o DataCite lo depositan aparte (el registro guarda el título completo, `sources.base.full_title`).
+     Solo se aceptan del registro las formas sin la cabecera de sección ("Short communication:"), sin la llamada
+     de nota al pie pegada al final ("cattle1,2") y sin la mención de edición. Sin el título, con solo el
+     identificador, con una palabra de más, de menos, cambiada o reordenada, con otra ortografía ("fibre" frente
+     a "fiber"), con números escritos con letras ("two" frente a "2") o sin el subtítulo, es discrepancia: la cita
+     copia el título de `nutria fuente ver`. Delante del título solo puede haber los autores del registro (también
+     sus nombres de pila junto al apellido; una palabra suelta en la lista de autores se tolera), las iniciales de
+     sus nombres, el año de la cita y una cabecera de sección; detrás, en su misma frase, solo la revista del
+     registro y datos de la cita (volumen, número, páginas, año, etiquetas). Un título del registro en otra
+     escritura (cirílico, chino...) se compara literalmente. La comparación aproximada (`compare_titles`,
+     `TITLE_MIN`) ya no decide si una cita corresponde: solo sirve para explicar la discrepancia y para fusionar
+     registros del mismo trabajo;
    - revista: si la cita la trae, el primer tramo con contenido tras el título (o tras los autores, si el
      registro no tiene título) debe ser la revista del registro, con tolerancia a abreviaturas ISO 4 ("J Dairy
      Sci" = "Journal of Dairy Science"), siglas y calificativos de país (PNAS "U S A"); no se compara en libros,
@@ -154,7 +156,9 @@ _STOPWORDS = frozenset({
 })
 _PARTICLES = frozenset({"de", "del", "della", "der", "den", "di", "da", "das", "dos", "do", "du", "la", "le",
                         "van", "von", "ter", "ten", "te", "zu", "vom", "af", "st", "ste", "saint", "san", "mac", "mc",
-                        "bin", "ibn", "al", "el", "y", "e", "d", "l"})       # d y l: d'Angelo, l'Hôpital
+                        "bin", "ibn", "al", "el", "y", "e", "d", "l", "t", "op", "auf", "aus", "ben", "abu", "bint",
+                        "zur", "zum", "vd", "los", "las", "lo", "dei", "degli", "delle", "het"})
+# d, l y t: d'Angelo, l'Hôpital, 't Hart; op den Camp, auf der Heide, ben Ami, abu Bakr, zum Felde
 # Palabras de la cita que no son del título ni de la revista ni del autor.
 _NOISE = frozenset({"et", "al", "eds", "ed", "editor", "editors", "editores", "coord", "comp", "in", "en",
                     "available", "disponible", "online", "internet", "accessed", "cited", "retrieved", "vol",
@@ -305,6 +309,8 @@ def citation_year(citation_text: str | None) -> int | None:
 
 
 # ============================================================================ títulos
+# Comparación aproximada de títulos: decide si dos registros son el mismo trabajo (fusión) y explica las
+# discrepancias. Si una cita corresponde al registro lo decide la comparación exacta (`_exact_title`).
 # Umbral de la similitud de títulos, en los dos sentidos. Con TITLE_MIN = 0,9 la cita puede omitir como mucho
 # el 10 % de las palabras significativas del título real (una de cada diez) o añadir como mucho un 10 %, pero
 # no las dos cosas a la vez: una palabra cambiada por otra (sustitución) es lo que distingue dos trabajos del
@@ -623,6 +629,14 @@ def title_similarity(a: str | None, b: str | None) -> float | None:
     return None if cmp is None else cmp.score
 
 
+def is_main_title_of(short: str | None, full: str | None) -> bool:
+    """¿Es `short` el título principal de `full` («Título: subtítulo»), palabra a palabra? Es como guardaba el registro
+    los títulos de Crossref y DataCite, que depositan el subtítulo aparte, antes de unirlos
+    (`sources.base.full_title`)."""
+    head, sep, _sub = _clean_meta(full).partition(": ")
+    return bool(sep and short and _strict_title_words(short) == _strict_title_words(head))
+
+
 def titles_same_work(a: str | None, b: str | None) -> bool:
     """¿Son títulos del mismo trabajo? (criterio de fusión de registros; ver `TitleComparison.same_work`)."""
     cmp = compare_titles(a, b)
@@ -732,7 +746,10 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
                     break             # apellido + iniciales + otro apellido con iniciales: segundo autor
         if _has_digit(tok.norm) or tok.norm in _LEAD_CONJ:
             break
-        if cased and tok.raw[:1].islower() and tok.norm not in _PARTICLES:
+        if cased and tok.raw[:1].islower() and tok.norm not in _PARTICLES and not (
+                # una partícula que no está en la lista al principio del apellido («op den Camp», «'t Hart»): una
+                # palabra corta en minúscula antes de la primera con mayúscula no deja la cita «sin autores»
+                len(tok.norm) <= 4 and tok.raw.isalpha() and not any(t.raw[:1].isupper() for t in lead)):
             break
         lead.append(tok)
         prev_end = tok.end
@@ -878,6 +895,8 @@ class CitationCheck:
     title_extra: list[str] = field(default_factory=list)
     title_in_citation: str | None = None
     text_before_title: list[str] = field(default_factory=list)   # palabras ajenas entre autores/año y título
+    text_after_title: list[str] = field(default_factory=list)    # palabras ajenas tras el título, en su misma frase
+    title_exact: bool | None = None       # la cita contiene el título completo del registro, palabra a palabra
     year_in_citation: int | None = None
     author_in_citation: str | None = None
     author_ok: bool | None = None
@@ -1226,6 +1245,239 @@ def _native_key(text: str) -> str:
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text or "").casefold())
 
 
+# ============================================================================ título completo (en cerrado)
+# Criterio de la fase de coordinación (D3-7): una cita solo corresponde al título del registro si contiene su título
+# COMPLETO como secuencia contigua de palabras, normalizado (minúsculas, sin acentos ni signos, «&» = «and», romanos
+# = arábigos) y con el subtítulo cuando el registro lo tiene, también si Crossref o DataCite lo depositan aparte. No
+# se admiten palabras de más, de menos, cambiadas ni reordenadas: la cita copia el título de `nutria fuente ver`. Solo
+# se aceptan formas del propio registro sin la cabecera de sección («Short communication:»), sin la llamada de nota al
+# pie final («... cows1,2») y sin la mención de edición («8th ed.»). Delante del título solo puede haber autores,
+# iniciales de los autores del registro, el año y fórmulas de cita; detrás, en la misma frase, solo la revista del
+# registro (comparada) y datos de la cita (volumen, páginas, año, etiquetas).
+_SENTENCE_END_RE = re.compile(r"[.?!]+[\"'”’»)\]*_]*(?:\s+|$)")
+
+
+def _strict_word(norm: str) -> str:
+    return str(_roman(norm)) if _ROMAN_RE.fullmatch(norm) else norm
+
+
+def _strict_title_words(title: str | None) -> list[str]:
+    text = _title_text(title).replace("&", " and ")
+    return [_strict_word(t.norm) for t in _tokens_of(text)]
+
+
+# Llamada de nota al pie que se puede quitar del título del registro en la comparación estricta: cifras pegadas a la
+# última palabra («... cattle1», «... cows1,2», como quedan las de Crossref tras quitar <sup>) o símbolos («... cows*»).
+# Una cifra separada por un espacio («... omega 3», «... week 12») es del título.
+_STRICT_FOOTNOTE_RE = re.compile(r"(?<=[a-z])(?:\d{1,2}(?:,\d{1,2})*|\s?[*†‡§]+)\s*$")
+
+
+def _strict_without_footnote(title: str) -> str | None:
+    match = _STRICT_FOOTNOTE_RE.search(title or "")
+    if not match:
+        return None
+    word = re.search(r"([A-Za-z]+)$", title[:match.start()])
+    if word and _fold(word.group(1)) in _LETTER_HEADS:
+        return None                   # «Experiment1» no es una nota
+    return title[:match.start()].rstrip()
+
+
+def _strict_title_forms(titles) -> list[list[str]]:
+    """Formas completas de los títulos del registro con que la cita debe coincidir palabra a palabra: la propia, sin
+    la cabecera de sección y sin la llamada de nota al pie final pegada. Nunca sin el subtítulo."""
+    out: list[list[str]] = []
+    for title in titles:
+        if not title or _non_latin(title):
+            continue
+        forms: list[str] = []
+        for base in dict.fromkeys((title, _strip_title_prefix(title).strip())):
+            if base:
+                forms.append(base)
+                bare = _strict_without_footnote(base)
+                if bare:
+                    forms.append(bare)
+        for form in forms:
+            words = _strict_title_words(form)
+            if words and words not in out:
+                out.append(words)
+    return out
+
+
+def _citation_words(text: str) -> tuple[list[_Tok], list[str]]:
+    """Palabras de la cita para buscar el título completo, con su forma estricta; cada «&» cuenta como la palabra
+    «and» (con su posición en `text`)."""
+    toks = _tokens_of(text)
+    for m in re.finditer("&", text):
+        toks.append(_Tok("&", "and", m.start(), m.end()))
+    toks.sort(key=lambda t: t.start)
+    return toks, [_strict_word(t.norm) for t in toks]
+
+
+def _year_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
+    """Años de la cita: sin los que forman parte de unas páginas o de volumen(número):páginas («103:2007-2016») ni de
+    una fecha de consulta."""
+    spans = [(m.start(), m.end()) for rx in (VOLUME_PAGES_RE, PAGES_RE, _ACCESS_RE) for m in rx.finditer(text)]
+    return [t for t in toks if _is_year(t) and not any(a <= t.start < b for a, b in spans)]
+
+
+def _record_initials(authors, families, order: str | None) -> set[str]:
+    """Letras con que pueden citarse los nombres de pila de los autores del registro: sus iniciales («Sauvant D» ->
+    d, «Pérez JC» -> j, c) y la primera letra de cada nombre de pila («Pérez Juan» -> j)."""
+    out: set[str] = set()
+    for i, name in enumerate(authors):
+        fam = _author_candidates(name, families[i] if i < len(families) else None, order)
+        for tok in _tokens_of(_clean_meta(name)):
+            if _is_initial(tok.raw):
+                out.update(tok.norm)
+            elif _name_norm(tok.norm) not in fam and tok.norm not in _PARTICLES and tok.raw[:1].isalpha():
+                out.add(tok.norm[0])
+    return out
+
+
+def _lead_problems(text: str, toks: list[_Tok], start: int, end: int, author_words: set[str], acronyms: set[str],
+                   has_authors: bool, given: set[int], initials: set[str]) -> list[str]:
+    """Palabras ajenas delante del título completo (posiciones `start`-`end` de `toks`). Tras el año, ninguna; en la
+    lista de autores, ningún par de palabras seguidas que no sean autores del registro (una suelta puede ser un nombre
+    escrito de otra forma); la palabra justo delante del título, solo un nombre o una inicial de un autor del registro
+    («CLA» delante de «supplementation...» no es la inicial de nadie), el año de la cita (no otro: «2020. 2019
+    Effect...»), «al» (de «et al.») o un mes. Una cabecera de sección («Short communication:») puede ir delante. Una
+    negación nunca se explica."""
+    pre = toks[:start]
+    # cabecera de sección justo delante del título («2020. Short communication: Título»)
+    k = len(pre)
+    while k > 0 and pre[k - 1].norm in _TITLE_PREFIX_WORDS:
+        k -= 1
+    if k < len(pre) and re.fullmatch(r"\s*[:.\-–—]\s*", text[pre[-1].end:toks[start].start]) and \
+            _TITLE_PREFIX_RE.match(text[pre[k].start:toks[start].start]):
+        pre = pre[:k]
+    title_ids = {id(t) for t in toks[start:end + 1]}
+    year_values = {t.norm[:4] for t in _year_tokens(text, toks) if id(t) not in title_ids}
+
+    def initial(tok: _Tok) -> bool:
+        return _is_initial(tok.raw) or (len(tok.norm) == 1 and tok.raw.isupper())
+
+    def explained(idx: int, strict_initials: bool) -> bool:
+        tok = pre[idx]
+        word = tok.norm
+        if word in _CRITICAL_WORDS and _name_norm(word) not in author_words:
+            return False
+        if idx in given or _name_norm(word) in author_words or word in acronyms:
+            return True
+        if initial(tok):
+            return not strict_initials or bool(set(word) <= initials)
+        return (len(word) < 2 or word in _PARTICLES or word in _NOISE or word in _STOPWORDS or word in _LEAD_CONJ
+                or _has_digit(word) or word in _MONTHS or word in _GROUP_WORDS)
+
+    flagged: list[str] = []
+    if pre:
+        last = pre[-1]
+        if _is_year(last):
+            ok_last = len(year_values) <= 1           # otro año en la cita: este es del título citado
+        else:
+            ok_last = (_name_norm(last.norm) in author_words or (len(pre) - 1) in given or last.norm in acronyms
+                       or last.norm == "al" or last.norm in _MONTHS or (initial(last) and set(last.norm) <= initials))
+        if not ok_last:
+            flagged.append(last.raw)
+    years = [i for i, t in enumerate(pre) if _is_year(t)]
+    block = list(range(len(pre)))
+    if years:
+        flagged += [pre[i].raw for i in range(years[-1] + 1, len(pre)) if not explained(i, True)]
+        block = block[:years[-1]]
+    if has_authors:
+        run: list[str] = []
+        for idx in block + [None]:
+            if idx is not None and pre[idx].norm in _STOPWORDS and not initial(pre[idx]):
+                continue
+            if idx is None or explained(idx, False):
+                if len(run) >= 2:
+                    flagged += run
+                run = []
+            else:
+                run.append(pre[idx].raw)
+    return list(dict.fromkeys(flagged))
+
+
+def _tail_problems(text: str, toks: list[_Tok], start: int, end: int, journal_names: list[str]) -> list[str]:
+    """Palabras que siguen al título completo (posiciones `start`-`end` de `toks`) en su misma frase y no son la
+    revista del registro ni datos de la cita: «... in Portugal, 103:1-10» con el título «... in Spain», un subtítulo
+    añadido a un título corto («Título: otro subtítulo») o una cifra que no es año, volumen ni páginas («... 100»,
+    «... in 2019» si la cita da otro año)."""
+    if end + 1 >= len(toks):
+        return []
+    rest = toks[end + 1:]
+    editions = [(m.start(), m.end()) for m in _EDITION_RE.finditer(text)]
+    # La revista del registro, donde esté (también tras un punto de abreviatura: «J. Dairy Sci.»): lo que se comprueba
+    # es lo que hay entre el título y ella, o hasta el fin de la frase del título si va antes o no está.
+    journal_at = journal_end = None
+    for first in range(len(rest)):
+        for size in range(min(len(rest) - first, 14), 0, -1):
+            part = rest[first:first + size]
+            # la revista no lleva cifras ni negaciones, ni empieza por una palabra que puede ser del título citado
+            if any(_has_digit(t.norm) or t.norm in _CRITICAL_WORDS for t in part) or part[0].norm in _NOISE:
+                continue
+            if any(journal_matches(" ".join(t.raw for t in part), name) for name in journal_names):
+                journal_at, journal_end = part[0].start, part[-1].end
+                break
+        if journal_at is not None:
+            break
+    stop = _SENTENCE_END_RE.search(text, toks[end].end)
+    limit = stop.start() if stop else len(text)
+    if journal_at is not None:
+        limit = min(limit, journal_at)
+    rest = [t for t in rest if t.start < limit]
+    title_ids = {id(t) for t in toks[start:end + 1]}
+    bib_spans = [(m.start(), m.end()) for rx in (PAGES_RE, VOLUME_PAGES_RE, re.compile(r"\d+\s*:\s*\w+"))
+                 for m in rx.finditer(text, toks[end].end)]
+
+    def explained(i: int) -> bool:
+        tok = rest[i]
+        word = tok.norm
+        if any(a <= tok.start < b for a, b in editions):
+            return True
+        if word in _CRITICAL_WORDS:
+            return word == "no" and i + 1 < len(rest) and _has_digit(rest[i + 1].norm)
+        if _has_digit(word):
+            if journal_end is not None and tok.start >= journal_end:
+                return True                    # tras la revista: volumen, número, páginas
+            if any(a <= tok.start < b for a, b in bib_spans):
+                return True
+            if i and rest[i - 1].norm in _BIB_LABELS:
+                return True
+            if _is_year(tok):
+                others = {t.norm[:4] for t in _year_tokens(text, toks) if id(t) not in title_ids and t is not tok}
+                return not others or others == {word[:4]}
+            return False
+        return (word in _MONTHS or word in _BIB_LABELS or word in _JOURNAL_END or word in _NOISE
+                or word in _NOT_A_JOURNAL)
+    return [rest[i].raw for i in range(len(rest)) if not explained(i)]
+
+
+def _exact_title(text: str, forms: list[list[str]], author_words: set[str], acronyms: set[str], has_authors: bool,
+                 given_of, initials: set[str], journal_names: list[str]):
+    """Primera aparición del título completo del registro en la cita, como secuencia contigua de palabras: devuelve
+    (inicio, fin, palabras ajenas delante, palabras ajenas detrás) en posiciones de carácter de `text`, la primera
+    aparición limpia o, si no la hay, la primera; None si la cita no lo contiene."""
+    toks, words = _citation_words(text)
+    found = []
+    for form in forms:
+        size = len(form)
+        for i in range(len(words) - size + 1):
+            if words[i:i + size] == form:
+                found.append((i, i + size - 1))
+    if not found:
+        return None
+    given = given_of(text, toks)
+    best = None
+    for i, j in sorted(set(found)):
+        lead = _lead_problems(text, toks, i, j, author_words, acronyms, has_authors, given, initials)
+        tail = _tail_problems(text, toks, i, j, journal_names)
+        item = (toks[i].start, toks[j].end, lead, tail)
+        if not lead and not tail:
+            return item
+        best = best or item
+    return best
+
+
 def compare_citation(citation_text: str | None, *, titles=(), authors=(), families=None, journals=(),
                      pub_types=(), author_order: str | None = None) -> CitationCheck:
     """Compara el texto de una cita con los metadatos del trabajo que identifica su DOI/PMID.
@@ -1278,20 +1530,36 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
         check.title_ok = True
         check.notes.append("El título del registro está en otra escritura y la cita lo trae tal cual.")
     elif variants:
-        found = _best_title(text, toks, variants, author_words, journal_names)
-        if found is not None and found[0].score >= 0.5:
+        exact = _exact_title(text, _strict_title_forms(clean_titles), author_words, acronyms, bool(authors),
+                             lambda t, k: _given_names(t, k, parts), _record_initials(authors, families, author_order),
+                             journal_names)
+        found = None if exact is not None else _best_title(text, toks, variants, author_words, journal_names)
+        if exact is not None:
+            start, end, before, after = exact
+            region = (start, end)
+            check.title_exact = True
+            check.title_score = 1.0
+            check.title_in_citation = text[start:end]
+            check.text_before_title, check.text_after_title = before, after
+            check.title_ok = not before and not after
+            if before:
+                check.notes.append("La cita trae, antes del título, texto que no es de los autores del registro ni el "
+                                   f"año («{' '.join(before[:8])}»): no se sabe qué trabajo cita (¿una palabra o un "
+                                   "título añadidos?).")
+            if after:
+                check.notes.append("La cita trae, detrás del título y en su misma frase, palabras que no son la "
+                                   f"revista del registro ni datos de la cita («{' '.join(after[:8])}»): ¿otro "
+                                   "título?")
+        elif found is not None and found[0].score >= 0.5:
             cmp, first, last = found
             region = (first.start, last.end)
-            check.title_ok, check.title_score = cmp.ok, round(cmp.score, 3)
+            check.title_exact = False
+            check.title_ok, check.title_score = False, round(cmp.score, 3)
             check.title_missing, check.title_extra = cmp.missing, cmp.extra
             check.title_in_citation = text[first.start:last.end]
-            check.text_before_title = _text_before_title(toks, first.start, author_words, acronyms, bool(authors),
-                                                         _given_names(text, toks, parts))
-            if check.text_before_title:
-                check.title_ok = False
-                check.notes.append("La cita trae, antes del título, texto que no es de los autores del registro ni el "
-                                   f"año («{' '.join(check.text_before_title[:8])}»): no se sabe qué trabajo cita "
-                                   "(¿un título añadido?).")
+            check.notes.append("La cita no contiene el título completo del registro palabra a palabra (con su "
+                               "subtítulo): cópialo tal cual de `nutria fuente ver`. Un título parecido no basta: "
+                               "puede ser otro trabajo del mismo grupo y tema.")
         elif len(_free_words(toks, author_words, journal_words)) >= 2:
             check.title_ok, check.title_score = False, round(found[0].score, 3) if found else 0.0
             title_unlocated = True
@@ -1491,6 +1759,9 @@ def _consistent(rec: Record, other: Record, doi: str) -> bool:
     norm = other.doi or norm
     if not rec.title or not other.title or titles_same_work(rec.title, other.title):
         return True
+    main = (rec.extra or {}).get("main_title")
+    if main and main != rec.title and other.title and titles_same_work(main, other.title):
+        return True
     if other.doi != norm or other.source != "pubmed" or not rec.authors or not other.authors:
         return False
     families = (rec.extra or {}).get("families") or [None]
@@ -1663,11 +1934,12 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
                           authors=rec.authors[:5], retracted=retracted, retraction_checked_via=checked,
                           source=rec.source, registration_agency=agency, license=license_, record=full)
     extra = rec.extra or {}
-    # El título de Crossref va sin el subtítulo: la cita puede omitirlo, salvo si el subtítulo distingue el trabajo
-    # dentro de una serie ("Part 2", "I. ...", cifras, negaciones; ver `_main_title`).
+    # El título del registro es el completo: Crossref y DataCite depositan el subtítulo aparte y la fuente lo une
+    # (`sources.base.full_title`). La cita debe traerlo entero (`compare_citation`); otros subtítulos depositados dan
+    # otras formas completas.
+    main = _clean_meta(extra.get("main_title")) or None
     subtitles = [_clean_meta(s) for s in extra.get("subtitles") or [] if _clean_meta(s)]
-    distinguishing = any(_SERIES_START_RE.match(s) or _critical_words(_title_tokens(s)) for s in subtitles)
-    titles = ([] if distinguishing else [rec.title]) + [f"{rec.title}: {s}" for s in subtitles if rec.title]
+    titles = [rec.title] + [f"{main}: {s}" for s in subtitles[1:] if main]
     titles += list(extra.get("alternative_titles") or [])
     journals = [rec.journal] + list(extra.get("container_titles") or []) + list(extra.get("short_container_titles") or [])
     for other in (oa_rec, pm_rec):

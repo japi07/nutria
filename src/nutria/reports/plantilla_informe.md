@@ -144,6 +144,9 @@ Alegación prevista (Reglamento (CE) 767/2009, art. 13): {alegacion}
 
 <!-- Formato: [R1] Autores. Año. Título. Revista Vol:páginas. DOI: 10.xxxx/xxxx | PMID: nnnnnnnn. Cada [Rn] aparece
      una sola vez; una entrada puede ocupar varias líneas (hasta la siguiente entrada o una línea en blanco).
+     La entrada empieza por los autores, y el título es obligatorio y COMPLETO (con su subtítulo): cópialo tal cual de
+     `nutria fuente ver`. Una palabra de más, de menos o cambiada, otra ortografía o el título sin el subtítulo hacen
+     que la verificación lo dé por otro trabajo (discrepancia).
      Normativa y literatura gris solo con URL: requieren `nutria verificar manual <URL> --firma-humana NOMBRE`
      (solo personas). -->
 

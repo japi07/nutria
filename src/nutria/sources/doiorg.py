@@ -20,7 +20,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from ..http import NetworkError, NotFoundError
-from .base import Record, normalize_doi, year_from
+from .base import Record, full_title, normalize_doi, year_from
 
 HANDLES = "https://doi.org/api/handles"
 DOI_RA = "https://doi.org/doiRA"
@@ -79,8 +79,9 @@ def parse_datacite(data: dict) -> Record:
     payload = data.get("data") if isinstance(data, dict) else None
     attrs = (payload or {}).get("attributes") or {}
     titles = [t for t in attrs.get("titles") or [] if isinstance(t, dict)]
-    title = _first_title(titles, None) or next((str(t["title"]) for t in titles if t.get("title")), None)
+    main_title = _first_title(titles, None) or next((str(t["title"]) for t in titles if t.get("title")), None)
     subtitles = [str(t["title"]) for t in titles if t.get("titleType") == "Subtitle" and t.get("title")]
+    title = full_title(main_title, subtitles)
     alternatives = [str(t["title"]) for t in titles
                     if t.get("titleType") in ("AlternativeTitle", "TranslatedTitle") and t.get("title")]
     authors, families = [], []
@@ -100,14 +101,15 @@ def parse_datacite(data: dict) -> Record:
     publisher = attrs.get("publisher")
     if isinstance(publisher, dict):
         publisher = publisher.get("name")
-    retracted = True if title and title.strip().upper().startswith(_RETRACTED_TITLE_PREFIXES) else None
+    retracted = True if main_title and main_title.strip().upper().startswith(_RETRACTED_TITLE_PREFIXES) else None
     return Record(
         source="datacite", title=title, authors=authors, year=year_from(attrs.get("publicationYear")),
         journal=container.get("title"), volume=container.get("volume"), issue=container.get("issue"),
         doi=attrs.get("doi") or (payload or {}).get("id"),
         pub_types=[str(t) for t in (types.get("resourceTypeGeneral"), types.get("resourceType")) if t],
         url=attrs.get("url"), retracted=retracted,
-        extra={"families": families, "subtitles": subtitles, "alternative_titles": alternatives,
+        extra={"families": families, "subtitles": subtitles, "main_title": main_title,
+               "alternative_titles": alternatives,
                "publisher": publisher, "license": _license(attrs.get("rightsList") or []),
                "state": attrs.get("state"), "registration_agency": "DataCite"},
     )

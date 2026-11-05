@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from .base import Record
+from .base import Record, full_title
 
 BASE = "https://api.crossref.org"
 
@@ -122,9 +122,12 @@ def parse(msg: dict) -> Record:
         if parts and parts[0] and parts[0][0]:
             year = int(parts[0][0])
             break
-    title = _first(msg.get("title"))
+    main_title = _first(msg.get("title"))
+    subtitles = _strings(msg.get("subtitle"))
+    # Crossref deposita el subtítulo aparte: el título del registro es el completo (`full_title`).
+    title = full_title(main_title, subtitles)
     updates = retraction_updates(msg)
-    retracted_by_title = bool(title and str(title).strip().upper().startswith(_RETRACTED_TITLE_PREFIXES))
+    retracted_by_title = bool(main_title and str(main_title).strip().upper().startswith(_RETRACTED_TITLE_PREFIXES))
     pub_types = [t for t in [msg.get("type")] if t]
     return Record(
         source="crossref", title=title, authors=authors, year=year,
@@ -134,7 +137,7 @@ def parse(msg: dict) -> Record:
         retracted=True if (updates or retracted_by_title) else None,
         extra={"publisher": msg.get("publisher"), "update_to": _entries(msg.get("update-to")),
                "updated_by": _entries(msg.get("updated-by")), "retraction_updates": updates,
-               "families": families, "subtitles": _strings(msg.get("subtitle")),
+               "families": families, "subtitles": subtitles, "main_title": main_title,
                # revistas bilingües: los demás títulos del registro y el título original de una traducción
                "alternative_titles": _strings(msg.get("title"))[1:] + _strings(msg.get("original-title")),
                "container_titles": _strings(msg.get("container-title")),

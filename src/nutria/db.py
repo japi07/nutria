@@ -428,16 +428,18 @@ def _row_mismatch(row: sqlite3.Row, found_by: str, fields: dict, record: dict, y
     """Motivos por los que `row`, encontrada por el identificador `found_by`, no es el trabajo verificado: título
     distinto (ninguna variante verificada, ni la traducción de PubMed "[...]" con el mismo primer autor y año) o, con
     `years`, años incompatibles. Vacío si es el mismo trabajo."""
-    from .verify.citations import titles_same_work, translation_of
+    from .verify.citations import is_main_title_of, titles_same_work, translation_of
     extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
-    titles = [t for t in [fields.get("title"), *(extra.get("title_variants") or [])] if t]
+    # «main_title»: el título sin el subtítulo que Crossref o DataCite depositan aparte, con que se guardaban las filas
+    # antes de unirlos (`sources.base.full_title`); una fila así sigue siendo el mismo trabajo.
+    titles = [t for t in [fields.get("title"), extra.get("main_title"), *(extra.get("title_variants") or [])] if t]
     problems = []
     if not row["title"]:
         if _primary_field(row) != found_by:
             problems.append(f"{row['id']} no tiene título con el que comparar")
     elif not titles:
         problems.append("el registro verificado no trae título con el que comparar")
-    elif not any(titles_same_work(t, row["title"]) for t in titles):
+    elif not any(titles_same_work(t, row["title"]) or is_main_title_of(row["title"], t) for t in titles):
         row_first = next(iter(_authors_of(row["authors"])), None)
         rec_first = next(iter(_authors_of(fields.get("authors"))), None)
         rec_title = fields.get("title")
@@ -461,7 +463,7 @@ def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict,
     OpenAlex, el de PubMed, que puede ir traducido) y los años son compatibles. Una fila sin título solo se acepta
     si se llama por el identificador que coincide (doi:<DOI> o pmid:<PMID>). Devuelve (fila que se conserva, fila
     que se elimina) o lanza RegistryError sin tocar nada."""
-    from .verify.citations import titles_same_work
+    from .verify.citations import is_main_title_of, titles_same_work
     via = record.get("verified_via")
     problems = []
     if by_doi["pmid"] and by_doi["pmid"] != fields["pmid"]:
@@ -469,14 +471,16 @@ def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict,
     if by_pmid["doi"] and by_pmid["doi"] != fields["doi"]:
         problems.append(f"{by_pmid['id']} tiene el DOI {by_pmid['doi']}")
     extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
-    titles = [t for t in [fields.get("title"), *(extra.get("title_variants") or [])] if t]
+    # «main_title»: el título sin el subtítulo que Crossref o DataCite depositan aparte, con que se guardaban las filas
+    # antes de unirlos (`sources.base.full_title`); una fila así sigue siendo el mismo trabajo.
+    titles = [t for t in [fields.get("title"), extra.get("main_title"), *(extra.get("title_variants") or [])] if t]
     for row, own_id in ((by_doi, f"doi:{fields['doi']}"), (by_pmid, f"pmid:{fields['pmid']}")):
         if not row["title"]:
             if row["id"] != own_id:
                 problems.append(f"{row['id']} no tiene título con el que comparar y no se llama {own_id}")
         elif not titles:
             problems.append("el registro verificado no trae título con el que comparar")
-        elif not any(titles_same_work(t, row["title"]) for t in titles):
+        elif not any(titles_same_work(t, row["title"]) or is_main_title_of(row["title"], t) for t in titles):
             problems.append(f"el título de {row['id']} («{row['title'][:90]}») no es el del trabajo verificado")
     years = [y for y in (fields.get("year"), by_doi["year"], by_pmid["year"]) if y]
     if years and max(years) - min(years) > 1:

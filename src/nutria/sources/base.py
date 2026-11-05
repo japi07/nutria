@@ -54,6 +54,24 @@ def normalize_doi(doi: str | None) -> str | None:
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
+def _plain_words(text: str) -> str:
+    return " ".join(re.findall(r"[^\W_]+", html.unescape(_TAG_RE.sub("", text or "")).lower()))
+
+
+def full_title(title: str | None, subtitles: list[str] | None) -> str | None:
+    """Título completo «Título: subtítulo» de un registro que deposita el subtítulo aparte (Crossref, DataCite): es
+    el que se guarda, se muestra en `nutria fuente ver` y la cita debe traer entero. Con varios subtítulos se usa el
+    primero; si el título ya lo contiene, se deja como está."""
+    if not title or not subtitles:
+        return title
+    sub = str(subtitles[0] or "").strip()
+    if not sub or _plain_words(sub) in _plain_words(title):
+        return title
+    head = str(title).rstrip()
+    sep = "" if head.endswith((":", "?", "!", ".", "—", "–")) else ":"
+    return f"{head}{sep} {sub}"
+
+
 def clean_text(value: str | None) -> str | None:
     if value is None:
         return None
