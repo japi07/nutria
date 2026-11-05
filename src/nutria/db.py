@@ -111,13 +111,6 @@ CREATE TABLE IF NOT EXISTS decisions (
   ts TEXT NOT NULL, entity_id TEXT, decision TEXT NOT NULL, rationale TEXT NOT NULL,
   decided_by TEXT, human_signoff TEXT
 );
-
-CREATE TABLE IF NOT EXISTS report_reviews (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report TEXT NOT NULL, sha256 TEXT NOT NULL, reviewer TEXT NOT NULL, reviewed_at TEXT NOT NULL,
-  status TEXT, note TEXT, entity_id TEXT, recorded_by TEXT
-);
-CREATE INDEX IF NOT EXISTS ix_report_reviews_sha256 ON report_reviews(sha256);
 """
 
 # Columnas añadidas después de la versión 1 del esquema (migración aditiva).
@@ -681,14 +674,36 @@ def add_decision(conn: sqlite3.Connection, entity_id: str | None, decision: str,
 
 
 # ---------------------------------------------------------------------------- revisiones humanas de informes
+# Tabla propia, creada al registrar la primera revisión (los registros anteriores no la tienen). Solo admite
+# inserciones: una revisión no se cambia ni se borra; si el informe cambia, se registra otra.
+_REPORT_REVIEWS_DDL = (
+    "CREATE TABLE IF NOT EXISTS report_reviews ("
+    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " report TEXT NOT NULL, sha256 TEXT NOT NULL, reviewer TEXT NOT NULL, reviewed_at TEXT NOT NULL,"
+    " status TEXT, note TEXT, entity_id TEXT, recorded_by TEXT)",
+    "CREATE INDEX IF NOT EXISTS ix_report_reviews_sha256 ON report_reviews(sha256)",
+    "CREATE TRIGGER IF NOT EXISTS report_reviews_no_update BEFORE UPDATE ON report_reviews BEGIN "
+    "SELECT RAISE(ABORT, 'Las revisiones humanas de informes no se modifican: registra una nueva'); END",
+    "CREATE TRIGGER IF NOT EXISTS report_reviews_no_delete BEFORE DELETE ON report_reviews BEGIN "
+    "SELECT RAISE(ABORT, 'Las revisiones humanas de informes no se borran'); END",
+)
+
+
+def _ensure_report_reviews(conn: sqlite3.Connection) -> None:
+    for statement in _REPORT_REVIEWS_DDL:
+        conn.execute(statement)
+
+
 def add_report_review(conn: sqlite3.Connection, report: str, digest: str, reviewer: str, status: str | None = None,
                       note: str | None = None, entity_id: str | None = None, actor: str | None = None) -> int:
     """Registra que una persona revisó el contenido exacto de un informe (huella `digest`, ver
-    `nutria.reports.check.review_digest`). La firma la pone la persona con `nutria informe revisar`."""
+    `nutria.reports.check.review_digest`). La firma la pone la persona con `nutria informe revisar`; es una
+    atestación sin autenticar (un proceso del mismo usuario podría llamar a esta función)."""
     if not reviewer or not reviewer.strip():
         raise RegistryError("La revisión humana exige el nombre de la persona que revisó el informe")
-    if not digest or len(digest) != 64:
+    if not digest or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise RegistryError("Huella del informe no válida")
+    _ensure_report_reviews(conn)
     with transaction(conn):
         cur = conn.execute(
             "INSERT INTO report_reviews (report, sha256, reviewer, reviewed_at, status, note, entity_id, recorded_by) "

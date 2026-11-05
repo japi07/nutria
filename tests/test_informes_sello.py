@@ -213,6 +213,19 @@ def test_review_command_rejects_agents_missing_signature_and_errors(project, mon
     assert db.report_reviews(_conn()) == []
 
 
+def test_reviews_are_insert_only(project):
+    path = _final_report(project)
+    conn = _conn()
+    assert [r["reviewer"] for r in db.report_reviews(conn, report="research/informes/O-0001.md")] == ["Ana Pérez"]
+    for sql in ("UPDATE report_reviews SET reviewer = 'Otra'", "DELETE FROM report_reviews"):
+        with pytest.raises(Exception, match="no se (modifican|borran)"):
+            conn.execute(sql)
+    with pytest.raises(db.RegistryError):
+        db.add_report_review(conn, "x.md", "no-es-una-huella", "Ana")
+    assert path.is_file()
+    conn.close()
+
+
 def test_review_command_rejects_abbreviated_signature_option(project, capsys):
     # La orden no acepta abreviaturas (--firma, --firma-h): el hook de Bash solo reconoce la opción completa.
     path = _filled_report(project)
@@ -790,6 +803,10 @@ def test_section_14_gate_states_must_match_the_registry(project):
     assert any("O-0099 del front matter no está en el registro" in e for e in _errors(unknown, conn=_conn(), path=path))
     missing = re.sub(r"(?m)^oportunidad: .*\n", "", final)
     assert any("no declara la oportunidad" in e for e in _errors(missing, conn=_conn(), path=path))
+    other_route = re.sub(r"(?m)^Ruta regulatoria preliminar del registro: .*$",
+                         "Ruta regulatoria preliminar: `aditivo_zootecnico` [SUP].", final)
+    assert any("no recoge la ruta regulatoria que el registro tiene para O-0001 («indeterminada»)" in e
+               for e in _errors(other_route, conn=_conn(), path=path))
 
 
 def test_project_rubric_gates_are_used_everywhere(project, online):

@@ -1150,7 +1150,8 @@ def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[st
 
 
 def _gate_registry_issues(conn, doc: _Doc, lines: list[tuple[int, str]], gate_ids, sev: str) -> list[Issue]:
-    """La sección 14 no puede declarar para una compuerta un estado distinto del efectivo en el registro."""
+    """La sección 14 no puede declarar para una compuerta un estado distinto del efectivo en el registro, y debe
+    recoger la ruta regulatoria que el registro tiene para la oportunidad del front matter."""
     fields, _ = _fm_fields(doc)
     opp_id = next((v for _, v, p in fields.get("oportunidad", []) if v and not p), None)
     if not opp_id:
@@ -1159,13 +1160,19 @@ def _gate_registry_issues(conn, doc: _Doc, lines: list[tuple[int, str]], gate_id
                       (doc.fm_start + 1) if doc.fm_start is not None else None)]
     from .. import db
     try:
-        if db.get_opportunity(conn, opp_id) is None:
+        opp = db.get_opportunity(conn, opp_id)
+        if opp is None:
             return [Issue(sev, f"La oportunidad {opp_id} del front matter no está en el registro: no se puede contrastar "
                                "el estado de las compuertas de la sección 14")]
         effective = db.effective_gates(conn, opp_id, list(gate_ids))
     except (sqlite3.Error, db.RegistryError) as exc:
         return [Issue(sev, f"No se pudo leer el estado de las compuertas de {opp_id} en el registro ({exc})")]
     out = []
+    route = opp.get("regulatory_route")
+    if route and not re.search(rf"\b{re.escape(_plain(route))}\b", _plain("\n".join(line for _i, line in lines))):
+        out.append(Issue(sev, f"La sección 14 no recoge la ruta regulatoria que el registro tiene para {opp_id} "
+                              f"(«{route}»): actualiza la sección o la clasificación de la oportunidad",
+                         lines[0][0] if lines else None))
     for gate, stated, idx in _stated_gate_states(lines, gate_ids):
         real = effective.get(gate)
         if real and stated != real:
