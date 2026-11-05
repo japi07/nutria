@@ -282,10 +282,10 @@ def _authors_of(value: Any) -> list[str]:
     return data if isinstance(data, list) else []
 
 
-def _row_mismatch(row: sqlite3.Row, found_by: str, fields: dict, record: dict) -> list[str]:
-    """Motivos por los que `row`, encontrada solo por un identificador que la verificación asocia pero no avala
-    (`found_by`), no es el trabajo verificado: título distinto (ninguna variante verificada, ni la traducción de
-    PubMed "[...]" con el mismo primer autor y año) o años incompatibles. Vacío si es el mismo trabajo."""
+def _row_mismatch(row: sqlite3.Row, found_by: str, fields: dict, record: dict, years: bool = True) -> list[str]:
+    """Motivos por los que `row`, encontrada por el identificador `found_by`, no es el trabajo verificado: título
+    distinto (ninguna variante verificada, ni la traducción de PubMed "[...]" con el mismo primer autor y año) o, con
+    `years`, años incompatibles. Vacío si es el mismo trabajo."""
     from .verify.citations import titles_same_work, translation_of
     extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
     titles = [t for t in [fields.get("title"), *(extra.get("title_variants") or [])] if t]
@@ -307,7 +307,7 @@ def _row_mismatch(row: sqlite3.Row, found_by: str, fields: dict, record: dict) -
         if not translated:
             problems.append(f"el título de {row['id']} («{row['title'][:90]}») no es el del trabajo verificado "
                             f"(«{str(rec_title or '')[:90]}»)")
-    if fields.get("year") and row["year"] and abs(int(fields["year"]) - int(row["year"])) > 1:
+    if years and fields.get("year") and row["year"] and abs(int(fields["year"]) - int(row["year"])) > 1:
         problems.append(f"años incompatibles ({row['year']} en {row['id']}, {fields['year']} verificado)")
     return problems
 
@@ -525,6 +525,8 @@ def upsert_source(conn: sqlite3.Connection, record: dict, actor: str | None = No
       verificado, el DOI que PubMed declara para un PMID) y esa fila está verificada o se llama por él, solo se
       actualiza si es el mismo trabajo (`_row_mismatch`); si no, no se toca y el registro verificado entra aparte sin
       ese identificador (cambio `identificador_no_asociado` y decisión).
+    - Si la fila tiene el identificador que avala la verificación pero ya estaba verificada con el título de otro
+      trabajo (p. ej. con el DOI que PubMed declaró por error para un PMID), RegistryError sin cambiar nada.
 
     `changes`, si se pasa, recibe lo que se hizo (altas, rellenos, correcciones, fusiones, datos omitidos, avisos)
     para dejarlo en la procedencia.
@@ -554,20 +556,41 @@ def _upsert_source(conn: sqlite3.Connection, fields: dict, record: dict, verifie
         keep, drop = _same_work_or_error(by_doi, by_pmid, fields, record)
         _merge_duplicate_sources(conn, keep, drop, actor, record.get("verified_via"), changes)
         existing = conn.execute("SELECT * FROM sources WHERE id = ?", (keep["id"],)).fetchone()
+        merged = True
     else:
         existing = by_doi or by_pmid
+        merged = False
     not_linked = None
-    if verified and existing is not None and (by_doi is None or by_pmid is None):
-        # Una sola fila, encontrada por el identificador que la verificación asocia pero no avala (el PMID de un DOI,
-        # el DOI que PubMed declara para un PMID): si es una fila verificada o se llama por ese identificador, debe
-        # ser el mismo trabajo. Si no lo es, no se toca: el registro verificado entra aparte, sin ese identificador.
-        found_by = "doi" if by_doi is not None else "pmid"
-        if found_by != _anchor(record, fields) and (existing["verified"] or _primary_field(existing) == found_by):
-            problems = _row_mismatch(existing, found_by, fields, record)
+    if verified and existing is not None and not merged:
+        found = [k for k, row in (("doi", by_doi), ("pmid", by_pmid)) if row is not None]
+        anchor = _anchor(record, fields)
+        if anchor not in found:
+            # Una sola fila, encontrada por el identificador que la verificación asocia pero no avala (el PMID de un
+            # DOI, el DOI que PubMed declara para un PMID): si es una fila verificada o se llama por ese
+            # identificador, debe ser el mismo trabajo. Si no lo es, no se toca: el registro verificado entra aparte,
+            # sin ese identificador.
+            found_by = found[0]
+            if existing["verified"] or _primary_field(existing) == found_by:
+                problems = _row_mismatch(existing, found_by, fields, record)
+                if problems:
+                    not_linked = (found_by, fields[found_by], existing["id"], problems)
+                    fields = dict(fields, **{found_by: None})
+                    existing = None
+        elif existing["verified"]:
+            # La fila tiene el identificador que avala esta verificación, pero ya estaba verificada como otro trabajo:
+            # su identificador pudo venir asociado por otra fuente (el DOI que PubMed declara para un PMID puede ser
+            # el de otro trabajo). Ese identificador no puede quedar en dos filas ni reescribirse la fila de otro
+            # trabajo (con sus afirmaciones y extracciones): error sin cambiar nada, para revisión humana. Solo se
+            # compara el título (un año distinto en dos bases bibliográficas no basta para decir que es otro trabajo).
+            problems = _row_mismatch(existing, anchor, fields, record, years=False)
             if problems:
-                not_linked = (found_by, fields[found_by], existing["id"], problems)
-                fields = dict(fields, **{found_by: None})
-                existing = None
+                label = {"doi": "DOI", "pmid": "PMID"}[anchor]
+                raise RegistryError(
+                    f"Conflicto: {existing['id']} ya está verificada (vía {existing['verified_via'] or 'sin indicar'}) "
+                    f"como otro trabajo: {'; '.join(problems)}. Esta verificación ({record.get('verified_via')}) da "
+                    f"para el {label} {fields[anchor]} «{str(fields.get('title') or '')[:90]}» ({fields.get('year')}). "
+                    f"No se ha cambiado nada: revisa a qué trabajo corresponde el {label} {fields[anchor]} (PubMed "
+                    "puede declarar para un PMID el DOI de otro trabajo).")
     if existing is None and fields["openalex_id"]:
         # Solo una fila sin DOI ni PMID se reconoce por el identificador de OpenAlex (OpenAlex puede unir en una
         # obra dos DOI distintos, p. ej. preprint y artículo).
