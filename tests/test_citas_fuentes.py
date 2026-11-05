@@ -614,6 +614,10 @@ def test_subtitulo_y_nota_al_pie_que_distinguen_el_trabajo():
                               **rec).title_ok is False
     assert c.compare_titles(EFFECT + "1,2", EFFECT).ok and not c.compare_titles(EFFECT + " 1", EFFECT + " 2").ok
     assert c.compare_titles(SERIES + ". Experiment 1", SERIES).ok is False      # "Experiment 1" no es una nota
+    # la parte "I." de una serie cuenta; un decimal tras dos puntos no es una parte ("2.5" = "2,5")
+    assert not c.compare_titles(f"{SERIES}: I. Milk yield", f"{SERIES}: II. Milk yield").ok
+    assert c.compare_titles("Milk yield responses: 2.5 kg/d more in grazing dairy cows fed pasture",
+                            "Milk yield responses: 2,5 kg/d more in grazing dairy cows fed pasture").ok
 
 
 def test_subtitulo_de_crossref_que_distingue_el_trabajo_no_se_puede_omitir(net):
