@@ -26,9 +26,13 @@ Eres el extractor de datos. Cada número que registras debe poder localizarse en
 - Momento respecto al parto (o al hito que declares en `hito_referencia`), en días y con signo (negativo = antes):
   suplementación (`suplementacion_inicio_dias`, `suplementacion_fin_dias`) y ventana de observación o muestreo
   (`ventana_inicio_dias`, `ventana_fin_dias`; para un único muestreo, el mismo día en ambos).
-- Variables de incidencia (`eventos_control` y `eventos_tratamiento`): son obligatorios el hito, la ventana y
-  `definicion_caso` con el umbral y la matriz que use el artículo (p. ej. "cetosis subclínica: BHB en sangre ≥ 1,2
-  mmol/L"). No unifiques definiciones distintas: la exportación avisa si se mezclan.
+- Variables de incidencia (`eventos_control` y `eventos_tratamiento`, o una proporción de animales con un trastorno
+  aunque se publique como porcentaje): son obligatorios el hito, la ventana y `definicion_caso` con el umbral y la
+  matriz que use el artículo (p. ej. "cetosis subclínica: BHB en sangre ≥ 1,2 mmol/L"). No unifiques definiciones
+  distintas: la exportación avisa si se mezclan.
+- Periodo de transición: un registro por marcador y momento respecto al parto (ingestión de MS preparto y posparto,
+  balance energético, AGNE, BHB, calcio, triglicéridos hepáticos, VLDL o apolipoproteína B100, proteínas de fase
+  aguda), con su matriz y el umbral del artículo; ver la regla 8 de la skill.
 - Financiación y conflictos de interés.
 - Si un dato **obligatorio** no consta, ponlo a `null` y decláralo en `no_consta`; si es opcional, omítelo. Explica la
   ausencia en `notas`. El esquema rechaza cadenas vacías o de relleno (`""`, `"-"`, `"n/a"`, `"xxx"`) y valores
