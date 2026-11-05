@@ -3,18 +3,21 @@
 Comprueba lo que un LLM suele fallar:
 
 1. Que el identificador existe. Un DOI se busca en Crossref y OpenAlex y, si ninguno lo conoce, en el registro
-   de DOI (doi.org: API de handles y agencia de registro) y, si es de DataCite, en su API. Solo se declara
-   inexistente si doi.org no lo tiene registrado. Un DOI registrado del que ninguna fuente da metadatos
-   comparables (p. ej. de mEDRA o JaLC) queda PENDIENTE (`existe_sin_metadatos`), nunca verificado. Un PMID se
-   busca en PubMed.
-2. Que corresponde al trabajo citado (`compare_citation`). Es una heurística, no una garantía:
+   de DOI (doi.org: API de handles y agencia de registro) y, si es de DataCite, en su API; un DOI de otra agencia
+   también puede tener metadatos en PubMed. Solo se declara inexistente si doi.org no lo tiene registrado. Un DOI
+   registrado del que ninguna fuente da metadatos comparables (p. ej. de mEDRA o JaLC fuera de PubMed) queda
+   PENDIENTE (`existe_sin_metadatos`), nunca verificado. Un PMID se busca en PubMed.
+2. Que corresponde al trabajo citado (`compare_citation`). Es una heurística, no una garantía; la cita se lee
+   como [autores] [año] [título] [revista, volumen, páginas] en cualquiera de los estilos habituales:
    - primer autor: el primer nombre de la cita debe ser el PRIMER autor del registro, no uno cualquiera;
    - año: el de la cita (sin contar identificadores, volumen, páginas, fechas de consulta ni el propio
      título) debe estar a ±1 año del real;
    - título: si la cita lo trae, se compara de forma simétrica (palabras significativas normalizadas en los
-     dos sentidos; ver `TITLE_MIN`), sin admitir sustituciones de palabras;
-   - revista: si la cita la trae, debe ser la del registro, con tolerancia a abreviaturas ISO 4
-     ("J Dairy Sci" = "Journal of Dairy Science").
+     dos sentidos; ver `TITLE_MIN`), sin admitir sustituciones de palabras; y no puede haber delante texto que no
+     sea de los autores del registro ni el año (un título inventado delante del real);
+   - revista: si la cita la trae, el primer tramo con contenido tras el título (o tras los autores, si no hay
+     título) debe ser la revista del registro, con tolerancia a abreviaturas ISO 4 ("J Dairy Sci" = "Journal
+     of Dairy Science"); no se compara en libros, capítulos, actas ni conjuntos de datos.
 3. Que el trabajo no está retractado, con una cadena de comprobación (Crossref, OpenAlex, PubMed). Si ninguna
    fuente permite saberlo, la retractación queda como DESCONOCIDA y la verificación no es válida.
 

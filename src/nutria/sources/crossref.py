@@ -7,10 +7,11 @@ mayúsculas), o si el título lo declara. Si no hay información, `retracted` qu
 nunca en False: que Crossref no traiga aviso no demuestra que el trabajo no esté retractado.
 
 Licencia: el campo `license` de Crossref es una lista de URL con su `content-version` (`vor`, versión publicada;
-`am`, manuscrito aceptado; `tdm`, minería de textos; `unspecified`). `extra["license"]` guarda la de la versión
-publicada si existe (si no, la del manuscrito aceptado, la no especificada y, por último, la de minería de
-textos) y `extra["licenses"]` todas. Para comprobar la cita, `extra` guarda además los apellidos de los autores
-(`families`), los subtítulos y los títulos de la revista (completos y abreviados).
+`am`, manuscrito aceptado; `tdm`, minería de textos; `unspecified`) y su `delay-in-days` (embargo). `extra["license"]`
+guarda la de la versión publicada si existe (si no, la del manuscrito aceptado y la no especificada); una licencia
+solo de minería de textos (`tdm`) no es la del artículo y no se toma como tal. `extra["licenses"]` guarda todas.
+Para comprobar la cita, `extra` guarda además los apellidos de los autores (`families`), los subtítulos y los
+títulos de la revista (completos y abreviados).
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ def retraction_updates(msg: dict) -> list[dict]:
     return found
 
 
-_LICENSE_PREFERENCE = ("vor", "am", "unspecified", "tdm")
+_LICENSE_PREFERENCE = ("vor", "am", "unspecified")
 
 
 def _strings(value) -> list[str]:
@@ -77,13 +78,14 @@ def licenses(msg: dict) -> list[dict]:
 
 
 def best_license(msg: dict) -> str | None:
-    """URL de la licencia de la versión publicada (o la mejor disponible según `_LICENSE_PREFERENCE`)."""
+    """URL de la licencia de la versión publicada (o la mejor disponible según `_LICENSE_PREFERENCE`); None si solo
+    hay licencias de minería de textos o ninguna."""
     found = licenses(msg)
     for version in _LICENSE_PREFERENCE:
         for entry in found:
             if entry["version"].lower() == version:
                 return entry["url"]
-    return found[0]["url"] if found else None
+    return None
 
 
 def parse(msg: dict) -> Record:

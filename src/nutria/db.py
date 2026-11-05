@@ -261,21 +261,29 @@ def _trusted_retraction(row: sqlite3.Row) -> int | None:
     return value if (value == 1 or row["verified"]) else None
 
 
-def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict, via: str | None):
+def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict, record: dict):
     """Antes de fusionar dos filas (una con el DOI y otra con el PMID de un registro VERIFICADO) comprueba que son
-    el mismo trabajo: identificadores sin conflicto, títulos del mismo trabajo y años compatibles. Devuelve
-    (fila que se conserva, fila que se elimina) o lanza RegistryError sin tocar nada."""
+    el mismo trabajo: la verificación relaciona ese DOI con ese PMID (`fields`), ninguna fila tiene otro DOI u otro
+    PMID, el título de cada fila es el del trabajo verificado (o alguna de sus variantes: el de Crossref, el de
+    OpenAlex, el de PubMed, que puede ir traducido) y los años son compatibles. Una fila sin título solo se acepta
+    si se llama por el identificador que coincide (doi:<DOI> o pmid:<PMID>). Devuelve (fila que se conserva, fila
+    que se elimina) o lanza RegistryError sin tocar nada."""
     from .verify.citations import titles_same_work
+    via = record.get("verified_via")
     problems = []
     if by_doi["pmid"] and by_doi["pmid"] != fields["pmid"]:
         problems.append(f"{by_doi['id']} tiene el PMID {by_doi['pmid']}")
     if by_pmid["doi"] and by_pmid["doi"] != fields["doi"]:
         problems.append(f"{by_pmid['id']} tiene el DOI {by_pmid['doi']}")
-    title = fields.get("title")
-    for row in (by_doi, by_pmid):
-        if not title or not row["title"]:
-            problems.append(f"no hay título con el que comparar {row['id']}")
-        elif not titles_same_work(title, row["title"]):
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    titles = [t for t in [fields.get("title"), *(extra.get("title_variants") or [])] if t]
+    for row, own_id in ((by_doi, f"doi:{fields['doi']}"), (by_pmid, f"pmid:{fields['pmid']}")):
+        if not row["title"]:
+            if row["id"] != own_id:
+                problems.append(f"{row['id']} no tiene título con el que comparar y no se llama {own_id}")
+        elif not titles:
+            problems.append("el registro verificado no trae título con el que comparar")
+        elif not any(titles_same_work(t, row["title"]) for t in titles):
             problems.append(f"el título de {row['id']} («{row['title'][:90]}») no es el del trabajo verificado")
     years = [y for y in (fields.get("year"), by_doi["year"], by_pmid["year"]) if y]
     if years and max(years) - min(years) > 1:
@@ -285,6 +293,8 @@ def _same_work_or_error(by_doi: sqlite3.Row, by_pmid: sqlite3.Row, fields: dict,
             f"No se fusionan {by_doi['id']} y {by_pmid['id']}: la verificación ({via or 'sin indicar'}) dice que el "
             f"DOI {fields['doi']} y el PMID {fields['pmid']} son el mismo trabajo, pero " + "; ".join(problems)
             + ". No se ha cambiado ni borrado nada: revisa las dos fuentes.")
+    # Se conserva la fila verificada (sus identificadores pueden estar citados fuera del registro); entre dos
+    # iguales, la que se llama por el DOI.
     if by_pmid["verified"] and not by_doi["verified"]:
         return by_pmid, by_doi
     return by_doi, by_pmid
@@ -314,7 +324,18 @@ def _merge_duplicate_sources(conn: sqlite3.Connection, keep: sqlite3.Row, drop: 
     changes.append({"id": keep_id, "accion": "fusion", "eliminada": drop_id})
 
 
-def _apply_unverified(conn: sqlite3.Connection, existing: sqlite3.Row, fields: dict, changes: list) -> str:
+def _retraction_warning(sid: str, record: dict, current: int | None, changes: list) -> None:
+    """Unos datos sin verificar que dicen "retractado" no cambian el registro, pero no se callan: se avisa (y queda
+    en la procedencia) para que una verificación lo compruebe."""
+    if record.get("retracted") is True and current != 1:
+        changes.append({"id": sid, "accion": "aviso_retractacion", "motivo": (
+            "los datos sin verificar indican que el trabajo está RETRACTADO; solo una verificación cambia la "
+            "retractación del registro: comprueba con `nutria fuente agregar --doi/--pmid` o "
+            "`nutria verificar --pendientes`")})
+
+
+def _apply_unverified(conn: sqlite3.Connection, existing: sqlite3.Row, fields: dict, record: dict,
+                      changes: list) -> str:
     """Datos sin verificar (p. ej. `buscar --registrar`) sobre una fuente ya registrada: nunca cambian la
     retractación, los identificadores ni (si está verificada) sus campos protegidos; solo rellenan campos vacíos,
     y solo si el trabajo coincide (mismos identificadores y título del mismo trabajo)."""
@@ -328,6 +349,7 @@ def _apply_unverified(conn: sqlite3.Connection, existing: sqlite3.Row, fields: d
         changes.append({"id": sid, "accion": "omitido", "motivo": "datos sin verificar que no coinciden con la "
                         "fuente registrada: " + "; ".join(conflicts)})
         return sid
+    _retraction_warning(sid, record, existing["retracted"], changes)
     allowed = _NONCRITICAL_FIELDS if existing["verified"] else _NONCRITICAL_FIELDS + ("title", "authors", "year",
                                                                                         "journal")
     updates = {k: fields[k] for k in allowed if fields.get(k) is not None and _empty(existing[k])}
@@ -423,6 +445,8 @@ def _insert_source(conn: sqlite3.Connection, fields: dict, record: dict, verifie
     conn.execute(f"INSERT INTO sources ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                  list(row.values()))
     changes.append({"id": sid, "accion": "alta", "verificada": verified})
+    if not verified:
+        _retraction_warning(sid, record, None, changes)
     return sid
 
 
@@ -434,43 +458,54 @@ def upsert_source(conn: sqlite3.Connection, record: dict, actor: str | None = No
       cambian la retractación (tampoco de desconocida a 0) ni los identificadores, ni los campos protegidos de una
       fuente verificada (doi, pmid, pmcid, openalex_id, título, autores, año y revista); solo rellenan campos
       vacíos no críticos, y nada si el trabajo no coincide. Una fuente nueva sin verificar entra con la
-      retractación desconocida.
+      retractación desconocida. Si los datos dicen "retractado", se avisa (`aviso_retractacion`) sin cambiar nada.
     - Una verificación fija los campos protegidos y la retractación; una retractación conocida nunca se borra.
     - Si el DOI y el PMID de un registro verificado están en dos filas distintas, se fusionan solo si son el mismo
       trabajo (`_same_work_or_error`); si no, o si los datos no están verificados, RegistryError sin cambiar nada.
 
-    `changes`, si se pasa, recibe lo que se hizo (altas, rellenos, correcciones, fusiones, datos omitidos) para
-    dejarlo en la procedencia.
+    `changes`, si se pasa, recibe lo que se hizo (altas, rellenos, correcciones, fusiones, datos omitidos, avisos)
+    para dejarlo en la procedencia.
     """
-    changes = changes if changes is not None else []
     fields = _source_fields(record)
     verified = bool(record.get("verified"))
-    doi, pmid = fields["doi"], fields["pmid"]
+    done: list[dict] = []          # solo pasa a `changes` si la transacción se confirma
     with transaction(conn):
-        by_doi = conn.execute("SELECT * FROM sources WHERE doi = ?", (doi,)).fetchone() if doi else None
-        by_pmid = conn.execute("SELECT * FROM sources WHERE pmid = ?", (pmid,)).fetchone() if pmid else None
-        if by_doi is not None and by_pmid is not None and by_doi["id"] != by_pmid["id"]:
-            if not verified:
-                raise RegistryError(
-                    f"Conflicto: el DOI {doi} está registrado en {by_doi['id']} y el PMID {pmid} en {by_pmid['id']}. "
-                    "Unos datos sin verificar no bastan para fusionarlas (pueden ser trabajos distintos): no se ha "
-                    "cambiado nada. Si son el mismo trabajo, la verificación (`nutria fuente agregar --doi ...`) las "
-                    "fusionará.")
-            keep, drop = _same_work_or_error(by_doi, by_pmid, fields, record.get("verified_via"))
-            _merge_duplicate_sources(conn, keep, drop, actor, record.get("verified_via"), changes)
-            existing = conn.execute("SELECT * FROM sources WHERE id = ?", (keep["id"],)).fetchone()
-        else:
-            existing = by_doi or by_pmid
-        if existing is None and fields["openalex_id"]:
-            existing = conn.execute("SELECT * FROM sources WHERE openalex_id = ? OR id = ? LIMIT 1",
-                                    (fields["openalex_id"], f"openalex:{fields['openalex_id']}")).fetchone()
-        if existing is not None:
-            if not verified:
-                return _apply_unverified(conn, existing, fields, changes)
-            sid = _apply_verified(conn, existing, fields, record, actor, changes)
-            if sid is not None:
-                return sid
-        return _insert_source(conn, fields, record, verified, actor, changes)
+        source_id = _upsert_source(conn, fields, record, verified, actor, done)
+    if changes is not None:
+        changes.extend(done)
+    return source_id
+
+
+def _upsert_source(conn: sqlite3.Connection, fields: dict, record: dict, verified: bool, actor: str | None,
+                   changes: list) -> str:
+    doi, pmid = fields["doi"], fields["pmid"]
+    by_doi = conn.execute("SELECT * FROM sources WHERE doi = ?", (doi,)).fetchone() if doi else None
+    by_pmid = conn.execute("SELECT * FROM sources WHERE pmid = ?", (pmid,)).fetchone() if pmid else None
+    if by_doi is not None and by_pmid is not None and by_doi["id"] != by_pmid["id"]:
+        if not verified:
+            raise RegistryError(
+                f"Conflicto: el DOI {doi} está registrado en {by_doi['id']} y el PMID {pmid} en {by_pmid['id']}. "
+                "Unos datos sin verificar no bastan para fusionarlas (pueden ser trabajos distintos): no se ha "
+                "cambiado nada. Si son el mismo trabajo, la verificación (`nutria fuente agregar --doi ...`) las "
+                "fusionará.")
+        keep, drop = _same_work_or_error(by_doi, by_pmid, fields, record)
+        _merge_duplicate_sources(conn, keep, drop, actor, record.get("verified_via"), changes)
+        existing = conn.execute("SELECT * FROM sources WHERE id = ?", (keep["id"],)).fetchone()
+    else:
+        existing = by_doi or by_pmid
+    if existing is None and fields["openalex_id"]:
+        # Solo una fila sin DOI ni PMID se reconoce por el identificador de OpenAlex (OpenAlex puede unir en una
+        # obra dos DOI distintos, p. ej. preprint y artículo).
+        existing = conn.execute(
+            "SELECT * FROM sources WHERE id = ? OR (openalex_id = ? AND doi IS NULL AND pmid IS NULL) LIMIT 1",
+            (f"openalex:{fields['openalex_id']}", fields["openalex_id"])).fetchone()
+    if existing is not None:
+        if not verified:
+            return _apply_unverified(conn, existing, fields, record, changes)
+        sid = _apply_verified(conn, existing, fields, record, actor, changes)
+        if sid is not None:
+            return sid
+    return _insert_source(conn, fields, record, verified, actor, changes)
 
 
 def get_source(conn: sqlite3.Connection, source_id: str) -> dict | None:

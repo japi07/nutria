@@ -216,7 +216,7 @@ def cmd_buscar(args, cfg) -> int:
                    "`nutria verificar --pendientes`)"
                    + (f"; {len(registered) - new} ya estaban en el registro" if len(registered) > new else ""))
     if changes and _change_lines(changes):
-        header += "\nCambios en fuentes ya registradas:\n" + "\n".join(_change_lines(changes))
+        header += "\nCambios y avisos del registro de fuentes:\n" + "\n".join(_change_lines(changes))
     _emit(args, {"total": res.get("count"), "registros": [r.to_dict() for r in records], "registradas": registered,
                  "cambios": [c for c in changes if c.get("accion") != "alta"], "conflictos": conflicts},
           header + "\n" + _records_text(records))
@@ -244,7 +244,7 @@ def _license_label(value) -> str:
 
 
 def _change_lines(changes: list[dict]) -> list[str]:
-    """Texto de los cambios del registro de fuentes que no son un alta (rellenos, correcciones, fusiones...)."""
+    """Texto de los cambios del registro de fuentes que no son un alta (rellenos, correcciones, fusiones, avisos)."""
     lines = []
     for change in changes:
         action = change.get("accion")
@@ -365,7 +365,9 @@ def cmd_verificar(args, cfg) -> int:
         for r in rows:
             if registry.get_source(conn, r["id"]) is None:   # fusionada con otra en esta misma pasada
                 continue
-            res = verify_doi(client, r["doi"]) if r.get("doi") else (verify_pmid(client, r["pmid"]) if r.get("pmid") else None)
+            # Se verifica por el identificador que da nombre a la fuente (pmid:... por su PMID).
+            by_pmid = r.get("pmid") and (r["id"].startswith("pmid:") or not r.get("doi"))
+            res = verify_pmid(client, r["pmid"]) if by_pmid else (verify_doi(client, r["doi"]) if r.get("doi") else None)
             if res is None:
                 out.append({"id": r["id"], "estado": "sin_identificador", "retractado": None,
                             "detalle": "sin DOI ni PMID: no se puede verificar"})

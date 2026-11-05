@@ -4,22 +4,22 @@ Crossref solo tiene los DOI de sus miembros, y OpenAlex no indexa todos los de o
 DOI por inexistente hay que preguntar al registro de DOI:
 
 - `handle_exists`: API de handles del proxy de doi.org (`https://doi.org/api/handles/<doi>`). `responseCode` 1
-  significa registrado; 100 (con HTTP 404), que el DOI no existe. Es la única fuente que permite afirmar que un
-  DOI no existe.
+  significa registrado (200: registrado, pero sin valores); 100 (con HTTP 404), que el DOI no existe. Es la
+  única fuente que permite afirmar que un DOI no existe.
 - `registration_agency`: agencia que registró el DOI (`https://doi.org/doiRA/<doi>`): Crossref, DataCite, mEDRA,
   JaLC, KISTI, CNKI, Airiti, ISTIC, OP (Oficina de Publicaciones de la UE), EIDR...
 - `datacite_work`: metadatos de un DOI de DataCite (`https://api.datacite.org/dois/<doi>`) como `Record`.
 
 DataCite no publica retractaciones: su registro deja la retractación como desconocida (None), salvo que el
-título la declare ("RETRACTED"/"WITHDRAWN"). Los DOI de otras agencias (mEDRA, JaLC...) no tienen aquí un cliente
-de metadatos: su verificación queda pendiente.
+título la declare ("RETRACTED"/"WITHDRAWN"). Los DOI de otras agencias (mEDRA, JaLC, OP...) no tienen aquí un
+cliente de metadatos: la verificación busca el DOI en PubMed y, si tampoco está, queda pendiente.
 """
 
 from __future__ import annotations
 
 from urllib.parse import quote
 
-from ..http import NetworkError
+from ..http import NetworkError, NotFoundError
 from .base import Record, normalize_doi, year_from
 
 HANDLES = "https://doi.org/api/handles"
@@ -36,13 +36,12 @@ def _path(doi: str) -> str:
 
 def handle_exists(client, doi: str) -> bool:
     """True si el DOI está registrado en doi.org; False si no existe. Lanza `NetworkError` si no se puede saber."""
-    from ..http import NotFoundError
     try:
         data = client.get_json(f"{HANDLES}/{_path(doi)}")
     except NotFoundError:
         return False
     code = data.get("responseCode") if isinstance(data, dict) else None
-    if code == 1:
+    if code in (1, 200):
         return True
     if code == 100:
         return False
