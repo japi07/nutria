@@ -1178,3 +1178,20 @@ def test_resumen_de_fuentes_senala_los_supuestos_que_dominan_el_resultado(tmp_pa
     assert "no se apoyan en datos" in text and "no trae valores de referencia de coste ni de plazo" in text
     assert main(["--json", "econ", "ganadero", str(FARM_EXAMPLE), "--sim", "200"]) == 0
     assert json.loads(capsys.readouterr().out)["resumen_fuentes"]["entradas"] == 13
+
+
+# ============================================================================ D8-1: una rúbrica propia no quita compuertas
+def test_rubrica_propia_no_puede_quitar_compuertas_ni_usar_pesos_negativos(tmp_path, project, capsys):
+    text = (ROOT / "src" / "nutria" / "data" / "rubrica.toml").read_text("utf-8")
+    start = text.index('[[compuerta]]\nid = "seguridad"')
+    without_safety = text[:start] + text[text.index("[[compuerta]]", start + 1):]
+    with pytest.raises(ValueError, match="faltan las compuertas obligatorias seguridad"):
+        load_rubric(_write(tmp_path, "sin_seguridad.toml", without_safety))
+    # En un proyecto, config/rubrica.toml sin la compuerta de seguridad hace fallar el ranking (no la ignora).
+    (project / "config").mkdir(exist_ok=True)
+    (project / "config" / "rubrica.toml").write_text(without_safety, "utf-8")
+    assert main(["--agente", "director-cientifico", "puntuar", "ranking", "--sim", "50"]) == 2
+    assert "compuertas obligatorias" in capsys.readouterr().err
+    negative = text.replace("pesos = { evidencia = 20,", "pesos = { evidencia = -20,", 1)
+    with pytest.raises(ValueError, match="números finitos >= 0"):
+        load_rubric(_write(tmp_path, "negativo.toml", negative)).weights("recomendado")
