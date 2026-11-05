@@ -346,6 +346,17 @@ def test_verificacion_doi_real_atribuido_a_otro_trabajo_del_mismo_tema(net):
     assert any("NO corresponde" in i.message for i in issues)
 
 
+def test_revista_bilingue_vale_cualquiera_de_los_titulos_del_registro(net):
+    spanish = "Efecto de la colina protegida sobre la producción de leche en vacas en transición"
+    net.cr[DOI] = cr_msg(DOI, title=TITLE, journal="Archivos de Zootecnia", short="Arch. Zootec.")
+    net.cr[DOI]["title"] = [spanish, TITLE]
+    net.oa[DOI] = oa_work(DOI, title=spanish, journal="Archivos de Zootecnia")
+    for title in (spanish, TITLE):
+        res = c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {title}. Arch Zootec 69:1-10.")
+        assert res.ok, res.message
+    assert not c.verify_doi(Client(), DOI, f"Pérez J. 2020. {SAME_TOPIC}. Arch Zootec 69:1-10.").ok
+
+
 def test_registro_de_openalex_nombre_de_pila_no_es_el_apellido(net):
     # Sin Crossref, los nombres de OpenAlex vienen como "Nombre Apellido": "Juan Smith" no es "Juan Pérez".
     net.oa[DOI] = oa_work(DOI)
@@ -613,6 +624,18 @@ def test_fusion_acepta_el_titulo_traducido_de_pubmed(project, net):
     net.pm["777"] = pm_rec("777", DOI, title=translated)
     assert main(["fuente", "agregar", "--doi", DOI]) == 0
     assert source("pmid:777") is None and source(f"doi:{DOI}")["pmid"] == "777"
+
+
+def test_pubmed_con_otro_titulo_solo_vale_si_coinciden_doi_autor_y_ano(net):
+    published(net)
+    net.pm_by_doi[DOI] = "888"
+    net.pm["888"] = pm_rec("888", DOI, title="[Efecto de la colina protegida en vacas]")     # traducido
+    assert c.verify_doi(Client(), DOI).record.pmid == "888"
+    net.pm["888"] = pm_rec("888", DOI, title="[Efecto de la colina protegida en vacas]", authors=("Smith K",))
+    res = c.verify_doi(Client(), DOI)
+    assert res.record.pmid is None and "pubmed" not in res.retraction_checked_via and "no se usa" in res.message
+    net.pm["888"] = pm_rec("888", None, title="Otro trabajo sin DOI en PubMed")
+    assert c.verify_doi(Client(), DOI).record.pmid is None
 
 
 def test_verificacion_no_fusiona_trabajos_distintos_ni_borra_nada(project, net):

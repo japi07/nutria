@@ -10,8 +10,9 @@ Licencia: el campo `license` de Crossref es una lista de URL con su `content-ver
 `am`, manuscrito aceptado; `tdm`, minería de textos; `unspecified`) y su `delay-in-days` (embargo). `extra["license"]`
 guarda la de la versión publicada si existe (si no, la del manuscrito aceptado y la no especificada); una licencia
 solo de minería de textos (`tdm`) no es la del artículo y no se toma como tal. `extra["licenses"]` guarda todas.
-Para comprobar la cita, `extra` guarda además los apellidos de los autores (`families`), los subtítulos y los
-títulos de la revista (completos y abreviados).
+Para comprobar la cita, `extra` guarda además los apellidos de los autores (`families`), los subtítulos, los demás
+títulos del registro y el título original (`alternative_titles`: revistas bilingües y traducciones) y los títulos de
+la revista (completos y abreviados).
 """
 
 from __future__ import annotations
@@ -116,6 +117,8 @@ def parse(msg: dict) -> Record:
         extra={"publisher": msg.get("publisher"), "update_to": _entries(msg.get("update-to")),
                "updated_by": _entries(msg.get("updated-by")), "retraction_updates": updates,
                "families": families, "subtitles": _strings(msg.get("subtitle")),
+               # revistas bilingües: los demás títulos del registro y el título original de una traducción
+               "alternative_titles": _strings(msg.get("title"))[1:] + _strings(msg.get("original-title")),
                "container_titles": _strings(msg.get("container-title")),
                "short_container_titles": _strings(msg.get("short-container-title")),
                "license": best_license(msg), "licenses": licenses(msg)},

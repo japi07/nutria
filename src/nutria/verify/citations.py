@@ -1009,14 +1009,19 @@ def _pubmed_by_doi(client, doi: str) -> Record | None:
 
 
 def _consistent(rec: Record, other: Record, doi: str) -> bool:
-    """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI, no;
-    si su título no es el del trabajo, solo cuando declara ese mismo DOI (PubMed traduce los títulos)."""
+    """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI, no.
+    Con otro título solo si es PubMed (traduce los títulos de los artículos en otros idiomas), declara ese mismo DOI
+    y coinciden el primer autor y el año (±1)."""
     norm = normalize_doi(doi)
     if other.doi and other.doi != norm:
         return False
     if not rec.title or not other.title or titles_same_work(rec.title, other.title):
         return True
-    return other.doi == norm and other.source == "pubmed"
+    if other.doi != norm or other.source != "pubmed" or not rec.year or not other.year \
+            or abs(rec.year - other.year) > 1 or not rec.authors or not other.authors:
+        return False
+    families = (rec.extra or {}).get("families") or [None]
+    return bool(_author_candidates(rec.authors[0], families[0]) & _author_candidates(other.authors[0]))
 
 
 def _copy(rec: Record) -> Record:
