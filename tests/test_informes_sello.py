@@ -276,6 +276,13 @@ def test_reviews_are_insert_only(project):
             conn.execute(sql)
     with pytest.raises(db.RegistryError):
         db.add_report_review(conn, "x.md", "no-es-una-huella", "Ana")
+    digest = chk.review_digest(path.read_text("utf-8"))
+    with pytest.raises(db.RegistryError, match="no la registra un agente"):          # un agente declarado
+        db.add_report_review(conn, "x.md", digest, "Ana", actor="director-cientifico")
+    with pytest.MonkeyPatch.context() as m:                                          # dentro de Claude Code
+        m.setenv("CLAUDECODE", "1")
+        with pytest.raises(db.RegistryError, match="no la registra un agente"):
+            db.add_report_review(conn, "x.md", digest, "Ana")
     assert path.is_file()
     conn.close()
 

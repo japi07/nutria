@@ -147,11 +147,13 @@ Alegación prevista (Reglamento (CE) 767/2009, art. 13): {alegacion}
 ## Anexo A. Tabla de afirmaciones y respaldo
 
 <!-- La rellena verificador-citas leyendo cada fuente: una fila por cada afirmación [PUB] y referencia, con la
-     afirmación copiada tal como aparece en el informe (las palabras de su frase anteriores a la etiqueta, en
-     orden: al menos la mitad y un mínimo de 4; «...» separa fragmentos de 2 o más palabras). Una fila que
-     reproduce por igual dos afirmaciones distintas no cuenta para ninguna. Respaldo: respalda | parcial |
-     no_respalda | no_verificable. Una fila no_respalda no se compensa con otra respalda. Las citas literales
-     entre comillas de la columna Motivo se buscan en el resumen de la fuente (no en el texto completo). -->
+     afirmación copiada tal como aparece en el informe (su frase, hasta «.», «!» o «?»: lo que precede a la
+     etiqueta desde el inicio de la frase o la etiqueta anterior y, si es la última de la frase, también lo que
+     la sigue; en orden, al menos la mitad de sus palabras y un mínimo de 4; «...» separa fragmentos de 2 o más
+     palabras). Una fila que reproduce por igual dos afirmaciones distintas no cuenta para ninguna. Respaldo:
+     respalda | parcial | no_respalda | no_verificable. Una fila no_respalda no se compensa con otra respalda ni
+     se puede dejar sin asignar. Las citas literales entre comillas de la columna Motivo se buscan en el resumen
+     de la fuente (no en el texto completo). -->
 
 | Ref | Afirmación | Respaldo | Motivo |
 |---|---|---|---|

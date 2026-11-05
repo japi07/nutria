@@ -28,6 +28,13 @@ def stamp_key(tmp_path, monkeypatch):
     monkeypatch.setenv("NUTRIA_CLAVE_SELLO", str(tmp_path / "clave"))
 
 
+@pytest.fixture(autouse=True)
+def human_terminal(monkeypatch):
+    """Las pruebas simulan a la persona que registra la revisión: sin variables de contexto de agente."""
+    for name in ("NUTRIA_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def make(body: str, bib: str, estado: str = "borrador", humano: str = "null", anexo: str = "") -> str:
     return (f"---\noportunidad: O-0001\nestado: {estado}\nespecie: vacuno lechero\n"
             "etapa: 'periodo de transición (-21 a +21 días respecto al parto)'\n"

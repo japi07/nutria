@@ -698,7 +698,12 @@ def add_report_review(conn: sqlite3.Connection, report: str, digest: str, review
                       note: str | None = None, entity_id: str | None = None, actor: str | None = None) -> int:
     """Registra que una persona revisó el contenido exacto de un informe (huella `digest`, ver
     `nutria.reports.check.review_digest`). La firma la pone la persona con `nutria informe revisar`; es una
-    atestación sin autenticar (un proceso del mismo usuario podría llamar a esta función)."""
+    atestación sin autenticar: se rechaza con un agente declarado o dentro de Claude Code, pero un proceso del mismo
+    usuario que oculte esas señales podría llamar a esta función."""
+    import os
+    if actor or any(os.environ.get(name) for name in ("NUTRIA_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")):
+        raise RegistryError("La revisión humana de un informe no la registra un agente: la persona que lo revisó ejecuta "
+                            "`nutria informe revisar` en su propia terminal")
     if not reviewer or not reviewer.strip():
         raise RegistryError("La revisión humana exige el nombre de la persona que revisó el informe")
     if not digest or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
