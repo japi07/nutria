@@ -77,10 +77,10 @@ class Rubric:
 
     @property
     def critical_gate_ids(self) -> set[str]:
-        """Compuertas críticas: las marcadas `critica = true`; si ninguna lo está, seguridad, regulatoria y
-        destino_digestivo (fallo en cerrado para rúbricas propias sin la marca)."""
+        """Compuertas críticas: seguridad, regulatoria y destino_digestivo siempre (si la rúbrica las tiene; una
+        rúbrica propia no puede quitarles la marca) y, además, las marcadas `critica = true`."""
         marked = {g.id for g in self.gates if g.critical}
-        return marked or (set(CRITICAL_GATES_DEFAULT) & self.gate_ids)
+        return marked | (set(CRITICAL_GATES_DEFAULT) & self.gate_ids)
 
     def anchor_values(self, criterion: str) -> tuple[float, ...]:
         """Valores admitidos sin justificación: las claves de las anclas del criterio (0, 0.25, 0.5, 0.75 y 1)."""

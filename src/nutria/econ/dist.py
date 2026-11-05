@@ -2,7 +2,7 @@
 
 Formatos admitidos en TOML:
     valor = 12.5                                         # fijo, sin fuente
-    valor = { valor = 12.5, fuente = "[PUB] R3" }        # fijo con fuente
+    valor = { valor = 12.5, fuente = "[PUB] doi:10.xxxx/yyyy" }   # fijo con fuente registrada
     valor = { dist = "pert", min = 0.2, moda = 0.8, max = 1.5 }
     valor = { dist = "triangular", min = ..., moda = ..., max = ... }
     valor = { dist = "normal", media = ..., de = ... }

@@ -34,7 +34,10 @@ esperada.
      cualquier valor entre 0 y 1);
    - `justificacion` concreta (no genérica) y `evidencia` con IDs de fuentes, afirmaciones o ficheros.
    `rentabilidad_ganadero` se ancla en el beneficio neto P10/P50/P90 y la respuesta umbral; `atractivo_empresa`, en
-   el rNPV. ROI = beneficio/coste: "ROI > 1" equivale a beneficio neto positivo.
+   el rNPV, la distribución del VPN realizado y P(pérdida > umbral) (P(rNPV > 0) no es la probabilidad de ganar
+   dinero). Si `nutria econ coherencia` avisa de que el precio, la dosis o los días del ganadero y de la empresa
+   difieren, o no se ha comprobado, decláralo en la justificación de los dos criterios. ROI = beneficio/coste:
+   "ROI > 1" equivale a beneficio neto positivo.
 4. No compenses: una evidencia débil no sube porque la idea sea original.
 5. Guarda el JSON (esquema `puntuacion.schema.json`, ejemplo en `ejemplos/puntuacion_ejemplo.json`) en
    `research/oportunidades/<ID>_puntuacion_<evaluador>.json` y regístralo:
@@ -52,6 +55,7 @@ Dentro de CONDICIONAL hay tres subgrupos que se ordenan siempre así, sea cual s
 firma humana (todas las compuertas propuestas como `superada`), con alguna compuerta sin resolver y con alguna
 compuerta **crítica** (`seguridad`, `regulatoria`, `destino_digestivo`) sin resolver. El bloque "AVISOS" de la salida
 (en `--json`, por la salida de error y en las `flags` de cada fila) señala si el top-k para planes incluye compuertas
-críticas sin resolver y si el orden o el conjunto del top-k cambian entre perfiles de pesos: transcríbelos en la
-propuesta; un orden que cambia con los pesos no es robusto. Cada ranking queda en la procedencia con la semilla, las
+críticas sin resolver, si el orden o el conjunto del top-k cambian entre perfiles de pesos y si el top-k del Monte
+Carlo no coincide con el orden determinista del perfil elegido: transcríbelos en la propuesta; un orden que cambia con
+los pesos no es robusto. Cada ranking queda en la procedencia con la semilla, las
 simulaciones, el alfa, el perfil, las huellas de la rúbrica y de las puntuaciones y el orden resultante.

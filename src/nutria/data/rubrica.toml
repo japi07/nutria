@@ -5,8 +5,9 @@
 # una compuerta solo cuenta como superada con firma humana.
 # Las claves de [criterio.anclas] son los únicos valores admitidos sin justificación: un valor
 # intermedio exige "justificacion_entre_anclas" (nutria.scoring.engine.validate_anchors).
-# Las compuertas con critica = true ordenan detrás, dentro de CONDICIONAL, a las candidatas que
-# las tienen sin resolver. [[madurez]] es la escala de madurez del candidato (EMC).
+# Las compuertas críticas (seguridad, regulatoria y destino_digestivo siempre, más las marcadas
+# critica = true) ordenan detrás, dentro de CONDICIONAL, a las candidatas que las tienen sin
+# resolver. [[madurez]] es la escala de madurez del candidato (EMC).
 
 version = "2.2"
 
@@ -98,7 +99,7 @@ descripcion = "Claridad de la clasificación (materia prima, aditivo y grupo fun
 id = "rentabilidad_ganadero"
 nombre = "Rentabilidad para el ganadero"
 eje = "valor"
-descripcion = "Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90 y respuesta umbral frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo."
+descripcion = "Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90, coste por animal y día y por tonelada de pienso, y respuesta umbral (solo con ese beneficio y con los demás en su valor central) frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo. El precio, la dosis y los días son los mismos que en el modelo de la empresa (`nutria econ coherencia`)."
 [criterio.anclas]
 "0" = "Beneficio neto negativo incluso en el escenario optimista (P90), o coste por animal y día inasumible."
 "0.25" = "Beneficio neto positivo solo en el escenario optimista (P90)."
@@ -110,7 +111,7 @@ descripcion = "Presupuesto parcial por animal con `nutria econ ganadero`: benefi
 id = "atractivo_empresa"
 nombre = "Atractivo para la empresa"
 eje = "valor"
-descripcion = "Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores."
+descripcion = "Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores. Las ventas se construyen con el mismo precio, dosis y días que el modelo del ganadero (`nutria econ coherencia` sin aviso; si avisa o no se ha comprobado, decláralo en la justificación). Además del rNPV, pesa la distribución del VPN realizado y P(pérdida > umbral): P(rNPV > 0) mide la incertidumbre de los parámetros y no es la probabilidad de ganar dinero."
 [criterio.anclas]
 "0" = "VPN ajustado por riesgo central negativo y sin vía razonable para mejorarlo."
 "0.25" = "VPN ajustado por riesgo negativo o marginal; mercado pequeño o plazo regulatorio muy largo."

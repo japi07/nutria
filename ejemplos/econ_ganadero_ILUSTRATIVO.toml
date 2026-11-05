@@ -2,9 +2,12 @@
 # Sustituye cada valor por uno con fuente registrada ([PUB]/[DER]) o márcalo como [SUP] en su "fuente".
 #
 # Entradas: un número, una distribución o una tabla con "fuente" (el informe la muestra; `nutria econ ganadero
-# <fichero> --exigir-fuentes` rechaza las entradas declaradas sin fuente etiquetada):
-#   precio_eur_kg = { dist = "pert", min = <...>, moda = <...>, max = <...>, fuente = "[PUB] R3" }
+# <fichero> --exigir-fuentes` rechaza las entradas declaradas sin fuente etiquetada, las [PUB] que no citan una fuente
+# (doi:, pmid:, openalex:) o afirmación (A-xxxx) registrada y verificada, y las [DER] sin la orden o el script):
+#   precio_eur_kg = { dist = "pert", min = <...>, moda = <...>, max = <...>, fuente = "[PUB] doi:<doi registrado>" }
 #   dias = { valor = <...>, fuente = "[SUP] ..." }
+# Valores centrales (fila determinista, respuesta umbral, tornado): la moda de cada entrada; `--valor-central mediana`
+# usa la mediana de todas.
 #
 # Periodos: el coste usa [coste].dias (si falta, [escenario].dias); cada [[beneficio]] por día usa su propio
 # "dias" (número o distribución; si falta, [escenario].dias). Un beneficio por ciclo (por_dia = false) no

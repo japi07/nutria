@@ -30,6 +30,12 @@ No puntúas: preparas las salidas que los `evaluador-independiente` necesitan pa
   entregar. Si difieren, corrige uno de los dos modelos o justifica la diferencia (p. ej. el margen de la
   distribución va en `margen_distribucion`, no en otro precio).
 
+Fuentes: cada entrada lleva `fuente` con etiqueta. Una `[PUB]` cita el identificador de una fuente registrada y
+verificada (`doi:...`, `pmid:...`, `openalex:W...`) o de una afirmación `[PUB]` registrada (`A-xxxx`); una `[DER]`, la
+orden `nutria` o el script que da el valor; `--exigir-fuentes` lo comprueba en el registro. Los valores centrales
+(respuesta umbral, tornado, coherencia) usan el mismo estadístico en todas las entradas: la moda por defecto o la
+mediana con `--valor-central mediana` (el mismo en los dos modelos).
+
 Guarda los ficheros de entrada y las salidas en `research/datos/<ID>/` e indica su ruta en tu entregable: los
 evaluadores aplican las anclas de `docs/RUBRICA.md` a esas salidas.
 

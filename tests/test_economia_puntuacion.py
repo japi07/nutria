@@ -22,6 +22,7 @@ from nutria.cli import main
 from nutria.config import load_config
 from nutria.econ import farm, rnpv
 from nutria.econ.dist import gaussian_copula, parse_dist
+from nutria.econ.dist import source_ids as dist_source_ids
 from nutria.scoring.engine import load_rubric, rank, ranking_warnings, validate_anchors
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -838,3 +839,218 @@ def test_docs_rubrica_es_la_salida_de_la_rubrica():
     doc = (ROOT / "docs" / "RUBRICA.md").read_text("utf-8")
     assert doc.rstrip("\n") == RUBRIC.to_markdown().rstrip("\n")
     assert "## Escala de madurez del candidato (EMC)" in doc and "justificacion_entre_anclas" in doc
+
+
+# ============================================================================ D8-12: un solo estadístico central
+def test_estadistico_central_moda_o_mediana_para_todas_las_entradas():
+    lognormal = parse_dist({"dist": "lognormal", "media_log": 0.0, "de_log": 0.5})
+    assert lognormal.mode() == pytest.approx(math.exp(-0.25)) and lognormal.median() == pytest.approx(1.0)
+    uniform = parse_dist({"dist": "uniforme", "min": 2, "max": 4})
+    assert uniform.mode() == uniform.median() == pytest.approx(3.0)       # sin moda única: punto medio
+    pert = parse_dist({"dist": "pert", "min": 5, "moda": 6, "max": 10})
+    assert pert.central() == pert.mode() == 6 and pert.central("mediana") == pytest.approx(pert.frozen.median())
+    normal = parse_dist({"dist": "normal", "media": 3, "de": 1})
+    assert normal.central("moda") == normal.central("mediana") == pytest.approx(3)
+    with pytest.raises(ValueError, match="Estadístico central"):
+        pert.central("media")
+
+
+_MIXED = """
+[escenario]
+dias = { valor = 1, fuente = "[SUP] prueba" }
+[coste]
+fijo_eur_ciclo = { dist = "pert", min = 5, moda = 6, max = 10, fuente = "[SUP] prueba" }
+[[beneficio]]
+nombre = "b"
+respuesta = { valor = 1, fuente = "[SUP] prueba" }
+valor_unitario = { dist = "lognormal", media_log = 0.0, de_log = 0.5, fuente = "[SUP] prueba" }
+por_dia = false
+"""
+
+
+def test_respuesta_umbral_no_mezcla_moda_y_mediana(tmp_path, project, capsys):
+    """Coste pert (moda 6) y valor unitario lognormal (moda e^-0,25, mediana 1): la respuesta umbral usa moda con moda
+    o mediana con mediana, nunca la moda de uno con la mediana del otro."""
+    path = _write(tmp_path, "mixto.toml", _MIXED)
+    by_mode = farm.breakeven(farm.load_farm_model(path))[0]
+    assert by_mode["valor"] == pytest.approx(6 / math.exp(-0.25)) and by_mode["estadistico_central"] == "moda"
+    median_model = farm.load_farm_model(path, central="mediana")
+    by_median = farm.breakeven(median_model)[0]
+    assert by_median["valor"] == pytest.approx(median_model.fixed_eur_cycle.median() / 1.0)
+    assert by_median["valor"] != pytest.approx(6 / 1.0)                    # la mezcla antigua
+    assert main(["--json", "econ", "ganadero", str(path), "--sim", "300", "--valor-central", "mediana"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["estadistico_central"] == "mediana"
+    assert out["monte_carlo"]["respuesta_umbral"]["valor"] == pytest.approx(by_median["valor"])
+    assert all(r["estadistico_central"] == "mediana" for r in out["entradas"])
+    assert main(["econ", "ganadero", str(path), "--sim", "300"]) == 0
+    text = capsys.readouterr().out
+    assert "Respuesta umbral (valores centrales coherentes: coste, valor unitario y días con la moda de cada entrada" \
+        in text and "exp(media_log − de_log²) en la lognormal" in text
+    assert main(["econ", "ganadero", str(path), "--valor-central", "media"]) == 2
+
+
+def test_coherencia_con_el_mismo_estadistico(tmp_path):
+    model = farm.load_farm_model(FARM_EXAMPLE, central="mediana")
+    with pytest.raises(ValueError, match="mismo estadístico central"):
+        rnpv.coherence(model, rnpv.load_project(COMPANY_EXAMPLE))
+    res = rnpv.coherence(model, rnpv.load_project(COMPANY_EXAMPLE, central="mediana"))
+    assert res["coherente"] and res["estadistico_central"] == "mediana"
+    with pytest.raises(ValueError, match="finito"):
+        rnpv.coherence(farm.load_farm_model(FARM_EXAMPLE), rnpv.load_project(COMPANY_EXAMPLE), rtol=float("nan"))
+
+
+# ============================================================================ D8-13: coste, supuestos y correlaciones
+@pytest.mark.parametrize("coste, message", [
+    ("dosis_g_dia = 50", "falta precio_eur_kg"),
+    ("precio_eur_kg = 5", "falta la dosis"),
+    ("dias = 10", "necesita un coste"),
+])
+def test_coste_incompleto_falla(tmp_path, coste, message):
+    text = _FARM_BASE.format(dosis="dosis_g_dia = 50", racion="").replace("dosis_g_dia = 50\nprecio_eur_kg = 5",
+                                                                          coste)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _farm(tmp_path, text)
+
+
+def test_supuestos_y_pares_de_correlacion_repetidos(tmp_path):
+    base = _FARM_BASE.format(dosis="dosis_g_dia = 50", racion="")
+    with pytest.raises(ValueError, match="claves desconocidas"):
+        _farm(tmp_path, base + '[supuestos]\nlistas = ["x"]\n')
+    with pytest.raises(ValueError, match="lista de textos"):
+        _farm(tmp_path, base + '[supuestos]\nlista = "un texto"\n')
+    with pytest.raises(ValueError, match="lista de textos"):
+        _project(tmp_path, _TWO_PHASES.format(umbral="") + '[supuestos]\nlista = "un texto"\n')
+    pair = '[[correlacion]]\nentre = ["beneficio[1].respuesta", "beneficio[2].respuesta"]\nrho = {rho}\n'
+    with pytest.raises(ValueError, match="dos veces"):
+        _farm(tmp_path, _TWO_UNIFORMS + pair.format(rho=0.0) + pair.format(rho=0.5))
+    with pytest.raises(ValueError, match="dos veces"):
+        gaussian_copula(["a", "b"], pairs=[("a", "b", 0.0), ("b", "a", 0.3)])
+
+
+def test_valores_no_finitos_fallan(tmp_path, project, capsys):
+    with pytest.raises(ValueError, match="finito"):
+        dosis.convertir(50, "g_animal_dia", precio_eur_kg=float("inf"))
+    assert main(["dosis", "convertir", "50", "--desde", "g_animal_dia", "--precio-eur-kg", "inf"]) == 2
+    assert main(["econ", "desarrollador", str(COMPANY_EXAMPLE), "--sim", "100", "--umbral-perdida", "inf"]) == 2
+    with pytest.raises(ValueError, match="finito"):
+        rnpv.evaluate(_project(tmp_path, _TWO_PHASES.format(umbral="umbral_perdida_eur = inf")), n=10)
+    assert main(["econ", "coherencia", str(FARM_EXAMPLE), str(COMPANY_EXAMPLE), "--tolerancia", "nan"]) == 2
+
+
+# ============================================================================ D8-14: probabilidad de éxito acotada
+@pytest.mark.parametrize("prob", ['{ dist = "normal", media = 0.5, de = 0.3 }', "1.2", "-0.1"])
+def test_probabilidad_de_exito_fuera_de_0_1_falla_en_vez_de_recortarse(tmp_path, prob):
+    text = _TWO_PHASES.format(umbral="").replace("prob_exito = 0.5", f"prob_exito = {prob}", 1)
+    with pytest.raises(ValueError, match=r"prob_exito fuera de \[0, 1\]"):
+        rnpv.evaluate(_project(tmp_path, text), n=2000, seed=1)
+
+
+# ============================================================================ D8-13: fuentes rastreables
+def test_identificadores_de_fuente():
+    ids = dist_source_ids("[PUB] doi:10.3168/JDS.S0022-0302(03)73713-6 (tabla 2); pmid: 12345, openalex:w42 y A-0003.")
+    assert ids == ["doi:10.3168/jds.s0022-0302(03)73713-6", "pmid:12345", "openalex:W42", "A-0003"]
+    assert dist_source_ids("[PUB] (doi:10.1000/abc).") == ["doi:10.1000/abc"]
+    assert dist_source_ids("[PUB] R3") == [] and dist_source_ids(None) == []
+
+
+def _farm_with_sources(tmp_path, price_source: str, response_source: str = "[SUP] prueba") -> Path:
+    text = FARM_EXAMPLE.read_text("utf-8").replace(
+        'fuente = "[SUP] ILUSTRATIVO: precio al ganadero"', f'fuente = "{price_source}"').replace(
+        'respuesta = { dist = "pert", min = -0.5, moda = 0.5, max = 1.5, fuente = "[SUP] ILUSTRATIVO" }',
+        f'respuesta = {{ dist = "pert", min = -0.5, moda = 0.5, max = 1.5, fuente = "{response_source}" }}')
+    return _write(tmp_path, "fuentes.toml", text)
+
+
+@pytest.mark.parametrize("price_source, response_source, message", [
+    ("[PUB] R3", "[SUP] prueba", "sin el identificador de una fuente registrada"),
+    ("[PUB] doi:10.1000/no-registrada", "[SUP] prueba", "no está registrada"),
+    ("[PUB] A-0099", "[SUP] prueba", "A-0099 no está registrada"),
+    ("[SUP] prueba", "[DER] cálculo propio", "[DER] sin la orden nutria"),
+])
+def test_exigir_fuentes_rastrea_pub_y_der_en_el_registro(tmp_path, project, capsys, price_source, response_source,
+                                                         message):
+    path = _farm_with_sources(tmp_path, price_source, response_source)
+    assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == 2
+    assert message in capsys.readouterr().err
+    # Sin --exigir-fuentes se evalúa, pero el informe avisa y el JSON lo lista.
+    assert main(["--json", "econ", "ganadero", str(path), "--sim", "200"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert any(message in p for p in out["fuentes_sin_rastrear"])
+    assert main(["econ", "ganadero", str(path), "--sim", "200"]) == 0
+    assert "AVISO: fuentes sin rastrear en el registro" in capsys.readouterr().out
+
+
+def test_exigir_fuentes_acepta_fuentes_y_afirmaciones_registradas(tmp_path, project, capsys, monkeypatch):
+    """La comprobación usa la política del registro (registrada, verificada y no retractada); aquí se sustituye por
+    una que solo acepta doi:10.1000/ok para comprobar qué identificadores se consultan."""
+    asked = []
+
+    def usable(conn, source_id, purpose):
+        asked.append(source_id)
+        if source_id != "doi:10.1000/ok":
+            raise db.RegistryError(f"La fuente {source_id} está RETRACTADA")
+        return {"id": source_id}
+
+    monkeypatch.setattr(db, "_require_usable_source", usable)
+    monkeypatch.setattr(db, "list_claims", lambda conn, entity_id=None: [
+        {"id": "A-0001", "label": "PUB", "source_ids": ["doi:10.1000/ok"]},
+        {"id": "A-0002", "label": "HIP", "source_ids": []},
+        {"id": "A-0003", "label": "PUB", "source_ids": ["doi:10.1000/retractada"]}])
+    ok = _farm_with_sources(tmp_path, "[PUB] doi:10.1000/OK (tabla 3)", "[DER] nutria meta analizar leche.csv")
+    assert main(["econ", "ganadero", str(ok), "--sim", "200", "--exigir-fuentes"]) == 0
+    assert asked == ["doi:10.1000/ok"]
+    claim = _farm_with_sources(tmp_path, "[PUB] A-0001")
+    assert main(["econ", "ganadero", str(claim), "--sim", "200", "--exigir-fuentes"]) == 0
+    capsys.readouterr()
+    for source, message in (("[PUB] A-0002", "es [HIP], no [PUB]"), ("[PUB] A-0003", "RETRACTADA"),
+                            ("[PUB] doi:10.1000/otra", "RETRACTADA")):
+        path = _farm_with_sources(tmp_path, source)
+        assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == 2, source
+        assert message in capsys.readouterr().err, source
+    # La empresa también: una fuente [PUB] sin identificador en el modelo rNPV.
+    company = _write(tmp_path, "empresa_pub.toml", COMPANY_EXAMPLE.read_text("utf-8").replace(
+        'fuente = "[SUP] ILUSTRATIVO: tasa de descuento de la empresa"', 'fuente = "[PUB] informe sectorial"'))
+    assert main(["econ", "desarrollador", str(company), "--sim", "200", "--exigir-fuentes"]) == 2
+    assert "proyecto.tasa_descuento: [PUB] sin el identificador" in capsys.readouterr().err
+
+
+def test_fuentes_pub_sin_registro_del_proyecto(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NUTRIA_OFFLINE", "1")
+    path = _farm_with_sources(tmp_path, "[PUB] doi:10.1000/ok")
+    assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == 2
+    assert "no existe el registro del proyecto" in capsys.readouterr().err
+
+
+# ============================================================================ D8-1: compuertas críticas fijas
+def test_una_rubrica_propia_no_quita_las_compuertas_criticas(tmp_path):
+    text = (ROOT / "src" / "nutria" / "data" / "rubrica.toml").read_text("utf-8")
+    custom = text.replace("critica = true\n", "").replace('id = "etica"\n', 'id = "etica"\ncritica = true\n')
+    path = _write(tmp_path, "rubrica.toml", custom)
+    rubric = load_rubric(path)
+    assert rubric.critical_gate_ids == {"seguridad", "regulatoria", "destino_digestivo", "etica"}
+
+
+# ============================================================================ D8-4: Monte Carlo frente a perfiles
+def test_aviso_si_el_top_k_del_monte_carlo_no_coincide_con_el_determinista():
+    """O-2 gana con los valores modales en todos los perfiles (0,5 en todo y 0,75 en evidencia), pero O-1 tiene todos
+    los rangos asimétricos hacia arriba (0,5 [0,5-1]) y gana en el Monte Carlo."""
+    gates = dict.fromkeys(RUBRIC.gate_ids, "superada")
+    o1 = _engine_opp("O-1", 0.5, gates)
+    o1["scores"] = [dict(s, low=0.5, high=1.0) for s in o1["scores"]]
+    o2 = _engine_opp("O-2", 0.5, gates)
+    o2["scores"] = [dict(s, value=0.75 if s["criterion"] == "evidencia" else 0.5, low=None, high=None)
+                    for s in o2["scores"]]
+    rows = rank([o1, o2], RUBRIC, n_sim=3000, top_k=1)
+    assert [r.opportunity_id for r in rows] == ["O-1", "O-2"]
+    assert all(r.ranks_by_profile == {"original": 2, "recomendado": 2, "uniforme": 2} for r in rows
+               if r.opportunity_id == "O-1")
+    warnings = ranking_warnings(rows, 1, "recomendado")
+    assert any("top-1 del Monte Carlo (O-1)" in w and "del perfil recomendado (O-2)" in w for w in warnings)
+    assert not any("según el perfil de pesos" in w for w in warnings)        # los perfiles coinciden entre sí
+    flags = {r.opportunity_id: r.flags for r in rows}
+    assert any("Dentro del top-1 con Monte Carlo (recomendado) y fuera con original, recomendado, uniforme" in f
+               for f in flags["O-1"])
+    assert any("Dentro del top-1 con original, recomendado, uniforme y fuera con Monte Carlo" in f
+               for f in flags["O-2"])
