@@ -835,11 +835,12 @@ def cmd_meta(args, cfg) -> int:
         from .stats.mixed import ALFA_LRT, st_pierre
         modo = "si" if args.pendiente_aleatoria else ("no" if args.sin_pendiente_aleatoria else "auto")
         res = st_pierre(rows, args.respuesta, args.dosis, args.estudio, args.covariable,
-                        {"si": True, "no": False, "auto": "auto"}[modo], descomponer=not args.sin_descomponer)
+                        {"si": True, "no": False, "auto": "auto"}[modo], descomponer=not args.sin_descomponer,
+                        sem=args.ponderar_sem)
         log_event(cfg, "meta_stpierre", inputs={**entrada, "respuesta": args.respuesta, "dosis": args.dosis,
                                                 "estudio": args.estudio, "covariables": args.covariable,
                                                 "pendiente_aleatoria": modo, "descomponer": not args.sin_descomponer,
-                                                "alfa_lrt": ALFA_LRT},
+                                                "alfa_lrt": ALFA_LRT, "ponderar_sem": args.ponderar_sem},
                   outputs=res, actor=args.agente)
         _emit(args, res)
         return 0
@@ -900,6 +901,8 @@ def cmd_meta(args, cfg) -> int:
             out["aviso_dependencia"] = deps
     if args.metodo == "FE":
         res = m.fixed_effect(yi, vi)
+        if args.ajuste != "ninguno":
+            res.notes.append(f"Con --metodo FE no se aplica --ajuste {args.ajuste}: el efecto fijo usa la prueba z.")
     else:
         res = m.random_effects(yi, vi, method=args.metodo, ajuste=args.ajuste)
     out["modelo"] = res.to_dict()
@@ -979,6 +982,7 @@ def cmd_meta(args, cfg) -> int:
         salidas["meta_regresion"] = {"error": out.get("meta_regresion", {}).get("error")}
     if args.subgrupo:
         salidas["subgrupos"] = {g: r["estimate"] for g, r in out["subgrupos"]["subgrupos"].items()}
+    salidas["ajuste_aplicado"] = res.ajuste
     log_event(cfg, "metaanalisis", inputs={**entrada, "medida": args.medida, "metodo": args.metodo,
                                            "ajuste": args.ajuste, "nivel": res.level,
                                            "agregar_estudio": args.agregar_estudio, "rho": args.rho,
@@ -1511,6 +1515,9 @@ def build_parser() -> argparse.ArgumentParser:
                                         "heterogéneas)")
             x.add_argument("--sin-descomponer", dest="sin_descomponer", action="store_true",
                            help="no separa la pendiente intra y entre estudios")
+            x.add_argument("--ponderar-sem", dest="ponderar_sem", metavar="COLUMNA",
+                           help="pondera cada media por 1/SEM² (St-Pierre 2001) con el SEM de esa columna; "
+                                "por defecto no pondera")
         if name == "exportar-r":
             x.add_argument("--salida", default="metaanalisis.R")
         if name == "validar-predictivo":

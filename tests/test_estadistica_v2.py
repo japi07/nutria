@@ -617,6 +617,43 @@ def test_st_pierre_error_de_tipo_I_con_pendientes_heterogeneas():
     assert rechazos_antiguo / n >= 0.15
 
 
+def test_st_pierre_ponderado_por_sem_es_el_gls_con_varianza_residual_sigma2_entre_w():
+    rng = np.random.default_rng(8)
+    rows = _datos_dosis(rng, estudios=6, dosis=(0.0, 1.0, 2.0), de_pendiente=0.0)
+    sems = {f"S{s}": v for s, v in enumerate((0.2, 0.5, 0.3, 0.8, 0.25, 0.4))}
+    rows = [dict(r, sem=sems[r["estudio"]]) for r in rows]
+    sin = _st_pierre(rows, "y", "dosis", "estudio", random_slope=False)
+    assert sin["ponderacion"] is None and any("Modelo sin ponderar" in n for n in sin["notas"])
+    res = _st_pierre(rows, "y", "dosis", "estudio", random_slope=False, sem="sem")
+    assert res["ponderacion"] == {"columna_sem": "sem", "peso": "1/SEM², normalizado a media 1"}
+    assert any("ponderado por 1/SEM²" in n for n in res["notas"])
+    # Con las varianzas estimadas, los efectos fijos son el GLS con V = tau²·11' + σ²·W⁻¹ (pesos de media 1)
+    w = np.array([1 / sems[r["estudio"]] ** 2 for r in rows])
+    w = w / w.mean()
+    tau2, sigma2 = res["varianza_estudio"][0][0], res["varianza_residual"]
+    estudios = [r["estudio"] for r in rows]
+    V = np.array([[tau2 * (a == b) for b in estudios] for a in estudios]) + np.diag(sigma2 / w)
+    dosis = np.array([r["dosis"] for r in rows])
+    X = np.column_stack([np.ones(len(rows)), dosis - dosis.mean()])  # dosis_intra (misma dosis media por estudio)
+    y = np.array([r["y"] for r in rows])
+    vinv = np.linalg.inv(V)
+    beta = np.linalg.solve(X.T @ vinv @ X, X.T @ vinv @ y)
+    assert res["pendiente_intra"]["estimacion"] == pytest.approx(beta[1], rel=1e-6)
+    assert res["pendiente_intra"]["ee"] == pytest.approx(math.sqrt(np.linalg.inv(X.T @ vinv @ X)[1, 1]), rel=1e-4)
+    # Con todos los SEM iguales, ponderar no cambia nada
+    iguales = [dict(r, sem=0.4) for r in rows]
+    a = _st_pierre(iguales, "y", "dosis", "estudio", random_slope=False, sem="sem")
+    assert a["pendiente_intra"]["estimacion"] == pytest.approx(sin["pendiente_intra"]["estimacion"])
+    assert a["pendiente_intra"]["ee"] == pytest.approx(sin["pendiente_intra"]["ee"], rel=1e-5)
+    # Un SEM ausente o no positivo es un error: no se descartan filas en silencio
+    for malo in ("", "0", "-1", "n.d."):
+        sucias = [dict(r, sem=malo) if r["estudio"] == "S2" else r for r in rows]
+        with pytest.raises(ValueError, match="S2"):
+            _st_pierre(sucias, "y", "dosis", "estudio", sem="sem")
+    with pytest.raises(ValueError, match="Faltan columnas"):
+        _st_pierre(rows, "y", "dosis", "estudio", sem="sem_publicado")
+
+
 def test_cli_stpierre_por_defecto_y_procedencia(project, capsys):
     pytest.importorskip("statsmodels")
     path = _csv(project / "dosis.csv", _datos_dosis(np.random.default_rng(5), de_pendiente=0.8))
@@ -634,6 +671,17 @@ def test_cli_stpierre_por_defecto_y_procedencia(project, capsys):
                              "--estudio", "estudio", "--sin-pendiente-aleatoria")
         assert code == 0 and out["modelo"] == "intercepto_aleatorio" and out["avisos"]
         assert _eventos("meta_stpierre")[-1]["inputs"]["pendiente_aleatoria"] == "no"
+        assert _eventos("meta_stpierre")[-1]["inputs"]["ponderar_sem"] is None
+        # Ponderación por 1/SEM² desde la CLI; una columna inexistente es un error (código 2)
+        filas = [dict(r, sem=0.3 + 0.1 * int(r["estudio"][1:])) for r in
+                 _datos_dosis(np.random.default_rng(5), de_pendiente=0.8)]
+        con_sem = _csv(project / "dosis_sem.csv", filas)
+        code, out, _ = _json(capsys, "meta", "stpierre", str(con_sem), "--respuesta", "y", "--dosis", "dosis",
+                             "--estudio", "estudio", "--ponderar-sem", "sem")
+        assert code == 0 and out["ponderacion"]["columna_sem"] == "sem"
+        assert _eventos("meta_stpierre")[-1]["inputs"]["ponderar_sem"] == "sem"
+        assert _json(capsys, "meta", "stpierre", str(path), "--respuesta", "y", "--dosis", "dosis", "--estudio",
+                     "estudio", "--ponderar-sem", "sem")[0] == 2
     with pytest.raises(SystemExit):
         main(["meta", "stpierre", str(path), "--respuesta", "y", "--dosis", "dosis", "--estudio", "estudio",
               "--pendiente-aleatoria", "--sin-pendiente-aleatoria"])
