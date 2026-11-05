@@ -16,11 +16,19 @@ Diseños cruzados (crossover y cuadrado latino): cada animal recibe el tratamien
 así que las dos medias no son independientes. `effect_from_summary(..., diseno=...)` usa entonces
 las fórmulas de grupos emparejados de Borenstein, Hedges, Higgins y Rothstein (2009, Introduction
 to Meta-Analysis, cap. 4), con n = número de animales y r = correlación intrasujeto (entre las dos
-observaciones del mismo animal). La SMD de un diseño cruzado no es calculable sin r (ni la
-estimación, si la dispersión es residual, ni su varianza): se exige. Tratar un cruzado como
-paralelo sobrestima la varianza de la diferencia de medias si r > 0 (conservador; Elbourne et al.
-2002, Int J Epidemiol 31:140-149), pero da una SMD en otra escala (DE intraanimal) que no se puede
-combinar con la de los diseños paralelos. `design_note` describe el tratamiento aplicado a cada fila.
+observaciones del mismo animal).
+
+- SMD: exige r. Con una dispersión residual (SEM combinado o SED del modelo con el animal como
+  efecto), la DE entre animales que la estandariza es s_w/√(1 - r); con DE por tratamiento, su
+  varianza depende de r. Sin r se lanza ValueError (falla en cerrado): indícala (columna
+  rho_intrasujeto o --rho-intrasujeto, de la publicación o como supuesto [SUP] con análisis de
+  sensibilidad) o usa MD. Estandarizar por el SEM residual como si fuera la DE de un paralelo
+  infla la SMD (la divide por la DE intraanimal).
+- MD y ROM: con dispersión residual, vi sale del SEM o SED (2·SEM², SED²); con DE por tratamiento y
+  sin r, vi se calcula como si los grupos fueran independientes, lo que la sobrestima si r > 0
+  (conservador; Elbourne et al. 2002, Int J Epidemiol 31:140-149) y se avisa.
+
+`design_note` describe el tratamiento aplicado a cada fila.
 """
 
 from __future__ import annotations
@@ -39,7 +47,8 @@ RESIDUAL_DISPERSIONS = ("SEM_combinado", "SED")
 DESIGNS = ("paralelo", "crossover", "cuadrado_latino", "factorial", "bloques", "otro")
 PAIRED_DESIGNS = ("crossover", "cuadrado_latino")
 _DESIGN_ALIASES = {"parallel": "paralelo", "cross_over": "crossover", "cruzado": "crossover",
-                   "diseno_cruzado": "crossover", "latin_square": "cuadrado_latino",
+                   "diseno_cruzado": "crossover", "switchback": "crossover", "switch_back": "crossover",
+                   "latin_square": "cuadrado_latino",
                    "cuadrado_latino_replicado": "cuadrado_latino", "factorial_paralelo": "factorial",
                    "bloques_completos": "bloques", "blocks": "bloques", "other": "otro"}
 #: Unidades experimentales de la extracción.
@@ -127,15 +136,16 @@ def mean_difference(m_t: float, m_c: float, sd_t: float, sd_c: float, n_t: float
 
 def hedges_g(m_t: float, m_c: float, sd_t: float, sd_c: float, n_t: float, n_c: float) -> tuple[float, float]:
     """Diferencia de medias estandarizada con corrección de sesgo para muestras pequeñas (g de Hedges),
-    grupos independientes (diseño paralelo), según Borenstein et al. (2009, cap. 4):
+    grupos independientes (diseño paralelo):
 
-    d = (m_t - m_c)/S_p, con S_p la DE combinada; V_d = (n_t + n_c)/(n_t·n_c) + d²/(2·(n_t + n_c));
-    J = 1 - 3/(4·gl - 1), gl = n_t + n_c - 2; g = J·d; V_g = J²·V_d.
+    d = (m_t - m_c)/S_p, con S_p = √[((n_t - 1)·sd_t² + (n_c - 1)·sd_c²)/gl] la DE combinada;
+    J = 1 - 3/(4·gl - 1), gl = n_t + n_c - 2; g = J·d (Hedges 1981; Borenstein et al. 2009, cap. 4).
+    vi = (n_t + n_c)/(n_t·n_c) + g²/(2·(n_t + n_c)): la aproximación de muestras grandes de Hedges y
+    Olkin (1985), la que usa por defecto metafor::escalc(measure = "SMD") (vtype = "LS").
 
-    La corrección J se aplica a la estimación y a su varianza, igual que en `paired_hedges_g`, para que
-    las filas de diseños paralelos y cruzados usen la misma convención. (metafor::escalc usa por defecto
-    otra aproximación de muestras grandes, 1/n_t + 1/n_c + g²/(2·(n_t + n_c)), algo mayor; el script de
-    `nutria meta exportar-r` usa los vi de nutria, así que no hay discrepancia.)
+    No se multiplica el primer término por J² (la variante de Borenstein et al. 2009, V_g = J²·V_d): con
+    pocos animales por grupo esa variante es menor que la varianza exacta de g, y la de muestras grandes
+    se le acerca más. Los diseños cruzados usan `paired_hedges_g`.
     """
     df = n_t + n_c - 2
     if df <= 0:
@@ -145,8 +155,8 @@ def hedges_g(m_t: float, m_c: float, sd_t: float, sd_c: float, n_t: float, n_c: 
         raise ValueError("DE combinada nula")
     d = (m_t - m_c) / sp
     j = 1 - 3 / (4 * df - 1)
-    v_d = (n_t + n_c) / (n_t * n_c) + d ** 2 / (2 * (n_t + n_c))
-    return j * d, j ** 2 * v_d
+    g = j * d
+    return g, (n_t + n_c) / (n_t * n_c) + g ** 2 / (2 * (n_t + n_c))
 
 
 def paired_mean_difference(m_t: float, m_c: float, sd_t: float, sd_c: float, n: float,
@@ -168,7 +178,9 @@ def paired_hedges_g(m_t: float, m_c: float, s_within: float, n: float, r: float)
     """SMD de grupos emparejados (Borenstein et al. 2009, cap. 4): d = (m_t - m_c)/S_within, con S_within
     la DE entre animales (la misma escala que la SMD de un diseño paralelo);
     V_d = (1/n + d²/(2n))·2·(1 - r); J = 1 - 3/(4·gl - 1), gl = n - 1; g = J·d; V_g = J²·V_d.
-    n es el número de animales (pares) y r la correlación intrasujeto."""
+    n es el número de animales (pares) y r la correlación intrasujeto, obligatoria."""
+    if r is None:
+        raise ValueError("La SMD de grupos emparejados necesita la correlación intrasujeto r")
     if n < 3:
         raise ValueError("La SMD de un diseño cruzado necesita al menos 3 animales")
     if not s_within > 0:
@@ -369,6 +381,8 @@ def design_note(measure: str, kind: str | None, diseno: str | None,
     rho = _check_rho(rho_intrasujeto)
     base = "Diseño cruzado (crossover o cuadrado latino), n = animales con ambos tratamientos"
     if measure == "SMD":
+        if rho is None:  # effect_from_summary lo rechaza; aquí solo por completitud
+            return ("aviso", f"{base}: la SMD necesita la correlación intrasujeto r y no se indicó.")
         return ("nota", f"{base}: SMD de grupos emparejados con r = {rho:g} (Borenstein et al. 2009, cap. 4), "
                         "estandarizada por la DE entre animales para que sea comparable con la de diseños "
                         "paralelos.")

@@ -163,10 +163,8 @@ def n_means(design: str, delta: float, sd: float | None = None, sd_within: float
         if (animals_per_pen is None) != (icc is None):
             raise ValueError("Con el corral como unidad experimental indica a la vez --m (animales por corral) e "
                              "--icc (correlación intraclase dentro del corral)")
-        if animals_per_pen is not None and animals_per_pen >= 2:
+        if animals_per_pen is not None:
             return n_pens(delta, sd, animals_per_pen, icc, alpha, power)
-        if animals_per_pen is not None and animals_per_pen < 1:
-            raise ValueError("Los animales por corral (m) deben ser >= 1")
         res = n_parallel(delta, sd, alpha, power)
         n = res["n_por_grupo"]
         return {"diseno": "paralelo", "unidad_experimental": "animal", "n_por_grupo": n, "n_unidades_por_grupo": n,
@@ -236,11 +234,15 @@ def n_proportions(p1: float, p2: float, alpha: float = 0.05, power: float = 0.80
                   animals_per_pen: int | None = None, icc: float | None = None) -> dict:
     """Animales por grupo para comparar incidencias (p. ej. cetosis clínica). Aproximación normal.
 
-    Con `animals_per_pen` (m >= 2) e `icc`, el corral (o lote) es la unidad experimental: los animales
+    Con `animals_per_pen` (m) e `icc`, el corral (o lote) es la unidad experimental: los animales
     necesarios se multiplican por el efecto de diseño 1 + (m - 1)·ICC y se redondean a corrales completos
     (Donner y Klar 2000); la salida distingue corrales y animales."""
     if not (0 < p1 < 1 and 0 < p2 < 1) or p1 == p2:
         raise ValueError("Proporciones en (0, 1) y distintas")
+    if not 0 < alpha < 1:
+        raise ValueError("alfa debe estar entre 0 y 1")
+    if not 0 < power < 1:
+        raise ValueError("la potencia debe estar entre 0 y 1")
     if (animals_per_pen is None) != (icc is None):
         raise ValueError("Con el corral como unidad experimental indica a la vez --m (animales por corral) e --icc")
     za = stats.norm.ppf(1 - alpha / 2)
@@ -248,10 +250,10 @@ def n_proportions(p1: float, p2: float, alpha: float = 0.05, power: float = 0.80
     pbar = (p1 + p2) / 2
     num = (za * math.sqrt(2 * pbar * (1 - pbar)) + zb * math.sqrt(p1 * (1 - p1) + p2 * (1 - p2))) ** 2
     n = math.ceil(num / (p1 - p2) ** 2)
-    if animals_per_pen is not None and animals_per_pen >= 2:
+    if animals_per_pen is not None:
+        if isinstance(animals_per_pen, bool) or int(animals_per_pen) != animals_per_pen or animals_per_pen < 1:
+            raise ValueError("Los animales por corral (m) deben ser un entero >= 1")
         m = int(animals_per_pen)
-        if m != animals_per_pen:
-            raise ValueError("Los animales por corral (m) deben ser un entero")
         deff = design_effect(m, icc)
         pens = math.ceil(n * deff / m)
         return {"unidad_experimental": "corral", "n_por_grupo": pens, "n_unidades_por_grupo": pens,
@@ -261,8 +263,6 @@ def n_proportions(p1: float, p2: float, alpha: float = 0.05, power: float = 0.80
                 "nota": "n_por_grupo cuenta corrales (unidades experimentales): animales sin corrales × efecto de "
                         "diseño, redondeado a corrales completos. Aproximación normal; con pocos corrales es "
                         "optimista: verifica por simulación."}
-    if animals_per_pen is not None and animals_per_pen < 1:
-        raise ValueError("Los animales por corral (m) deben ser >= 1")
     return {"unidad_experimental": "animal", "n_por_grupo": n, "n_total": 2 * n, "n_animales_por_grupo": n,
             "n_animales_total": 2 * n,
             "nota": "Las variables de salud requieren muestras grandes. Si el tratamiento se aplica por corral o "

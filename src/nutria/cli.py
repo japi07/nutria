@@ -634,12 +634,18 @@ def _read_table(path: str, sep: str, decimal: str, huella: dict | None = None) -
     """Lee un CSV. Con --decimal ',' convierte la coma decimal en punto (no admite separadores de miles).
 
     El fichero se lee una sola vez; con `huella` (dict) se guarda en huella["sha256"] la huella SHA-256 de
-    los bytes leídos (procedencia: identifica exactamente los datos analizados)."""
+    los bytes leídos (procedencia: identifica exactamente los datos analizados). Una fila con más campos
+    que la cabecera (p. ej. comas decimales sin comillas en un CSV separado por comas) es un error: los
+    valores quedarían desplazados de columna."""
     import io
     raw = Path(path).read_bytes()
     if huella is not None:
         huella["sha256"] = sha256_text(raw)
     rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""), delimiter=sep))
+    largas = [i for i, r in enumerate(rows, 2) if None in r]
+    if largas:
+        raise ValueError(f"{path}: la(s) línea(s) {', '.join(map(str, largas[:10]))} tienen más campos que la cabecera: "
+                         "revisa --sep y --decimal (¿coma decimal sin comillas en un CSV separado por comas?)")
     if decimal != ".":
         for r in rows:
             for k, v in r.items():
@@ -708,8 +714,12 @@ def _effects_from_rows(rows: list[dict], measure: str, rho_intrasujeto: float | 
             rho = None
             if paired:
                 rho = _num(r, "rho_intrasujeto", tag)
-                if rho is None:
+                if rho is None and rho_intrasujeto is not None:
                     rho = rho_intrasujeto
+                    grupos.setdefault(("aviso", f"Correlación intrasujeto supuesta r = {rho_intrasujeto:g} "
+                                                "(--rho-intrasujeto, sin dato en la columna rho_intrasujeto): es un "
+                                                "supuesto de trabajo [SUP]; repite el análisis con otros valores "
+                                                "(p. ej. 0,3 y 0,8) como sensibilidad."), []).append(label)
             try:
                 y, v = es.effect_from_summary(measure, vals["media_trt"], vals["media_ctrl"], vals["n_trt"],
                                               vals["n_ctrl"], kind, vals["disp_trt"], vals["disp_ctrl"], label=tag,
@@ -761,6 +771,11 @@ def _resumen_disenos(rows: list[dict], measure: str, labels: list[str]) -> tuple
                              + ", ".join(sin[:8]) + (" y otras" if len(sin) > 8 else "") + "."))
         elif not declarados:
             mensajes.append(("nota", "La columna diseno está vacía: todas las filas se tratan como diseños paralelos."))
+        otros = [lab for lab, d in zip(labels, disenos) if d == "otro"]
+        if otros:
+            mensajes.append(("aviso", f"{len(otros)} fila(s) con diseño 'otro' se tratan como grupos independientes "
+                             "(diseño paralelo): comprueba que lo son o calcula yi y vi con la fórmula de su diseño. "
+                             "Filas: " + ", ".join(otros[:8]) + (" y otras" if len(otros) > 8 else "") + "."))
     elif desde_medias:
         mensajes.append(("nota", "El CSV no tiene columna diseno: todas las filas se tratan como diseños paralelos. Si "
                                  "hay crossovers o cuadrados latinos, decláralos (columna diseno) para calcular su "
@@ -897,19 +912,26 @@ def cmd_meta(args, cfg) -> int:
         hi = max(out["uno_fuera"], key=lambda r: r["estimacion"])
         text.append(f"Uno fuera: estimación entre {lo['estimacion']:.4f} (sin {lo['excluido']}) y "
                     f"{hi['estimacion']:.4f} (sin {hi['excluido']})")
+        estrechos = [r["excluido"] for r in out["uno_fuera"] if r.get("avisos")]
+        if estrechos:
+            text.append(f"AVISO: en {len(estrechos)} de {len(out['uno_fuera'])} análisis uno-fuera (sin "
+                        f"{', '.join(map(str, estrechos[:5]))}{' y otros' if len(estrechos) > 5 else ''}) el IC del "
+                        "HKSJ estándar es más estrecho que el de Wald (q < 1); su p e IC modificados están en "
+                        "uno_fuera (p_mod, ci_mod_low, ci_mod_high).")
     if args.subgrupo:
-        from .stats.metareg import categoria_moderador
+        from .stats.metareg import categorias_de_columna
         if args.subgrupo not in set().union(*(r.keys() for r in rows)):
             raise ValueError(f"La columna de subgrupo '{args.subgrupo}' no existe en el CSV")
         vacias = [i for i, r in enumerate(rows, 1) if str(r.get(args.subgrupo) or "").strip() == ""]
         if vacias:
             raise ValueError(f"La columna de subgrupo '{args.subgrupo}' está vacía en la(s) fila(s) "
                              + ", ".join(map(str, vacias[:10])))
-        groups = [categoria_moderador(args.subgrupo, r.get(args.subgrupo)) for r in rows]
+        groups = categorias_de_columna(args.subgrupo, [r.get(args.subgrupo) for r in rows])
         out["subgrupos"] = m.subgroups(yi, vi, groups, method=method_re, ajuste=args.ajuste)
         sg = out["subgrupos"]
         for g, r in sg["subgrupos"].items():
             text.append(f"  subgrupo {g}: k={r['k']}, estimación {r['estimate']:.4f} [{r['ci_low']:.4f}; {r['ci_high']:.4f}]")
+            text += [f"  AVISO (subgrupo {g}): {a}" for a in r.get("avisos") or []]
         if sg.get("Q_entre") is not None:
             text.append(f"  Q entre subgrupos = {sg['Q_entre']:.3f} (gl {sg['gl']}), p = {sg['p']:.3g}. {sg['nota']}")
     reg = None
@@ -950,7 +972,11 @@ def cmd_meta(args, cfg) -> int:
 
 def _script_r(data_name: str, medida: str, metodo: str, ajuste: str) -> str:
     """Script de metafor que reproduce exactamente la inferencia de `nutria meta analizar` con los mismos
-    parámetros (estimación, EE, IC, p e intervalo de predicción de Higgins et al. 2009)."""
+    parámetros (estimación, EE, IC, p e intervalo de predicción de Higgins et al. 2009).
+
+    El modelo de metafor (rma) solo aporta tau² (mismo estimador que nutria); la estimación, el EE, el IC, la
+    p y el intervalo de predicción se calculan después con las mismas fórmulas que nutria.stats.meta, para
+    que no dependan de las convenciones de cada versión de metafor (p. ej. predict() o el HKSJ modificado)."""
     if metodo == "FE":
         modelo = 'res <- rma(yi, vi, data = dat, method = "FE")'
         inferencia = ("se <- sqrt(1 / sum(w)); crit <- qnorm(1 - (1 - nivel) / 2)\n"
@@ -976,13 +1002,14 @@ def _script_r(data_name: str, medida: str, metodo: str, ajuste: str) -> str:
                           f"  p <- 2 * pnorm(abs(mu / se), lower.tail = FALSE)\n"
                           f"}}")
     ip = ("" if metodo == "FE" else
-          "# 3) Intervalo de predicción de nutria: t con k - 2 gl y EE de Wald con el mismo tau² (Higgins, Thompson y\n"
-          "#    Spiegelhalter 2009). No es predict(res): metafor usa otra convención (k - 1 gl y el EE del ajuste, o z).\n"
+          "# 3) Intervalo de predicción de nutria: t con k - 2 gl y EE de Wald, sqrt(1 / sum(w)), con el mismo tau²\n"
+          "#    (Higgins, Thompson y Spiegelhalter 2009), sea cual sea el ajuste del IC. No uses predict(res) para\n"
+          "#    compararlo: según la prueba del modelo, metafor usa otros gl (k - 1) u otro EE (el del ajuste) o z.\n"
           "if (k >= 3) {\n"
           "  ip <- mu + c(-1, 1) * qt(1 - (1 - nivel) / 2, df = k - 2) * sqrt(tau2 + 1 / sum(w))\n"
-          "  cat(sprintf(\"nutria: intervalo de predicción [%.4f; %.4f] (gl = %d)\\n\", ip[1], ip[2], k - 2))\n"
+          "  cat(sprintf(\"nutria: intervalo de prediccion [%.4f; %.4f] (gl = %d)\\n\", ip[1], ip[2], k - 2))\n"
           "}\n")
-    return f"""# Script generado por nutria {__version__}. Revísalo antes de usarlo.
+    return f"""# Script generado por nutria {__version__}. Revísalo antes de usarlo y ejecútalo desde su carpeta.
 # Parámetros de `nutria meta analizar`: medida {medida}; método {metodo}; ajuste {ajuste_txt}; nivel 95 %.
 # Los tamaños de efecto (yi, vi) ya vienen calculados por nutria, incluida la conversión del SEM o SED a DE y las
 # fórmulas de grupos emparejados de los diseños cruzados.
@@ -990,14 +1017,14 @@ def _script_r(data_name: str, medida: str, metodo: str, ajuste: str) -> str:
 library(metafor)
 dat <- read.csv("{data_name}")
 nivel <- 0.95
-# 1) Modelo de metafor (tau² con el mismo estimador que nutria)
+# 1) Modelo de metafor: aporta tau² (mismo estimador que nutria)
 {modelo}
 print(res)
 # 2) Inferencia de nutria, calculada explícitamente con el tau² del modelo: debe coincidir con `nutria meta analizar`
 k <- res$k; tau2 <- if (is.null(res$tau2)) 0 else res$tau2
 w <- 1 / (dat$vi + tau2); mu <- sum(w * dat$yi) / sum(w)
 {inferencia}
-cat(sprintf("nutria: estimación %.4f; EE %.4f; IC [%.4f; %.4f]; p = %.4g; q = %.4g\\n",
+cat(sprintf("nutria: estimacion %.4f; EE %.4f; IC [%.4f; %.4f]; p = %.4g; q = %.4g\\n",
             mu, se, mu - crit * se, mu + crit * se, p, q))
 {ip}# 4) Dependencia: varias comparaciones por estudio (control compartido o varias variables)
 if (any(duplicated(dat$estudio))) {{
@@ -1005,7 +1032,11 @@ if (any(duplicated(dat$estudio))) {{
   print(res_ml)
   print(robust(res_ml, cluster = dat$estudio, clubSandwich = TRUE))
 }}
-# 5) Sensibilidad; sesgo de publicación solo con k >= 10
+# 5) Diseño como moderador (crossover y cuadrado latino frente a paralelo), si hay varios diseños
+if ("diseno" %in% names(dat) && length(unique(dat$diseno[dat$diseno != ""])) > 1) {{
+  print(rma(yi, vi, mods = ~ factor(diseno), data = dat, method = "REML", test = "knha"))
+}}
+# 6) Sensibilidad (uno fuera con la prueba de metafor); sesgo de publicación solo con k >= 10
 print(leave1out(res))
 if (res$k >= 10) {{ print(regtest(res)); funnel(res) }}
 """

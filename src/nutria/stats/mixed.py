@@ -20,8 +20,9 @@ pendiente_entre la asociación entre estudios.
 
 Pendiente aleatoria (por defecto, random_slope="auto"): si la respuesta a la dosis varía entre
 estudios, el modelo con solo intercepto aleatorio infravalora el error estándar de la pendiente
-y la prueba es liberal (con pendientes heterogéneas, un error de tipo I de alrededor del 25 % en
-vez del 5 % nominal). Por eso, cuando es estimable (al menos MIN_ESTUDIOS_PENDIENTE estudios con
+y la prueba es liberal (en simulaciones con 5 a 10 estudios y pendientes heterogéneas, la prueba
+de Wald z de ese modelo, la que se usaba antes por defecto, rechazaba del 11 al 27 % de las veces
+en lugar del 5 % nominal). Por eso, cuando es estimable (al menos MIN_ESTUDIOS_PENDIENTE estudios con
 al menos MIN_NIVELES_PENDIENTE niveles de dosis distintos), se ajustan los dos modelos por REML
 (mismos efectos fijos, así que sus verosimilitudes REML son comparables) y se comparan con la razón
 de verosimilitudes. La varianza de la pendiente está en la frontera del espacio de parámetros bajo
@@ -137,9 +138,9 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError('Instala las dependencias opcionales: pip install "nutria[mixto]"') from exc
 
-    if random_slope not in ("auto", True, False):
+    if not (random_slope == "auto" or isinstance(random_slope, bool)):
         raise ValueError(f"random_slope debe ser 'auto', True o False: {random_slope!r}")
-    if not (isinstance(alfa_lrt, (int, float)) and 0 < alfa_lrt < 1):
+    if isinstance(alfa_lrt, bool) or not (isinstance(alfa_lrt, (int, float)) and 0 < alfa_lrt < 1):
         raise ValueError(f"alfa_lrt debe estar entre 0 y 1: {alfa_lrt!r}")
     covariates = list(covariates or [])
     df = pd.DataFrame(rows)
@@ -242,6 +243,10 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
                   "(mezcla 50:50 de chi² con 1 y 2 gl): sin indicios de que la pendiente varíe entre estudios")
     fit = fit_rs if modelo == "pendiente_aleatoria" else fit_ri
     estado = estado_rs if modelo == "pendiente_aleatoria" else estado_ri
+    if not estado["convergencia"]:
+        avisos.append(f"El modelo elegido ({_MODELOS[modelo]}) no convergió o tiene errores estándar no finitos ("
+                      + "; ".join(estado.get("avisos_statsmodels") or ["sin detalle"])
+                      + "): no uses sus p ni sus IC sin reajustarlo (en R, lme4/lmerTest).")
     params = fit.fe_params
     bse = fit.bse_fe
     gl = int(n_groups) - int(len(params))
@@ -332,7 +337,10 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
     if modelo == "pendiente_aleatoria":
         notes.append("Con pendiente aleatoria, la heterogeneidad de la respuesta entre estudios queda en la matriz "
                      "de covarianzas del estudio (varianza_estudio: intercepto y pendiente).")
-    return out
+    # Lo que hay que leer primero (avisos, modelo elegido y pendientes) va al principio de la salida.
+    primero = ["avisos", "modelo", "motivo_modelo", "pendiente_aleatoria", "prueba", "gl", "pendiente_intra",
+               "pendiente_entre", "diferencia_entre_intra", "pendiente"]
+    return {**{k: out[k] for k in primero if k in out}, **{k: v for k, v in out.items() if k not in primero}}
 
 
 def read_csv(path: Path, sep: str = ",") -> list[dict]:

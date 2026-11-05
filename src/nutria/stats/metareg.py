@@ -45,6 +45,10 @@ def _numero(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
+#: Categoría de referencia por defecto de los moderadores de diseño (si aparece en los datos).
+REFERENCIAS_POR_DEFECTO = {"diseno": "paralelo", "unidad_experimental": "animal"}
+
+
 def categoria_moderador(columna: str, value) -> str:
     """Categoría normalizada: diseno y unidad_experimental con sus normalizaciones; el resto, sin espacios."""
     if columna == "diseno":
@@ -56,19 +60,39 @@ def categoria_moderador(columna: str, value) -> str:
     return str(value).strip()
 
 
+def categorias_de_columna(columna: str, valores: list) -> list[str]:
+    """Categorías normalizadas de una columna (moderador categórico o subgrupo).
+
+    Lanza ValueError si dos valores distintos solo difieren en mayúsculas, acentos o espacios (p. ej.
+    "Alta" y "alta"): casi siempre es una errata que partiría una categoría en dos."""
+    from .effect_sizes import _token
+    categorias = [categoria_moderador(columna, v) for v in valores]
+    vistos: dict[str, str] = {}
+    for c in categorias:
+        clave = _token(c)
+        if clave in vistos and vistos[clave] != c:
+            raise ValueError(f"La columna '{columna}' tiene categorías que solo difieren en mayúsculas, acentos o "
+                             f"espacios ('{vistos[clave]}' y '{c}'): unifícalas en el CSV.")
+        vistos.setdefault(clave, c)
+    return categorias
+
+
 def codificar_moderadores(rows: list[dict], columnas: list[str],
                           referencias: dict[str, str] | None = None) -> tuple[np.ndarray, list[str], dict]:
     """Matriz de moderadores (k × m, sin intercepto), nombres y descripción a partir de filas de un CSV.
 
     - Moderador numérico: todas sus celdas son números finitos; una columna.
-    - Moderador categórico: alguna celda no es numérica, o la columna figura en `referencias` (útil para
+    - Moderador categórico: ninguna celda es numérica, o la columna figura en `referencias` (útil para
       categorías con código numérico). Codificación ficticia: una variable indicadora `col[categoria]`
       por categoría distinta de la de referencia; cada coeficiente es la diferencia frente a la referencia.
-      La referencia es la indicada en `referencias` o, si no, la primera categoría en orden alfabético
-      (como factor() en R); se declara en la descripción.
+      La referencia es la indicada en `referencias`; si no, "paralelo" en `diseno` y "animal" en
+      `unidad_experimental` (si aparecen) y, en los demás casos, la primera categoría en orden alfabético
+      (como factor() en R). Se declara en la descripción.
 
-    Una celda vacía, una columna inexistente, una referencia que no existe o un moderador categórico con
-    una sola categoría lanzan ValueError con el nombre de la columna (y las filas, base 1).
+    Una celda vacía, una columna inexistente, una columna que mezcla números y texto (p. ej. una dosis con
+    "n.d.": no se convierte en categórica sin decirlo; decláralo con `referencias` si lo es), categorías que
+    solo difieren en mayúsculas o acentos, una referencia que no existe o un moderador categórico con una
+    sola categoría lanzan ValueError con el nombre de la columna (y las filas, base 1).
     Devuelve (matriz, nombres, descripcion) con descripcion = {col: {"tipo": "numerico"} o
     {"tipo": "categorico", "referencia": ..., "categorias": [...], "indicadoras": [...]}}.
     """
@@ -95,13 +119,21 @@ def codificar_moderadores(rows: list[dict], columnas: list[str],
             nombres.append(col)
             descripcion[col] = {"tipo": "numerico"}
             continue
-        categorias_fila = [categoria_moderador(col, v) for v in valores]
+        texto = [i + 1 for i, n in enumerate(numeros) if n is None]
+        if col not in referencias and len(texto) < len(numeros):
+            raise ValueError(f"El moderador '{col}' mezcla números y texto (texto en la(s) fila(s) "
+                             + ", ".join(map(str, texto[:10])) + ("…" if len(texto) > 10 else "")
+                             + "): corrige los datos (¿dosis no disponible, coma decimal sin --decimal?) o, si es "
+                               f"categórico, decláralo con --referencia {col}=<categoría de referencia>.")
+        categorias_fila = categorias_de_columna(col, valores)
         categorias = sorted(set(categorias_fila))
         if col in referencias:
             referencia = categoria_moderador(col, referencias[col])
             if referencia not in categorias:
                 raise ValueError(f"La categoría de referencia '{referencias[col]}' no aparece en el moderador "
                                  f"'{col}' (categorías: {', '.join(categorias)})")
+        elif REFERENCIAS_POR_DEFECTO.get(col) in categorias:
+            referencia = REFERENCIAS_POR_DEFECTO[col]
         else:
             referencia = categorias[0]
         if len(categorias) < 2:
