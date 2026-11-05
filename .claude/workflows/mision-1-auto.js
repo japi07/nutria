@@ -151,7 +151,7 @@ const RANKING = S({
   top: { type: 'array', items: S({ id: { type: 'string', pattern: '^O-\\d{4}$' }, titulo: STR, estado: STR, p_top: NUM, motivo: STR }, ['id', 'titulo', 'motivo']) },
   archivo: STR, resumen: STR,
 }, ['top', 'archivo', 'resumen'])
-const PLAN = S({ archivo: STR, resumen: STR, seleccion_firmada: BOOL }, ['archivo', 'resumen'])
+const PLAN = S({ archivo: STR, resumen: STR }, ['archivo', 'resumen'])
 // La crítica del plan responde punto por punto a la lista de validación (LISTA_VALIDACION, más abajo).
 const CRITICA_PLAN = S({
   veredicto: { type: 'string', enum: ['sostenida', 'debilitada', 'refutada', 'no_verificable'] }, debilidades: STRS, experimento_decisivo: STR,
@@ -334,7 +334,11 @@ const leerRegistro = async (id, etiqueta, fase) => {
     return { compuerta: g, motivo: fila && fila.rationale ? fila.rationale : (o.regulatory_route ? `ruta regulatoria ${o.regulatory_route}` : 'sin motivo registrado'),
       propuesta_por: fila ? fila.decided_by || null : null }
   })
-  return { ok: true, estado: o.status || null, efectivas: ef, bloqueadas }
+  // Decisiones del registro (el lector no es evaluador): la firma humana de la selección la comprueba el workflow,
+  // no la declara un agente.
+  const decisiones = Array.isArray(o.decisiones) ? o.decisiones.filter(esObjeto) : []
+  const seleccionFirmada = decisiones.some((x) => /seleccionad/i.test(String(x.decision || '')) && String(x.human_signoff || '').trim() !== '')
+  return { ok: true, estado: o.status || null, efectivas: ef, bloqueadas, seleccion_firmada: seleccionFirmada }
 }
 
 // Verificación de citas: el workflow decide si es completa con la salida literal de nutria verificar.
@@ -793,7 +797,9 @@ const planes = await pipeline(
       `y los análisis de research/revisiones/ sobre ${id}. Incluye: pregunta PECO; protocolo de revisión sistemática (PRISMA 2020); datos a extraer (doble extracción); ` +
       'análisis estadísticos; modelos y simulaciones justificados por la decisión que informan; evaluación regulatoria y económica; criterios de descarte fijados de antemano; ' +
       `plan de validación in vitro → ex vivo → in vivo (solo diseño) con TODOS los puntos de tu lista de validación: ${textoLista}; cronograma y agentes responsables. ` +
-      `Comprueba con nutria decision listar --entidad ${id} si la selección tiene firma humana y dilo en el plan (sin ella, el plan es provisional).` +
+      (reg.seleccion_firmada
+        ? `Según el registro, la selección de ${id} tiene firma humana: dilo en el plan.`
+        : `Según el registro, la selección de ${id} NO tiene firma humana: el plan es provisional y debe decirlo en su primera línea.`) +
       (planExiste(id) === false ? '' : ` Si research/planes/${id}.md ya existe, no se pierde: antes de escribir, cópialo sin cambios a ${RUTAS_PLAN[id].anterior} ` +
         '(es un fichero nuevo) y cita esa versión anterior en el plan nuevo.'),
       { label: `plan:${id}`, phase: 'Planes', agentType: 'director-cientifico', schema: PLAN },
@@ -837,6 +843,8 @@ const resumenLista = (lista) => {
   return { omitidos: de('omite'), mal_cubiertos: de('cubre_mal'),
     sin_respuesta: LISTA_VALIDACION.map((_, i) => i + 1).filter((n) => !respondidos.has(n)) }
 }
+const sinFirma = planes.filter((r) => r && r.plan && !(r.registro && r.registro.seleccion_firmada)).map((r) => r.id)
+if (sinFirma.length) log(`Selección sin firma humana en el registro: los planes de ${sinFirma.join(', ')} son provisionales`)
 const conEticaBloqueada = planes.filter((r) => r && r.plan && r.etica && r.etica.estado === 'bloqueada').map((r) => r.id)
 if (conEticaBloqueada.length) log(`Compuerta ética repropuesta "bloqueada" sobre el diseño: ${conEticaBloqueada.join(', ')}`)
 
@@ -856,7 +864,7 @@ return {
       critica: r.critica_plan ? r.critica_plan.veredicto : 'sin crítica (fallo de agente)',
       lista_validacion: r.critica_plan ? resumenLista(r.critica_plan.lista_validacion) : 'sin crítica (fallo de agente)',
       revisado_tras_critica: Boolean(r.plan_revisado),
-      seleccion_firmada: typeof final.seleccion_firmada === 'boolean' ? final.seleccion_firmada : null,
+      seleccion_firmada: Boolean(r.registro && r.registro.seleccion_firmada),
       etica: r.etica ? { estado: r.etica.estado, motivo: r.etica.motivo } : 'sin propuesta (fallo de agente)',
       bloqueada: Boolean(r.etica && r.etica.estado === 'bloqueada'),
       verificacion_citas: r.verificacion_citas || null,

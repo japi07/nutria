@@ -113,7 +113,9 @@ firma). `verificador-citas` ejecuta `nutria verificar research/revisiones/M1_ran
    desacuerdos y compuertas pendientes.
 2. **Punto de control humano**: la selección la decide una persona, que la firma en su terminal
    (`nutria decision registrar --entidad <ID> --decision "seleccionada M1" --motivo "..." --firma-humana "<nombre>"`).
-3. Antes de cada plan, lee las compuertas efectivas del registro: si alguna está `bloqueada`, no se redacta el plan.
+3. Antes de cada plan, lee las compuertas efectivas y las decisiones del registro: si alguna compuerta está
+   `bloqueada`, no se redacta el plan; si la selección no tiene firma humana en el registro, el plan es provisional
+   (lo comprueba el workflow con la salida de `nutria`, no lo declara el agente que redacta el plan).
 4. Para cada oportunidad elegida, `director-cientifico` redacta `research/planes/<ID>.md` (si ya existe, copia antes
    la versión anterior a `research/planes/<ID>_anterior_<fecha>.md` y la cita: no se pierde): pregunta PECO; protocolo
    de revisión sistemática (PRISMA 2020); datos a extraer; análisis estadísticos; modelos y simulaciones justificados

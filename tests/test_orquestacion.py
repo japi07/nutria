@@ -1830,3 +1830,24 @@ def test_p8_mision1_propuesta_top3_atribuida_y_por_oportunidad(project, capsys):
     ranking = _norm(call(out, "ranking")["prompt"])
     assert 'nutria --agente director-cientifico decision registrar --entidad <ID> --decision "propuesta top-3 M1"' in ranking
     assert "sin --firma-humana" in ranking
+
+
+@requires_node
+def test_p8_mision1_firma_de_la_seleccion_segun_el_registro(project, capsys):  # D3-3 (no fiarse de lo que declara un agente)
+    _registrar_oportunidades(project, capsys, 2)
+    firmada = _ver(capsys, "O-0001")
+    vista = json.loads(firmada["salida"])
+    vista["decisiones"] = [{"entity_id": "O-0001", "decision": "seleccionada M1", "rationale": "m", "decided_by": "persona",
+                            "human_signoff": "Ana"},
+                           {"entity_id": "O-0001", "decision": "seleccionada M1", "rationale": "propuesta", "decided_by": "x",
+                            "human_signoff": None}]
+    reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": {**firmada, "salida": json.dumps(vista)}},
+              {"label": "compuertas-registro:planes:O-0002", "respuesta": _ver(capsys, "O-0002")},
+              # el agente del plan declara lo contrario de lo que dice el registro: no se le cree
+              {"labelPrefix": "plan:", "respuesta": {"archivo": "research/planes/x.md", "resumen": "r", "seleccion_firmada": True}}]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002"]}, reglas)
+    assert "Según el registro, la selección de O-0001 tiene firma humana" in call(out, "plan:O-0001")["prompt"]
+    assert "Según el registro, la selección de O-0002 NO tiene firma humana: el plan es provisional" in call(out, "plan:O-0002")["prompt"]
+    res = {p["id"]: p for p in out["resultado"]["planes"]}
+    assert res["O-0001"]["seleccion_firmada"] is True and res["O-0002"]["seleccion_firmada"] is False
+    assert any("Selección sin firma humana en el registro: los planes de O-0002 son provisionales" in m for m in out["logs"])
