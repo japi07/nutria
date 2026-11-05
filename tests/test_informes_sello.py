@@ -1261,3 +1261,219 @@ def test_run_hook_with_the_real_hook_falls_back_and_blocks(project):
     _fake_python(bindir / "python", f'exec "{sys.executable}" "$@"')
     decision = run(_payload(path))
     assert decision["decision"] == "block" and "Sin sello" in decision["reason"]
+
+
+# ============================================================================ ronda 2: elusiones de la revisión
+def _body_errors(body: str, rows: str = ANNEX, status: str = "final") -> list[str]:
+    """Errores (sin los de la revisión humana, que exigen registro) de un documento con CLAIM_A, CLAIM_B y `body`."""
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, rows).replace("estado: final", f"estado: {status}")
+    return [str(i) for i in chk.check_report(text, require_sections=False)
+            if i.severity == "error" and i.code != chk.REVIEW_CODE]
+
+
+def _body_issues(body: str, rows: str = ANNEX, status: str = "borrador") -> list[chk.Issue]:
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, rows).replace("estado: final", f"estado: {status}")
+    return [i for i in chk.check_report(text, require_sections=False) if i.code != chk.REVIEW_CODE]
+
+
+@pytest.mark.parametrize("body", [
+    "En el ensayo de campo la producción aumentó 2,5\nkg/d en vacas multíparas.",            # salto de línea
+    "En el ensayo de campo la producción aumentó 2,5  kg/d en vacas multíparas.",            # dos espacios
+    "En el ensayo de campo la producción aumentó 2,5  kg/d en vacas multíparas.",       # espacio fino
+    "En el ensayo de campo la producción aumentó 2,5&nbsp;kg/d en vacas multíparas.",        # entidad HTML
+    "En el ensayo de campo la producción aumentó 2,5 (kg/d) en vacas multíparas.",           # unidad entre paréntesis
+    "La temperatura rectal bajó a 38,1 ºC con la colina.",                                   # indicador ordinal
+    "El margen subió €15 por vaca y año con la colina.",                                     # moneda delante
+    "# Resultado del ensayo: +2,5 kg/d de leche",                                            # otro título de nivel 1
+])
+def test_figures_split_spaced_or_disguised_need_a_label(body):
+    # D3-4 (ronda 2): la cifra y su unidad se buscan en el párrafo entero, no línea a línea
+    assert any("Cifra con unidades" in e for e in _body_errors(body)), body
+    assert any("Cifra con unidades" in str(i) and i.severity == "aviso" for i in _body_issues(body)), body
+
+
+@pytest.mark.parametrize("body", [
+    "García (2018) demostró que la colina elimina la cetosis subclínica.",                   # narrativa, un autor
+    "García (2018, p. 23) demostró que la colina elimina la cetosis subclínica.",            # con página
+    "Smith J. M. (2019) demostró que la colina elimina la cetosis subclínica.",              # con iniciales
+    "D'Angelo (2019) demostró que la colina elimina la cetosis subclínica.",                 # apóstrofo
+    "García et al. 2018 demostraron que la colina elimina la cetosis subclínica.",           # sin paréntesis
+    "Según García 2018, la colina elimina la cetosis subclínica.",                           # tras «según»
+    "Como demostraron García et al.\n(2018), la colina elimina la cetosis subclínica.",      # partida en dos líneas
+    CLAIM_A[:-1] + ". García et al. (2018) demostró que la colina elimina la cetosis.",      # [Rn] en otra frase
+])
+def test_author_year_citations_need_a_reference_in_the_same_sentence(body):
+    assert any("Cita autor-año sin referencia" in e for e in _body_errors(body)), body
+    assert any("Cita autor-año sin referencia" in e for e in _body_errors(body, status="borrador")), body
+
+
+@pytest.mark.parametrize("body, expected", [
+    ("| Estudio | Especie | n | Dosis (g/d) | Leche (kg/d) |\n|---|---|---|---|---|\n"
+     "| García 2018 | vacuno lechero | 60 | 15 | +2,5 |\n| Pérez et al. 2017 | vacuno lechero | 48 | 20 | +3,1 |",
+     ("Cita autor-año", "Cifra con unidades")),                                              # unidad en la cabecera
+    ("| Variable | Control | Colina |\n|---|---|---|\n| Leche (kg/d) | 30,1 | 32,4 |", ("Cifra con unidades",)),
+    ("| Variable | Valor | Unidad |\n|---|---|---|\n| Leche | 2,5 | kg/d |", ("Cifra con unidades",)),
+    ("| Estudio | Leche | Grasa |\n|---|---|---|\n| | kg/d | % |\n| Ensayo de campo | 2,5 | 0,1 |",
+     ("Cifra con unidades",)),                                                               # fila de unidades
+    ("| Referencia | Resultado |\n|---|---|\n| García y Pérez 2018 | más leche |", ("Cita autor-año",)),
+])
+def test_tables_are_checked_by_their_structure(body, expected):
+    errors = _body_errors(body)
+    for what in expected:
+        assert any(what in e for e in errors), (what, body)
+
+
+@pytest.mark.parametrize("body, what", [
+    ("La colina elimina la cetosis subclínica [3].", "Cita numérica «[3]»"),
+    ("La colina elimina la cetosis subclínica (R1).", "Referencia «(R1)» mal escrita"),
+])
+def test_numeric_citations_and_parenthesized_references_are_errors(body, what):
+    assert any(what in e for e in _body_errors(body, status="borrador"))
+
+
+@pytest.mark.parametrize("body, row", [
+    ("| Estudio | Especie | n | Dosis (g/d) | Leche (kg/d) |\n|---|---|---|---|---|\n"
+     "| García 2018 [R1] | vacuno lechero | 60 | 15 | +1,2 [PUB] |", "García 2018 vacuno lechero 60 15 +1,2"),
+    ("| Estudio | Semana 4 (kg/d) |\n|---|---|\n| Ensayo de campo [R1] | 1,2 [PUB] |", "Ensayo de campo 1,2"),
+    ("| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| García et al. 2017. Vacas Holstein. | 1,2 | [PUB] [R1] |",
+     "García et al. 2017. Vacas Holstein. 1,2"),                                             # punto dentro de una celda
+    ("Como demostraron García et al.\n(2018) [R1], la colina aumentó la leche [PUB].",
+     "Como demostraron García et al. (2018), la colina aumentó la leche"),
+    ("La colina protegida aumentó la producción de leche en vacas en transición [PUB]\n[R1].",
+     "La colina protegida aumentó la producción de leche en vacas en transición"),         # [Rn] en la línea siguiente
+    ("Los animales del Grupo A (2019) recibieron la dieta basal [SUP].", ""),
+    ("La alegación se rige por el Reglamento (CE) 767/2009, art. 13, y el Reglamento (UE) 2019/6 [SUP].", ""),
+    ("El proyecto se alinea con la Agenda 2030 y con Horizonte 2020 [SUP].", ""),
+    ("Se usaron tres dietas; Holstein 2019; y Frisona [SUP].", ""),
+    ("```\nx = datos[1]\nprint([2])\n```", ""),
+    ("La colina es un nutriente esencial[^1] [SUP].\n\n[^1]: Nota del autor [SUP].", ""),
+    ("Véase [la guía][1] [SUP].\n\n[1]: https://example.org", ""),
+    ("El IC 95 % fue [1,2; 3,4] kg/d [DER] (cálculo: nutria meta analizar).", ""),
+])
+def test_legitimate_forms_are_not_flagged(body, row):
+    rows = ANNEX + (f"\n| R1 | {row} | respalda | x |" if row else "")
+    assert _body_errors(body, rows) == [], body
+
+
+def test_reviewer_round1_evasions_block_review_and_stamp(project, online):
+    # D3-4: las cinco formas de la revisión (cifra partida, dos espacios, cita narrativa, cita en una línea con [Rn]
+    # de otra frase y tabla con la unidad en la cabecera) no llegan a un informe final revisado y sellado.
+    path = _filled_report(project)
+    base = path.read_text("utf-8")
+    table = ("\n\n| Estudio | Especie | n | Dosis (g/d) | Leche (kg/d) |\n|---|---|---|---|---|\n"
+             "| García 2018 | vacuno lechero | 60 | 15 | +2,5 |\n| Pérez et al. 2017 | vacuno lechero | 48 | 20 | +3,1 |\n")
+    variants = {CLAIM_B + "\nEn el ensayo de campo la producción aumentó 2,5\nkg/d en vacas multíparas.": "Cifra",
+                CLAIM_B + "\nEn el ensayo de campo la producción aumentó 2,5  kg/d en vacas multíparas.": "Cifra",
+                CLAIM_B + "\nGarcía (2018) demostró que la colina elimina la cetosis subclínica.": "Cita autor-año",
+                CLAIM_B + " García et al. (2018) demostró que la colina elimina la cetosis subclínica.": "Cita autor-año",
+                CLAIM_B + table: "Cita autor-año"}
+    for variant, what in variants.items():
+        path.write_text(base.replace(CLAIM_B, variant, 1), "utf-8")
+        with pytest.raises(SystemExit, match=f"No se registra la revisión(.|\n)*{what}"):
+            main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"])
+        assert db.report_reviews(_conn()) == []
+        # escrito a mano como final, el sello no vale
+        path.write_text(path.read_text("utf-8").replace("estado: borrador", "estado: final"), "utf-8")
+        main(["informe", "comprobar", str(path), "--online", "--sellar"])
+        assert not chk.stamp_status(path)[0], variant
+        assert any(what in e for e in _errors(path.read_text("utf-8"), conn=_conn(), path=path)), variant
+
+
+def test_support_tables_outside_annex_a_are_errors():
+    # D3-3 (a): una valoración no_respalda en otra sección, bajo «## Anexo A1» o «## Annex A» no queda sin leer
+    two = ("La colina aumenta la producción de leche en vacas lecheras [PUB] [R1]. "
+           "La colina reduce la incidencia de cetosis en vacas lecheras [PUB] [R1].")
+    rows = ("| R1 | La colina aumenta la producción de leche en vacas lecheras | respalda | x |\n"
+            "| R1 | La colina reduce la incidencia de cetosis en vacas lecheras | respalda | x |")
+    negative = "| R1 | La colina reduce la incidencia de cetosis en vacas lecheras | no_respalda | x |\n"
+    ok = _strict_doc(two, rows)
+    assert not [e for e in _errors(ok, require_sections=False) if "Anexo A" in e or "respaldo" in e]
+    for where in ("## 13. Limitaciones", "## Anexo A1. Continuación", "## Annex A"):
+        doc = ok + f"\n{where}\n\n{ANNEX_HEADER}{negative}"
+        errors = _errors(doc.replace("estado: final", "estado: borrador"), require_sections=False)
+        assert any("Tabla de respaldo (columna Respaldo) fuera del Anexo A" in e for e in errors), where
+        assert any("valoración de respaldo negativa fuera del Anexo A" in e for e in errors), where
+    headerless = ok.replace("## Referencias", f"{negative}\n## Referencias")
+    assert any("valoración de respaldo negativa fuera del Anexo A" in e
+               for e in _errors(headerless, require_sections=False))
+    emphasized = ok.replace("| Ref | Afirmación | Respaldo | Motivo |", "| **Ref** | **Afirmación** | **Respaldo** | "
+                                                                       "**Motivo** |")
+    assert not [e for e in _errors(emphasized, require_sections=False) if "Anexo A" in e]
+
+
+@pytest.mark.parametrize("body", [
+    "La colina protegida aumenta la producción de leche en vacas lecheras. Así lo indica el ensayo [PUB] [R1].",
+    "La colina protegida aumenta la producción de leche en vacas lecheras.\n\nAsí lo indica el ensayo [PUB] [R1].",
+    "La colina protegida aumenta la producción de leche en vacas lecheras. Según el ensayo [PUB] [R1].",
+    "La colina protegida aumenta la producción de leche en vacas lecheras. Es lo que muestra el ensayo [PUB] [R1].",
+    "La colina protegida aumenta la producción de leche en vacas lecheras. Esto se observó en el ensayo [PUB] [R1].",
+])
+def test_pub_sentence_that_only_points_to_an_unlabeled_sentence(body):
+    # D3-3 (b): la afirmación real quedaría sin etiqueta y la fila del Anexo A solo reproduciría la remisión
+    row = body.replace("\n\n", " ").split(". ")[-1].replace(" [PUB] [R1].", "")
+    rows = ANNEX + f"\n| R1 | {row} | respalda | x |"
+    assert any("remite a la frase anterior" in e for e in _body_errors(body, rows)), body
+    assert any("remite a la frase anterior" in str(i) and i.severity == "aviso" for i in _body_issues(body, rows))
+    labeled = body.replace("vacas lecheras.", "vacas lecheras [HIP].", 1)
+    assert not any("remite a la frase anterior" in e for e in _body_errors(labeled, rows)), labeled
+
+
+@pytest.mark.parametrize("body, row", [
+    (CLAIM_A + " Este efecto se mantuvo hasta la semana 12 en multíparas [PUB] [R1].",
+     "Este efecto se mantuvo hasta la semana 12 en multíparas"),
+    ("La colina es un nutriente. Como indica el ensayo, la colina protegida aumentó la producción de leche en vacas "
+     "[PUB] [R1].", "Como indica el ensayo, la colina protegida aumentó la producción de leche en vacas"),
+])
+def test_substantive_or_chained_pub_sentences_are_not_anaphora(body, row):
+    assert not any("remite a la frase anterior" in e
+                   for e in _body_errors(body, ANNEX + f"\n| R1 | {row} | respalda | x |")), body
+
+
+def test_section_14_route_is_the_first_declared_and_struck_text_does_not_count(project):
+    # D5-11: «materia_prima; se descartó la de aditivo zootécnico» declara materia_prima, y «~~no_resuelta~~
+    # superada» declara superada
+    path = _filled_report(project, ruta_regulatoria_preliminar="aditivo_zootecnico")
+    final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    assert not [e for e in _errors(final, conn=_conn(), path=path) if "ruta" in e or "compuerta" in e]
+    route_line = re.search(r"(?m)^Ruta regulatoria preliminar del registro: .*$", final).group(0)
+    mention = final.replace(route_line, "Ruta regulatoria preliminar: `materia_prima` [SUP]; se descartó la de aditivo "
+                                        "zootécnico [SUP].")
+    assert any("declara la ruta regulatoria «materia_prima», pero el registro tiene «aditivo_zootecnico»" in e
+               for e in _errors(mention, conn=_conn(), path=path))
+    struck_route = final.replace(route_line, "Ruta regulatoria preliminar: ~~`aditivo_zootecnico`~~ `materia_prima` "
+                                             "[SUP].")
+    assert any("declara la ruta regulatoria «materia_prima»" in e for e in _errors(struck_route, conn=_conn(), path=path))
+    wrapped = final.replace(route_line, "Ruta regulatoria preliminar del registro:\n`aditivo_zootecnico` [SUP].")
+    assert not [e for e in _errors(wrapped, conn=_conn(), path=path) if "ruta" in e]
+    for struck in ("| seguridad | ~~no_resuelta~~ superada |", "| seguridad | <del>no_resuelta</del> superada |"):
+        text = final.replace("| seguridad | no_resuelta |", struck)
+        assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path))
+    honest = final.replace("| seguridad | no_resuelta |", "| seguridad | ~~superada~~ no_resuelta |")
+    assert not [e for e in _errors(honest, conn=_conn(), path=path) if "compuerta" in e]
+
+
+@pytest.mark.parametrize("name", ["pendiente", "-", "no", "null", "~", "false", "X", "  "])
+def test_review_rejects_placeholder_names(project, name):
+    # Regresión de la ronda 1: un nombre de relleno no puede dejar una revisión imborrable que luego no cuenta
+    path = _filled_report(project)
+    before = path.read_bytes()
+    with pytest.raises(SystemExit, match="exige|no es el nombre de una persona"):
+        main(["informe", "revisar", str(path), SIGN, name, "--estado", "final"])
+    assert path.read_bytes() == before and db.report_reviews(_conn()) == []
+    with pytest.raises(db.RegistryError):
+        db.add_report_review(_conn(), "x.md", chk.review_digest(before.decode("utf-8")), name)
+    assert db.report_reviews(_conn()) == []
+
+
+def test_many_claims_in_one_paragraph_are_checked_quickly():
+    # Regresión de la ronda 1: el emparejamiento del Anexo A no crece con el cubo del número de afirmaciones
+    import time
+    n = 400
+    body = "\n".join(f"La colina protegida aumentó la leche {i},2 kg/d en vacas del grupo {i} [PUB] [R1]."
+                     for i in range(n))
+    rows = "\n".join(f"| R1 | La colina protegida aumentó la leche {i},2 kg/d en vacas del grupo {i} | respalda | x |"
+                     for i in range(n))
+    started = time.perf_counter()
+    errors = _errors(_strict_doc(body, rows), require_sections=False)
+    assert time.perf_counter() - started < 20
+    assert not [e for e in errors if "respaldo" in e or "Anexo A" in e]

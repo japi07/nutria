@@ -16,12 +16,15 @@ revisado_por_humano: null
 > (con referencia `[Rn]` verificable y una fila de respaldo por afirmación en el Anexo A), `[DER]` derivado por
 > cálculo propio a partir de datos publicados (indica el cálculo o la orden `nutria` usada), `[HIP]` hipótesis,
 > `[SUP]` supuesto de trabajo, `[DESC]` dato desconocido (indica cómo obtenerlo). Cada frase con una cifra con
-> unidades o con una referencia `[Rn]` lleva su etiqueta, también en las tablas. Las hipótesis generadas por IA
-> nunca se presentan como hallazgos. `[POR COMPLETAR]` marca lo que falta por redactar: en `revisado` o `final` es
-> un error. Para pasar a `estado: revisado` o `final` hacen falta: el respaldo de cada afirmación `[PUB]` en el
-> Anexo A, la revisión adversarial del crítico enlazada en `revision_critica`, la revisión humana registrada por la
-> persona que revisa (`nutria informe revisar`, solo personas) y, después, la verificación en línea completa y
-> sellada (`nutria informe comprobar <informe> --online --sellar`).
+> unidades o con una referencia `[Rn]` lleva su etiqueta, también en las tablas (cada fila es una frase, aunque la
+> unidad esté en la cabecera). Las citas se escriben con `[Rn]` en la misma frase, no como autor-año ni con números
+> entre corchetes; la afirmación de una `[PUB]` va en su propia frase, no en la anterior (una frase que solo dice
+> «así lo indica el ensayo» no basta). Las hipótesis generadas por IA nunca se presentan como hallazgos.
+> La marca `[POR COMPLETAR]` señala lo que falta por redactar: en `revisado` o `final` es un error. Para pasar a un
+> informe en `estado: revisado` o `final` hacen falta: el respaldo de cada afirmación `[PUB]` en el Anexo A, la
+> revisión adversarial del crítico enlazada en `revision_critica`, la revisión humana registrada por la persona que
+> revisa (`nutria informe revisar`, solo personas) y, después, la verificación en línea completa y sellada
+> (`nutria informe comprobar <informe> --online --sellar`).
 
 ## 0. Resumen ejecutivo
 
@@ -152,8 +155,9 @@ Alegación prevista (Reglamento (CE) 767/2009, art. 13): {alegacion}
      la sigue; en orden, al menos la mitad de sus palabras y un mínimo de 4; «...» separa fragmentos de 2 o más
      palabras). Una fila que reproduce por igual dos afirmaciones distintas no cuenta para ninguna. Respaldo:
      respalda | parcial | no_respalda | no_verificable. Una fila no_respalda no se compensa con otra respalda ni
-     se puede dejar sin asignar. Las citas literales entre comillas de la columna Motivo se buscan en el resumen
-     de la fuente (no en el texto completo). -->
+     se puede dejar sin asignar. Las filas de respaldo van solo en esta sección: una tabla con la columna Respaldo
+     en otra parte del informe es un error. Las citas literales entre comillas de la columna Motivo se buscan en el
+     resumen de la fuente (no en el texto completo). -->
 
 | Ref | Afirmación | Respaldo | Motivo |
 |---|---|---|---|
