@@ -612,6 +612,7 @@ class CitationCheck:
     journal_in_citation: str | None = None
     journal_ok: bool | None = None
     notes: list[str] = field(default_factory=list)
+    described: bool = False               # la cita trae algo más que identificadores (autores, título...)
 
 
 def _assign_segments(text: str, toks: list[_Tok]) -> None:
@@ -664,8 +665,10 @@ def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors:
     span = max(spans, key=lambda item: (item[0], -len(item[1])))[1]
     real_all = {w for v in variants for w in v}
     chosen = None
-    for lead in (False, True):
-        for tail in (False, True):
+    # Primero el tramo recortado: a igual coincidencia gana (un año o una revista pegados al final del título no
+    # quedan dentro de él, donde no se comprobarían). El recorte nunca quita palabras del título real.
+    for lead in (True, False):
+        for tail in (True, False):
             cut = _trim_span(span, real_all, authors, journals, lead, tail)
             if not cut:
                 continue
@@ -828,6 +831,7 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
     check = CitationCheck()
     text = _clean_citation(citation_text)
     toks = _tokens_of(text)
+    check.described = any(_is_sig(t.norm) and not _has_digit(t.norm) and t.norm not in _NOISE for t in toks)
     if not toks:
         return check
     _assign_segments(text, toks)
@@ -963,6 +967,11 @@ def _apply_citation(result: Verification, rec: Record | None, citation_text: str
         result.author_in_citation, result.author_ok = check.author_in_citation, check.author_ok
         result.journal_in_citation, result.journal_ok = check.journal_in_citation, check.journal_ok
         reasons = []
+        if not check.described:
+            # Solo el identificador: no hay nada que comparar, y así se esquivaría la comprobación.
+            result.title_ok = False
+            reasons.append("la entrada solo trae el identificador: escribe autores, año, título y revista para poder "
+                           "comprobar que corresponde a la cita")
         if check.title_ok is False:
             detail = [f"similitud {check.title_score:.2f}" if check.title_score is not None else "no encontrado"]
             if check.title_missing:

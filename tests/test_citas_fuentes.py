@@ -465,6 +465,24 @@ def test_ano_dentro_del_doi_no_es_el_ano_de_la_cita(net):
     assert c.citation_year(f"Sin año. DOI: {DOI}") is None
 
 
+def test_ano_pegado_al_titulo_tambien_se_comprueba(net):
+    published(net)
+    for cite in (f"Pérez J. {TITLE} 2012. J Dairy Sci 103:1-10.", f"Pérez J, García A. {TITLE}, 2012, J Dairy Sci."):
+        res = c.verify_doi(Client(), DOI, cite)
+        assert res.year_in_citation == 2012 and res.mismatch, cite
+
+
+def test_entrada_con_solo_el_identificador_no_se_da_por_buena(net):
+    published(net)
+    for entry in (f"DOI: {DOI}", f"https://doi.org/{DOI}", f"2020. doi:{DOI}"):
+        res = c.verify_entry(Client(), entry)[0]
+        assert res.status == "verificada" and res.mismatch and not res.ok, entry
+        assert "solo trae el identificador" in res.message
+    issues, details, summary = check_report_online(Client(), report(f"DOI: {DOI}"))
+    assert summary["con_error"] == 1 and not summary["completa"]
+    assert c.verify_doi(Client(), DOI).ok          # sin cita (verificar --doi) solo se comprueba el identificador
+
+
 def test_retractacion_desconocida_sin_clave_de_openalex_ni_pubmed(net):
     net.cr[DOI] = cr_msg(DOI)          # Crossref no trae aviso de retractación: desconocida, no "no retractado"
     net.oa_key = False
