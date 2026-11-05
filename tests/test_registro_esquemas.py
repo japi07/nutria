@@ -518,6 +518,11 @@ def test_afirmacion_pub_exige_contexto_biologico(project, capsys):
         db.add_claim(_conn(), {k: v for k, v in base.items() if k != "contexto"})
     hip = {"texto": "X podría reducir el BHB en el posparto", "etiqueta": "HIP"}
     assert main(["afirmacion", "agregar", "--datos", _write(project / "h.json", hip)]) == 0
+    # fuera de [PUB] el contexto puede ser parcial, pero lo que se indica no puede ser genérico ni de relleno
+    parcial = dict(hip, contexto={"especie": "vacuno lechero", "etapa": "posparto"})
+    assert main(["afirmacion", "agregar", "--datos", _write(project / "h.json", parcial)]) == 0
+    with pytest.raises(SystemExit, match="genérico"):
+        main(["afirmacion", "agregar", "--datos", _write(project / "h.json", dict(hip, contexto={"especie": "animales"}))])
 
 
 @pytest.mark.parametrize("campo", ["especie", "estado_fisiologico", "dieta_basal", "forma_producto", "dosis_base",

@@ -59,7 +59,7 @@
     "contexto": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Contexto biológico del dato (regla 3 de CLAUDE.md). Obligatorio en las afirmaciones [PUB]: especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis con su base de expresión y forma del producto. 'no_consta' declara lo que la fuente no informa.",
+      "description": "Contexto biológico del dato (regla 3 de CLAUDE.md). En las afirmaciones [PUB] es obligatorio y completo: especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis con su base de expresión y forma del producto; 'no_consta' declara lo que la fuente no informa. En las demás etiquetas es opcional y puede ser parcial.",
       "properties": {
         "especie": {
           "anyOf": [
@@ -215,28 +215,6 @@
           "description": "Forma química, protección ruminal, vehículo..."
         }
       },
-      "required": [
-        "especie",
-        "diseno",
-        "unidad_experimental",
-        "n",
-        "dosis",
-        "dosis_base",
-        "forma_producto"
-      ],
-      "anyOf": [
-        {
-          "required": [
-            "etapa"
-          ],
-          "x-mensaje": "falta la etapa o el estado fisiológico ('no_consta' si la fuente no lo informa)"
-        },
-        {
-          "required": [
-            "estado_fisiologico"
-          ]
-        }
-      ],
       "allOf": [
         {
           "if": {
@@ -300,6 +278,31 @@
           },
           "ubicacion": {
             "minLength": 2
+          },
+          "contexto": {
+            "required": [
+              "especie",
+              "diseno",
+              "unidad_experimental",
+              "n",
+              "dosis",
+              "dosis_base",
+              "forma_producto"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "etapa"
+                ],
+                "x-mensaje": "falta la etapa o el estado fisiológico ('no_consta' si la fuente no lo informa)"
+              },
+              {
+                "required": [
+                  "estado_fisiologico"
+                ]
+              }
+            ],
+            "x-mensaje": "una afirmación [PUB] necesita el contexto biológico completo ('no_consta' para lo que la fuente no informe)"
           }
         }
       }
