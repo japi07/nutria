@@ -32,7 +32,7 @@ nueve, en el mismo orden, que comprueba `critico-red-team` y que usa `mision-1-a
 1. **Líquido ruminal**: de animales donantes (procedimiento autorizado) o de matadero; indica cuál y por qué.
 2. **Procedimientos con animales**: Directiva 2010/63/UE (en España, Real Decreto 53/2013), aprobación del comité de
    ética y principio de las 3R.
-3. **In situ es in vivo**: la técnica in situ es un ensayo in vivo y necesita las mismas autorizaciones.
+3. La técnica in situ es un ensayo in vivo y necesita las mismas autorizaciones que el punto anterior.
 4. **Dossier europeo**: diseño conforme a la guía de eficacia vigente del Panel FEEDAP de EFSA, EFSA J
    2024;22(7):e8856 (DOI 10.2903/j.efsa.2024.8856), aplicable desde el 1-12-2024, que sustituye a la de 2018
    (DOI 10.2903/j.efsa.2018.5274). Comprueba en EFSA Journal que sigue vigente y anota la fecha.

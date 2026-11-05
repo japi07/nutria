@@ -551,7 +551,7 @@ def test_mision1_plans_phase_includes_validation_checklist_and_citation_check(pr
     assert ls.index("revision-plan:O-0003") < ls.index("verificacion:plan:O-0003")
     etica = call(out, "etica-plan:O-0003")
     assert etica["agentType"] == "sostenibilidad-bienestar"
-    assert "nutria --agente sostenibilidad-bienestar puntuar compuerta O-0003 etica" in etica["prompt"]
+    assert "nutria --agente sostenibilidad-bienestar --json puntuar compuerta O-0003 etica" in etica["prompt"]
     assert "sin --firma-humana" in etica["prompt"]
     assert "verificar research/planes/O-0003.md" in call(out, "verificacion:plan:O-0003")["prompt"]
     # sin crítica no hay revisión, pero el plan se verifica y su ética se repropone igualmente; el fallo se informa
