@@ -9,7 +9,8 @@
   estado no se puede leer), exige además la revisión humana registrada (`nutria informe revisar`) y un sello válido.
 - research/planes/**/*.md y research/revisiones/**/*.md: lo mismo sin exigir las 20 secciones; sus tablas de
   veredictos o de verificación (la crítica de red-team-auto, una nota de verificador-citas) no son tablas de respaldo
-  fuera del Anexo A, salvo que el documento tenga un «## Anexo A».
+  fuera del Anexo A, salvo que el documento tenga un «## Anexo A», y en borrador un identificador de artículo en el
+  cuerpo o una referencia sin corchetes («según R1») son aviso (en los informes, error).
 - research/oportunidades/**/*.json y research/hipotesis/**/*.json: validación contra su esquema.
 
 El estado se lee con la misma función que usan `nutria informe comprobar` y `nutria informe sello`. La ruta se

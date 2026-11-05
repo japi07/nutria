@@ -1501,7 +1501,7 @@ Fecha: 2026-11-05. Refutadores: fuentes, biología y viabilidad [SUP].
 | Afirmación | Resultado | Motivos por enfoque | Acción |
 |---|---|---|---|
 | La colina protegida aumentó la producción de leche [PUB] [R1] | sostenida | fuentes: el resumen lo dice | ninguna |
-| La misma dosis redujo el BHB plasmático [PUB] [R2] | no_verificable | fuentes: el resumen no da el BHB | pedir el texto |
+| La misma dosis redujo el BHB plasmático [PUB] [R2] | no_verificable | fuentes: el resumen no da el BHB | pedir texto |
 
 ## Bibliografía
 
@@ -1744,7 +1744,8 @@ def test_anaphora_connectors_are_not_remissions(opening):
     ("La colina aumenta la leche. Según este ensayo [PUB] [R1].", "Según este ensayo"),
 ])
 def test_remissions_with_a_source_subject_or_any_cited_label(body, row):
-    assert any("remite a la frase anterior" in e for e in _body_errors(body, ANNEX + f"\n| R1 | {row} | respalda | x |"))
+    errors = _body_errors(body, ANNEX + f"\n| R1 | {row} | respalda | x |")
+    assert any("remite a la frase anterior" in e for e in errors)
 
 
 def test_section_14_single_tilde_and_hidden_text_do_not_count(project):
@@ -1756,8 +1757,8 @@ def test_section_14_single_tilde_and_hidden_text_do_not_count(project):
                    "<span hidden>no_resuelta</span> superada", '<span style="color:white">no_resuelta</span> superada',
                    '<span style="display: none">no_resuelta</span> superada'):
         text = final.replace("| seguridad | no_resuelta |", f"| seguridad | {hidden} |")
-        assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path)), \
-            hidden
+        errors = _errors(text, conn=_conn(), path=path)
+        assert any("dice «superada» para la compuerta seguridad" in e for e in errors), hidden
     route_line = re.search(r"(?m)^Ruta regulatoria preliminar del registro: .*$", final).group(0)
     struck = final.replace(route_line, "Ruta regulatoria preliminar: ~`aditivo_zootecnico`~ `materia_prima` [SUP].")
     assert any("declara la ruta regulatoria «materia_prima»" in e for e in _errors(struck, conn=_conn(), path=path))
@@ -1844,7 +1845,8 @@ def test_round3b_bibliography_entries_keep_superscripts_as_in_the_metadata():
 
 def test_round3b_motive_quotes_with_superscripts_are_found_in_the_abstract(monkeypatch):
     monkeypatch.setattr(chk, "fetch_abstract",
-                        lambda client, entry: ("Choline raised serum Ca²⁺ and milk yield in transition cows.", "PubMed"))
+                        lambda client, entry: ("Choline raised serum Ca²⁺ and milk yield in transition cows.",
+                                               "PubMed"))
     claim = "La colina eleva el Ca²⁺ sérico en vacas en transición"
     text = _strict_doc(f"{claim} [PUB] [R1].", f"| R1 | {claim} | respalda | «raised serum Ca²⁺» |")
     issues, details = chk.check_support_quotes(None, text)
@@ -1877,10 +1879,11 @@ def test_round3b_registry_message_names_any_label(project):
 def test_round3b_font_color_attribute_hides_text_in_section_14(project):
     path = _filled_report(project, ruta_regulatoria_preliminar="aditivo_zootecnico")
     final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
-    for hidden in ('<font color="white">no_resuelta</font> superada', "<font color=#ffffff>no_resuelta</font> superada"):
+    for hidden in ('<font color="white">no_resuelta</font> superada',
+                   "<font color=#ffffff>no_resuelta</font> superada"):
         text = final.replace("| seguridad | no_resuelta |", f"| seguridad | {hidden} |")
-        assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path)), \
-            hidden
+        errors = _errors(text, conn=_conn(), path=path)
+        assert any("dice «superada» para la compuerta seguridad" in e for e in errors), hidden
 
 
 def test_round3b_bare_references_are_errors_in_reports_and_warnings_in_other_drafts(tmp_path, project):

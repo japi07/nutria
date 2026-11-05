@@ -341,7 +341,8 @@ NUMERIC_CITATION_RE = re.compile(r"(?<![\]\w^])\[\s*([1-9]\d{0,2}(?:\s*(?:[,;]|[
 # palabra que numera (ecuación, tabla, grupo, dieta...): `_paren_numeric_citations`. Y con «ref.»: «(ref. 3)».
 PAREN_NUMERIC_RE = re.compile(r"(?<=[^\W\d_])\s?\((\d{1,3}(?:\s*(?:[,;]|[-–—])\s*\d{1,3})*)\)(?=\s*\.(?:\s|$))")
 _ENUM_WORD_RE = re.compile(r"(?i)\b(?:uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|veinte|"
-                           r"treinta|cuarenta|cincuenta|cien|ciento|mil|ecuaci[oó]n(?:es)?|f[oó]rmulas?|eqs?|tablas?|figuras?|figs?|pasos?|apartados?|"
+                           r"treinta|cuarenta|cincuenta|cien|ciento|mil|ecuaci[oó]n(?:es)?|f[oó]rmulas?|eqs?|tablas?|"
+                           r"figuras?|figs?|pasos?|apartados?|"
                            r"secci[oó]n(?:es)?|puntos?|criterios?|niveles?|opci[oó]n(?:es)?|grupos?|tratamientos?|"
                            r"dietas?|fases?|semanas?|d[ií]as?|columnas?|filas?|modelos?|anexos?|notas?|hip[oó]tesis|"
                            r"escenarios?|casos?|ensayos?|experimentos?|lotes?|parcelas?|bloques?|per[ií]odos?|"
@@ -1205,7 +1206,8 @@ def _paren_numeric_citations(text: str):
 
 
 def _known_identifiers(entries: list[BibEntry]) -> dict[str, str]:
-    """{«doi:...» o «pmid:...»: [Rn]} de las entradas de la bibliografía (las que se verifican y cuentan en el sello)."""
+    """{«doi:...» o «pmid:...»: [Rn]} de las entradas de la bibliografía (las que se verifican y cuentan en el
+    sello)."""
     known: dict[str, str] = {}
     for entry in entries:
         ids = extract_identifiers(entry.text)
