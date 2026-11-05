@@ -1113,6 +1113,44 @@ def _review_issues(text: str, doc: _Doc, status: str | None, conn, path) -> list
                            f"contenido: {how}", None, REVIEW_CODE)]
 
 
+def _critique_issues(doc: _Doc, path) -> list[Issue]:
+    """En un informe revisado o final, la revisión adversarial del crítico (critico-red-team o el workflow
+    red-team-auto) debe existir: el front matter la enlaza en `revision_critica` (un documento de research/revisiones
+    del proyecto) y ese documento menciona el informe (su fichero o su oportunidad). No se comprueba su contenido ni la
+    independencia del crítico: lo juzga la persona que revisa el informe."""
+    fields, _ = _fm_fields(doc)
+    value = next((v for _, v, p in fields.get("revision_critica", []) if v and not p
+                  and v.strip().lower() not in NO_REVIEWER), None)
+    line = (doc.fm_start + 1) if doc.fm_start is not None else None
+    how = ("enlaza en el front matter la revisión adversarial del crítico (revision_critica: "
+           "research/revisiones/<fichero>.md, de critico-red-team o red-team-auto)")
+    if not value:
+        return [Issue("error", f"Falta la revisión del crítico: {how}", line)]
+    root = project_root(path) if path is not None else None
+    if root is None:
+        return [Issue("error", "No se puede comprobar la revisión del crítico fuera de un proyecto nutria", line)]
+    target = Path(value).expanduser()
+    target = target if target.is_absolute() else root / target
+    try:
+        rel = target.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        rel = None
+    if rel is None or [part.lower() for part in rel.parts[:2]] != ["research", "revisiones"] or not target.is_file():
+        return [Issue("error", f"La revisión del crítico «{value}» no es un documento de research/revisiones del "
+                               f"proyecto: {how}", line)]
+    try:
+        critique = target.read_text("utf-8", errors="replace")
+    except OSError as exc:
+        return [Issue("error", f"No se pudo leer la revisión del crítico «{value}» ({exc.__class__.__name__})", line)]
+    opp_id = next((v for _, v, p in fields.get("oportunidad", []) if v and not p), None)
+    names = {Path(path).name, Path(path).stem} | ({opp_id} if opp_id else set())
+    if not any(name and name in critique for name in names):
+        return [Issue("error", f"La revisión del crítico «{value}» no menciona este informe "
+                               f"({', '.join(sorted(n for n in names if n))}): enlaza la revisión que le corresponde",
+                      line)]
+    return []
+
+
 def _species(doc: _Doc) -> str | None:
     fields, _ = _fm_fields(doc)
     values = [v for _, v, p in fields.get("especie", []) if v and not p and v.lower() not in NO_REVIEWER]
@@ -1629,6 +1667,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     # ---- modo estricto: revisión humana y referencias
     if strict:
         issues += _review_issues(text, doc, st.value, conn, path)
+        if is_report and require_sections:
+            issues += _critique_issues(doc, path)
         if is_report and not entries:
             issues.append(Issue("error", f"Un informe en estado '{st.value or 'estricto'}' necesita referencias "
                                          "verificables"))

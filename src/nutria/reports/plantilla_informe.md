@@ -6,6 +6,7 @@ fecha: {fecha}
 estado: borrador
 {contexto_fm}
 autores: [orquestador]
+revision_critica: null  # research/revisiones/<fichero>.md con la revisión adversarial del crítico
 revisado_por_humano: null
 ---
 
@@ -18,8 +19,9 @@ revisado_por_humano: null
 > unidades o con una referencia `[Rn]` lleva su etiqueta, también en las tablas. Las hipótesis generadas por IA
 > nunca se presentan como hallazgos. `[POR COMPLETAR]` marca lo que falta por redactar: en `revisado` o `final` es
 > un error. Para pasar a `estado: revisado` o `final` hacen falta: el respaldo de cada afirmación `[PUB]` en el
-> Anexo A, la revisión humana registrada por la persona que revisa (`nutria informe revisar`, solo personas) y,
-> después, la verificación en línea completa y sellada (`nutria informe comprobar <informe> --online --sellar`).
+> Anexo A, la revisión adversarial del crítico enlazada en `revision_critica`, la revisión humana registrada por la
+> persona que revisa (`nutria informe revisar`, solo personas) y, después, la verificación en línea completa y
+> sellada (`nutria informe comprobar <informe> --online --sellar`).
 
 ## 0. Resumen ejecutivo
 

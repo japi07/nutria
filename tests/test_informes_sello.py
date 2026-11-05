@@ -136,10 +136,21 @@ def _register(*dois, verified=True, retracted=False):
     conn.close()
 
 
+def _critique(project: Path, opp: str = "O-0001") -> str:
+    """Revisión adversarial del crítico (como la que deja red-team-auto) y su ruta relativa."""
+    rel = f"research/revisiones/informes_{opp}_redteam.md"
+    target = project / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"# Revisión adversarial de research/informes/{opp}.md\n\nSin objeciones bloqueantes [HIP].\n",
+                      "utf-8")
+    return rel
+
+
 def _filled_report(project: Path, opp: str = "O-0001", **opp_changes) -> Path:
     _opportunity(project, **opp_changes)
     path = _skeleton(project, opp)
-    path.write_text(fill(path.read_text("utf-8")), "utf-8")
+    text = fill(path.read_text("utf-8")).replace("revision_critica: null", f"revision_critica: {_critique(project, opp)}")
+    path.write_text(text, "utf-8")
     _register(GOOD, GOOD2)
     return path
 
@@ -233,6 +244,27 @@ def test_review_command_rejects_agents_missing_signature_and_errors(project, mon
     with pytest.raises(SystemExit, match="No se registra la revisión"):
         main(["informe", "revisar", str(path), SIGN, "Ana", "--estado", "final"])
     assert db.report_reviews(_conn()) == []
+
+
+def test_revised_or_final_report_needs_the_critic_review(project):
+    # D3-6: en revisado o final hace falta la revisión adversarial del crítico, enlazada y referida a este informe
+    path = _filled_report(project)
+    final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    assert not any("crítico" in e for e in _errors(final, conn=_conn(), path=path))
+    missing = re.sub(r"(?m)^revision_critica: .*$", "revision_critica: null", final)
+    assert any("Falta la revisión del crítico" in e for e in _errors(missing, conn=_conn(), path=path))
+    outside = project / "research" / "planes" / "critica.md"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("Crítica de O-0001", "utf-8")
+    elsewhere = re.sub(r"(?m)^revision_critica: .*$", "revision_critica: research/planes/critica.md", final)
+    assert any("no es un documento de research/revisiones" in e for e in _errors(elsewhere, conn=_conn(), path=path))
+    other = project / "research" / "revisiones" / "otra.md"
+    other.write_text("Revisión adversarial de research/informes/O-0002.md", "utf-8")
+    unrelated = re.sub(r"(?m)^revision_critica: .*$", "revision_critica: research/revisiones/otra.md", final)
+    assert any("no menciona este informe" in e for e in _errors(unrelated, conn=_conn(), path=path))
+    path.write_text(missing.replace("estado: final", "estado: borrador"), "utf-8")
+    with pytest.raises(SystemExit, match="Falta la revisión del crítico"):     # la persona no puede saltársela
+        main(["informe", "revisar", str(path), SIGN, "Ana", "--estado", "final"])
 
 
 def test_reviews_are_insert_only(project):

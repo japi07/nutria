@@ -62,22 +62,29 @@ def test_entry_without_identifier_is_error_and_missing_section():
 
 
 def test_strict_mode_requires_support_and_human_review(tmp_path):
-    # D3-3 / D3-6: respaldo por afirmación y revisión humana registrada para el contenido exacto
+    # D3-3 / D3-6: respaldo por afirmación, revisión del crítico y revisión humana registrada para el contenido exacto
     text = make(CLAIM, BIB, estado='"Final"')
     errors = _errors(text)
     assert any("respaldo de R1" in e for e in errors)
     assert any("revisión humana" in e for e in errors)
+    assert any("Falta la revisión del crítico" in e for e in errors)
+    (tmp_path / "nutria.toml").write_text("", "utf-8")                       # proyecto mínimo
+    critique = tmp_path / "research" / "revisiones" / "informes_O-0001_redteam.md"
+    critique.parent.mkdir(parents=True)
+    critique.write_text("# Revisión adversarial de research/informes/inf.md\n", "utf-8")
+    report = tmp_path / "research" / "informes" / "inf.md"
     conn = db.connect(tmp_path / "registro.sqlite")
     db.upsert_source(conn, {"doi": "10.1234/x", "title": "t", "verified": True, "retracted": False})
     opportunity = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
     opportunity["ruta_regulatoria_preliminar"] = "aditivo_zootecnico"      # la que recoge la sección 14
     assert db.add_opportunity(conn, opportunity) == "O-0001"       # sus compuertas, sin evaluar: no_resuelta
-    ok = make(CLAIM, BIB, estado="final", humano="Ana Pérez", anexo=ANEXO_OK)
-    assert any("no corresponde a ninguna revisión registrada" in e for e in _errors(ok, conn=conn))
+    ok = make(CLAIM, BIB, estado="final", humano="Ana Pérez", anexo=ANEXO_OK).replace(
+        "revisado_por_humano:", "revision_critica: research/revisiones/informes_O-0001_redteam.md\nrevisado_por_humano:")
+    assert any("no corresponde a ninguna revisión registrada" in e for e in _errors(ok, conn=conn, path=report))
     db.add_report_review(conn, "inf.md", review_digest(ok), "Ana Pérez", "final")
-    assert _errors(ok, conn=conn) == []
+    assert _errors(ok, conn=conn, path=report) == []
     refuted = ok.replace("| respalda |", "| no_respalda |")
-    assert any("NO respalda" in e for e in _errors(refuted, conn=conn))
+    assert any("NO respalda" in e for e in _errors(refuted, conn=conn, path=report))
     conn.close()
 
 
