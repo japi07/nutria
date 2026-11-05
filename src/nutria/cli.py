@@ -771,8 +771,34 @@ def _fuente_texto(fuente: dict) -> str:
     return "Fuente: " + ", ".join(p for p in parts if p)
 
 
+SENSIBILIDAD_AYUDA = ("confidencial: la procedencia (versionada) guarda solo la huella SHA-256 de la consulta y de lo "
+                      "que devolvió; la consulta viaja igualmente al servicio externo")
+
+
+def _es_confidencial(args) -> bool:
+    return getattr(args, "sensibilidad", "normal") == "confidencial"
+
+
+def _registro_consulta(args, inputs: dict, consulta: dict, outputs: dict, devuelto: dict) -> list[str]:
+    """Completa la procedencia de una consulta a una fuente externa: en claro, o con --sensibilidad confidencial
+    solo con las huellas SHA-256 de la consulta (`consulta`) y de lo que devolvió (`devuelto`), para no dejar en el
+    registro versionado algo que revele una combinación inventiva. Devuelve las notas para la salida."""
+    if not _es_confidencial(args):
+        inputs.update(consulta, sensibilidad="normal")
+        outputs.update(devuelto)
+        return []
+
+    def digest(value) -> str:
+        return sha256_text(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+
+    inputs.update(consulta_sha256=digest(consulta), sensibilidad="confidencial", confidencial=True)
+    outputs.update({f"{name}_sha256": digest(value) for name, value in devuelto.items()})
+    return ["consulta confidencial: la procedencia guarda solo su huella SHA-256 (y la de lo que devolvió), pero la "
+            "consulta ha viajado igualmente al servicio externo"]
+
+
 def cmd_molecula(args, cfg) -> int:
-    client = _client(cfg)
+    client = _client(cfg, confidential=_es_confidencial(args))
     avisos: list[str] = []
     incompleto = False
     if args.fuente == "pubchem":
@@ -800,26 +826,27 @@ def cmd_molecula(args, cfg) -> int:
                 m["mecanismos"] = chembl.mechanisms(client, m["chembl_id"])
         fuente = {"nombre": "ChEMBL", **_version_fuente(chembl.release, client, "ChEMBL", avisos)}
         identifiers = [m.get("chembl_id") for m in data]
-    outputs = {"n": len(data), "identificadores": identifiers, "fuente": fuente, "incompleto": incompleto,
-               "cache": _red_procedencia(client)}
+    inputs = {"fuente": args.fuente, "peligros": args.peligros, "mecanismos": args.mecanismos}
+    outputs = {"n": len(data), "fuente": fuente, "incompleto": incompleto, "cache": _red_procedencia(client)}
+    devuelto: dict = {"identificadores": identifiers}
     if args.fuente == "pubchem" and args.peligros:
-        outputs["ghs"] = {str(c.get("CID")): c["GHS"]["estado"] for c in data}
-    log_event(cfg, "molecula", inputs={"fuente": args.fuente, "nombre": args.nombre, "peligros": args.peligros,
-                                       "mecanismos": args.mecanismos}, outputs=outputs, actor=args.agente)
+        devuelto["ghs"] = {str(c.get("CID")): c["GHS"]["estado"] for c in data}
+    notas = _registro_consulta(args, inputs, {"nombre": args.nombre}, outputs, devuelto)
+    log_event(cfg, "molecula", inputs=inputs, outputs=outputs, actor=args.agente)
     lines = [_json_text(data), _fuente_texto(fuente)]
     if args.fuente == "pubchem" and args.peligros:
         lines += [f"GHS CID {c.get('CID')}: {c['GHS']['estado']}"
                   + (f" ({', '.join(c['GHS']['frases_H'])})" if c["GHS"]["frases_H"] else "")
                   + f" — {c['GHS']['detalle']}" for c in data]
-    lines += _red_lineas(cfg, client, avisos)
-    _emit(args, {"resultados": data, "fuente": fuente, "incompleto": incompleto, **_red_salida(client, avisos)},
-          "\n".join(lines))
+    lines += _red_lineas(cfg, client, avisos, notas)
+    _emit(args, {"resultados": data, "fuente": fuente, "incompleto": incompleto, **_red_salida(client, avisos),
+                 "notas": notas}, "\n".join(lines))
     return SALIDA_RESULTADO if incompleto else SALIDA_OK
 
 
 def cmd_diana(args, cfg) -> int:
     from .sources import chembl
-    client = _client(cfg)
+    client = _client(cfg, confidential=_es_confidencial(args))
     avisos: list[str] = []
     tried: list[dict] = []
     if args.max < 1:
@@ -846,42 +873,50 @@ def cmd_diana(args, cfg) -> int:
         for t in targets[:2]:
             t["actividades"] = chembl.activities(client, target_chembl_id=t["target_chembl_id"], limit=25)
     fuente = {"nombre": "ChEMBL", **_version_fuente(chembl.release, client, "ChEMBL", avisos)}
-    log_event(cfg, "diana", inputs={"consulta": args.consulta, "organismo": args.organismo},
-              outputs={"n": len(targets), "identificadores": [t["target_chembl_id"] for t in targets],
-                       "estrategias": tried, "incompleto": bool(failed), "fuente": fuente,
-                       "cache": _red_procedencia(client)}, actor=args.agente)
+    inputs: dict = {}
+    outputs = {"n": len(targets), "incompleto": bool(failed), "fuente": fuente, "cache": _red_procedencia(client)}
+    if _es_confidencial(args):   # el texto de un error puede repetir la consulta: solo si hubo error
+        outputs["estrategias"] = [{**t, "error": bool(t.get("error"))} for t in tried]
+    else:
+        outputs["estrategias"] = tried
+    notas = _registro_consulta(args, inputs, {"consulta": args.consulta, "organismo": args.organismo}, outputs,
+                               {"identificadores": [t["target_chembl_id"] for t in targets]})
+    log_event(cfg, "diana", inputs=inputs, outputs=outputs, actor=args.agente)
     lines = [_json_text(targets),
              "Estrategias: " + ", ".join(f"{t['estrategia']} ({t['n']})" for t in tried), _fuente_texto(fuente)]
-    lines += _red_lineas(cfg, client, avisos)
+    lines += _red_lineas(cfg, client, avisos, notas)
     _emit(args, {"resultados": targets, "estrategias": tried, "incompleto": bool(failed), "fuente": fuente,
-                 **_red_salida(client, avisos)}, "\n".join(lines))
+                 **_red_salida(client, avisos), "notas": notas}, "\n".join(lines))
     return SALIDA_RESULTADO if failed else SALIDA_OK
 
 
 def cmd_proteina(args, cfg) -> int:
     from .sources import uniprot
     from .sources.base import taxon_id
-    client = _client(cfg)
+    client = _client(cfg, confidential=_es_confidencial(args))
     avisos: list[str] = []
     rows = uniprot.search(client, args.consulta, taxon=taxon_id(args.especie) if args.especie else None,
                           size=args.max, reviewed_only=args.revisadas)
     # La versión sale de las cabeceras de la última respuesta (de la red o de su copia en la caché): es la suya.
     fuente = {"nombre": "UniProtKB", **_version_valida(uniprot.release(client), "UniProt (cabecera X-UniProt-Release)",
                                                        avisos)}
-    log_event(cfg, "proteina", inputs={"consulta": args.consulta, "especie": args.especie},
-              outputs={"n": len(rows), "identificadores": [r["accesion"] for r in rows], "fuente": fuente,
-                       "cache": _red_procedencia(client)}, actor=args.agente)
+    inputs = {"especie": args.especie}
+    outputs = {"n": len(rows), "fuente": fuente, "cache": _red_procedencia(client)}
+    notas = _registro_consulta(args, inputs, {"consulta": args.consulta}, outputs,
+                               {"identificadores": [r["accesion"] for r in rows]})
+    log_event(cfg, "proteina", inputs=inputs, outputs=outputs, actor=args.agente)
     text = "\n".join(f"{r['accesion']:<12} {','.join(r['genes'])[:20]:<20} {r['organismo'] or '':<18} "
                      f"{'rev' if r['revisada'] else 'no rev'}  {r['proteina'] or ''}" for r in rows) or "(sin resultados)"
-    lines = [text, _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
-    _emit(args, {"resultados": rows, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    lines = [text, _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos, notas)
+    _emit(args, {"resultados": rows, "fuente": fuente, **_red_salida(client, avisos), "notas": notas},
+          "\n".join(lines))
     return SALIDA_OK
 
 
 def cmd_red(args, cfg) -> int:
     from .sources import stringdb
     from .sources.base import taxon_id
-    client = _client(cfg)
+    client = _client(cfg, confidential=_es_confidencial(args))
     avisos: list[str] = []
     species = taxon_id(args.especie)
     if not stringdb.is_versioned(cfg):
@@ -892,19 +927,20 @@ def cmd_red(args, cfg) -> int:
         data["enriquecimiento"] = stringdb.enrichment(client, args.genes, species)
     fuente = {"nombre": "STRING", "url": stringdb.base_url(cfg),
               **_version_fuente(stringdb.version, client, "STRING", avisos)}
-    log_event(cfg, "red_string", inputs={"genes": args.genes, "especie": species, "puntuacion_min": args.puntuacion_min},
-              actor=args.agente,
-              outputs={"interacciones": len(data["interacciones"]),
-                       "enriquecimiento": len(data["enriquecimiento"]) if "enriquecimiento" in data else None,
-                       "fuente": fuente, "cache": _red_procedencia(client)})
-    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
-    _emit(args, {**data, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    inputs = {"especie": species, "puntuacion_min": args.puntuacion_min}
+    outputs = {"interacciones": len(data["interacciones"]),
+               "enriquecimiento": len(data["enriquecimiento"]) if "enriquecimiento" in data else None,
+               "fuente": fuente, "cache": _red_procedencia(client)}
+    notas = _registro_consulta(args, inputs, {"genes": args.genes}, outputs, {})
+    log_event(cfg, "red_string", inputs=inputs, actor=args.agente, outputs=outputs)
+    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos, notas)
+    _emit(args, {**data, "fuente": fuente, **_red_salida(client, avisos), "notas": notas}, "\n".join(lines))
     return SALIDA_OK
 
 
 def cmd_rutas(args, cfg) -> int:
     from .sources import reactome
-    client = _client(cfg)
+    client = _client(cfg, confidential=_es_confidencial(args))
     avisos: list[str] = []
     if args.accion == "buscar":
         data = reactome.search(client, " ".join(args.terminos), species=args.especie)
@@ -915,11 +951,13 @@ def cmd_rutas(args, cfg) -> int:
         avisos.append("Análisis con proyección a humano: los genes de otras especies se asignan a ortólogos humanos "
                       "(aproximación)")
     fuente = {"nombre": "Reactome", **_version_fuente(reactome.version, client, "Reactome", avisos)}
-    log_event(cfg, "rutas", inputs={"accion": args.accion, "terminos": args.terminos}, actor=args.agente,
-              outputs={"n": len(identifiers), "identificadores": identifiers, "fuente": fuente,
-                       "cache": _red_procedencia(client)})
-    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
-    _emit(args, {"resultados": data, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    inputs = {"accion": args.accion}
+    outputs = {"n": len(identifiers), "fuente": fuente, "cache": _red_procedencia(client)}
+    notas = _registro_consulta(args, inputs, {"terminos": args.terminos}, outputs, {"identificadores": identifiers})
+    log_event(cfg, "rutas", inputs=inputs, actor=args.agente, outputs=outputs)
+    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos, notas)
+    _emit(args, {"resultados": data, "fuente": fuente, **_red_salida(client, avisos), "notas": notas},
+          "\n".join(lines))
     return SALIDA_OK
 
 
@@ -1018,8 +1056,14 @@ def cmd_cache(args, cfg) -> int:
             lines.append("Nota: sin --sha256 no se comprueba que el fichero sea el que se exportó (la huella que "
                          "mostró `nutria cache exportar`)")
         lines += [f"RECHAZADA entrada {r['indice']}: {r['motivo']}" for r in res["rechazadas"]]
-        lines.append("Nota: una copia importada vale lo que valga su origen; la importación queda en la procedencia "
-                     "con la huella del fichero, y la verificación de referencias nunca usa la caché")
+        if res["fechas_declaradas"]:
+            lines.append(f"Fechas que declara la exportación (del {res['exportado']}): de "
+                         f"{res['fechas_declaradas']['desde']} a {res['fechas_declaradas']['hasta']}")
+        lines.append("Nota: una copia importada vale lo que valga su origen: nutria comprueba la huella, la clave y que "
+                     "las fechas cuadren, pero no puede comprobar cuándo se obtuvo cada respuesta (una exportación "
+                     "fabricada puede declarar fechas recientes). Importa solo exportaciones de origen conocido, con "
+                     "--sha256. La importación queda en la procedencia con la huella del fichero, las copias se "
+                     "marcan «importada» al servirse y la verificación de referencias nunca usa la caché")
         _emit(args, res, "\n".join(lines))
         return SALIDA_RESULTADO if res["rechazadas"] else SALIDA_OK
     res = inspect_cache(client)
@@ -1590,7 +1634,10 @@ def cmd_llm(args, cfg) -> int:
     res = router.ask(cfg, prompt, role=args.rol, model_id=args.modelo, system=system, sensitivity=args.sensibilidad)
     _emit(args, res, "\n\n".join(f"=== {r['modelo']} ===\n" + (r.get("texto") or r.get("omitido") or r.get("error", ""))
                                  for r in res) or "Ningún modelo configurado para ese rol (ver `nutria llm modelos`).")
-    return 0
+    # Código de la tabla: sin ninguna respuesta (todos omitidos, p. ej. con --offline, o sin modelos) o con algún
+    # modelo que falló, el resultado es negativo o incompleto.
+    answered = any(r.get("texto") for r in res)
+    return SALIDA_OK if answered and not any(r.get("error") for r in res) else SALIDA_RESULTADO
 
 
 # ============================================================================ parser
@@ -1686,6 +1733,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max", type=int, default=5)
     s.add_argument("--peligros", action="store_true", help="(PubChem) frases H de la clasificación GHS")
     s.add_argument("--mecanismos", action="store_true", help="(ChEMBL) mecanismos de acción")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal", help=SENSIBILIDAD_AYUDA)
     s.set_defaults(func=cmd_molecula)
 
     s = sub.add_parser("diana", parents=[common], help="dianas moleculares en ChEMBL")
@@ -1695,6 +1743,7 @@ def build_parser() -> argparse.ArgumentParser:
                         'número de acceso de UniProt)')
     s.add_argument("--max", type=int, default=20)
     s.add_argument("--actividades", action="store_true")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal", help=SENSIBILIDAD_AYUDA)
     s.set_defaults(func=cmd_diana)
 
     s = sub.add_parser("proteina", parents=[common], help="proteínas en UniProt")
@@ -1702,6 +1751,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--especie", default="vacuno")
     s.add_argument("--max", type=int, default=10)
     s.add_argument("--revisadas", action="store_true")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal", help=SENSIBILIDAD_AYUDA)
     s.set_defaults(func=cmd_proteina)
 
     s = sub.add_parser("red", parents=[common], help="red de interacciones STRING")
@@ -1709,12 +1759,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--especie", default="vacuno")
     s.add_argument("--puntuacion-min", dest="puntuacion_min", type=int, default=700)
     s.add_argument("--enriquecimiento", action="store_true")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal", help=SENSIBILIDAD_AYUDA)
     s.set_defaults(func=cmd_red)
 
     s = sub.add_parser("rutas", parents=[common], help="rutas Reactome")
     s.add_argument("accion", choices=["buscar", "analizar"])
     s.add_argument("terminos", nargs="+", help="términos (buscar) o genes (analizar)")
     s.add_argument("--especie", default="Bos taurus")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal", help=SENSIBILIDAD_AYUDA)
     s.set_defaults(func=cmd_rutas)
 
     s = sub.add_parser("patentes", parents=[common], help="búsqueda de patentes (enlaces y Lens opcional)")

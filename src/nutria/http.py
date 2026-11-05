@@ -952,8 +952,9 @@ def export_cache(client: HttpClient, destination: Path, include_confidential: bo
             "confidenciales_incluidas": sum(1 for e in entries if e["confidencial"]), "sha256": sha256_file(destination)}
 
 
-def _import_problem(item) -> str | None:
-    """Motivo por el que una entrada de una exportación no puede importarse, o None si es válida."""
+def _import_problem(item, exported_at: float | None = None) -> str | None:
+    """Motivo por el que una entrada de una exportación no puede importarse, o None si es válida. Con
+    `exported_at` (la fecha de la exportación), una copia posterior a la exportación tampoco es válida."""
     if not isinstance(item, dict):
         return "no es un objeto"
     for name, kind in (("clave", str), ("method", str), ("url", str), ("sha256", str), ("fecha", str), ("body", str)):
@@ -976,14 +977,20 @@ def _import_problem(item) -> str | None:
         return "fecha no válida"
     if moment > time.time() + _FUTURE_TOLERANCE_S:
         return "fecha futura"
+    if exported_at is not None and moment > exported_at + _FUTURE_TOLERANCE_S:
+        return "fecha posterior a la de la exportación"
     return None
 
 
 def import_cache(client: HttpClient, source: Path, expected_sha256: str | None = None) -> dict:
-    """Importa una exportación de `export_cache`: comprueba cada entrada (huella, clave y fecha), registra la
-    importación en la procedencia (con la huella del fichero) y escribe las copias, que conservan su fecha
-    original. No sustituye una copia local válida igual o más reciente. Con `expected_sha256` (la huella que
-    mostró `cache exportar`), un fichero distinto no se importa."""
+    """Importa una exportación de `export_cache`: comprueba cada entrada (huella, clave y fecha: ni futura ni
+    posterior a la exportación), registra la importación en la procedencia (con la huella del fichero) y escribe las
+    copias, que conservan su fecha original. No sustituye una copia local válida igual o más reciente. Con
+    `expected_sha256` (la huella que mostró `cache exportar`), un fichero distinto no se importa.
+
+    Las fechas las declara el fichero: nutria comprueba que cuadran entre sí, no cuándo se obtuvo cada respuesta
+    (una exportación fabricada puede declarar fechas recientes y saltarse así la antigüedad máxima sin red). Por eso
+    la importación devuelve el intervalo de fechas declaradas y las copias se marcan «importada» al servirse."""
     source = Path(source)
     raw = source.read_bytes()
     if expected_sha256 is not None:
@@ -1003,9 +1010,13 @@ def import_cache(client: HttpClient, source: Path, expected_sha256: str | None =
     items = bundle.get("entradas")
     if not isinstance(items, list):
         raise ValueError(f"{source}: 'entradas' debe ser una lista")
+    exported_at = _parse_ts(bundle.get("exportado"))
+    if exported_at is None or exported_at > time.time() + _FUTURE_TOLERANCE_S:
+        raise ValueError(f"{source}: la exportación no indica una fecha de exportación válida ('exportado'): no se "
+                         "importa nada")
     accepted, rejected, kept_local = [], [], 0
     for index, item in enumerate(items):
-        problem = _import_problem(item)
+        problem = _import_problem(item, exported_at)
         if problem:
             rejected.append({"indice": index, "motivo": problem})
             continue
@@ -1029,5 +1040,7 @@ def import_cache(client: HttpClient, source: Path, expected_sha256: str | None =
                            item.get("params") or {}, item.get("json"), item.get("data"), item["body"], headers,
                            moment, confidential=bool(item.get("confidencial")))
         client._remember(item["clave"], item["sha256"], moment, "importada", headers)
+    moments = sorted(_parse_ts(item["fecha"]) for item in accepted)
     return {"fichero": str(source), "importadas": len(accepted), "rechazadas": rejected,
-            "conservadas_locales": kept_local}
+            "conservadas_locales": kept_local, "exportado": _iso(exported_at),
+            "fechas_declaradas": {"desde": _iso(moments[0]), "hasta": _iso(moments[-1])} if moments else None}

@@ -382,6 +382,8 @@ def test_cache_export_and_import_reproduce_queries_offline_on_another_machine(pr
     age_provenance(proj / "research" / "procedencia.jsonl", 0)
     code, out, _ = run(capsys, ["cache", "importar", str(bundle)])
     assert code == 0 and "Importadas 5" in out
+    assert f"Fechas que declara la exportación (del {data['exportado']}): de " in out
+    assert "no puede comprobar cuándo se obtuvo cada respuesta" in out
     imported = events(other, "cache_importar")[-1]
     assert len(imported["outputs"]["entradas"]) == 5 and imported["inputs"]["sha256"]
     code, out, _ = run(capsys, ["--offline", "--json", "buscar", "pubmed", "rumen choline"])
@@ -419,6 +421,30 @@ def test_cache_import_rejects_altered_entries(proj, router, capsys, monkeypatch,
     code, out, _ = run(capsys, ["cache", "importar", str(bundle)])
     assert code == cli.SALIDA_RESULTADO and "RECHAZADA entrada 0" in out and reason in out
     assert "Importadas 1" in out
+
+
+def test_cache_import_checks_declared_dates_against_the_export_date(proj, router, capsys, tmp_path):
+    # D9-8: las fechas de una exportación las declara el fichero; al menos tienen que cuadrar con su fecha de
+    # exportación (una copia no puede ser posterior), y sin fecha de exportación no se importa nada.
+    pubmed_routes(router)
+    assert run(capsys, ["buscar", "pubmed", "rumen choline"])[0] == 0
+    bundle = tmp_path / "cache.json"
+    assert run(capsys, ["cache", "exportar", str(bundle)])[0] == 0
+    data = json.loads(bundle.read_text("utf-8"))
+    data["exportado"] = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
+    bundle.write_text(json.dumps(data), "utf-8")
+    for path in cache_files(proj / ".cache"):
+        path.unlink()
+    code, out, _ = run(capsys, ["--json", "cache", "importar", str(bundle)])
+    res = json.loads(out)
+    assert code == cli.SALIDA_RESULTADO and res["importadas"] == 0
+    assert {r["motivo"] for r in res["rechazadas"]} == {"fecha posterior a la de la exportación"}
+    for value in (None, "ayer", "2999-01-01T00:00:00+00:00"):
+        data["exportado"] = value
+        bundle.write_text(json.dumps(data), "utf-8")
+        code, out, _ = run(capsys, ["--json", "cache", "importar", str(bundle)])
+        assert code == cli.SALIDA_ENTRADA and "fecha de exportación válida" in json.loads(out)["error"]
+    assert not cache_files(proj / ".cache")
 
 
 def test_cache_import_rejects_a_file_that_is_not_an_export(proj, capsys, tmp_path):
@@ -727,6 +753,56 @@ def test_confidential_search_keeps_only_hashes_in_provenance(proj, router, capsy
     code, _, err = run(capsys, ["buscar", "pubmed", query + " otra", "--sensibilidad", "confidencial"])
     assert code == cli.SALIDA_RED
     assert "combinacion-secreta" not in (proj / "research" / "procedencia.jsonl").read_text("utf-8")
+
+
+def test_confidential_queries_of_molecules_targets_proteins_networks_and_pathways(proj, router, capsys, tmp_path):
+    # D1-11 (misma causa que buscar): molecula, diana, proteina, red y rutas admiten --sensibilidad confidencial y
+    # entonces la procedencia versionada guarda solo huellas de la consulta y de lo que devolvió.
+    secret = "SECRETX9"
+    router.add(r"pubchem.*/compound/name/", (200, {"PropertyTable": {"Properties": [{"CID": 777001}]}}))
+    router.add(r"pug_view/data/compound/777001/", (404, "{}"))
+
+    def target(method, url):
+        if "target_synonym__icontains" in url:   # un error cuyo cuerpo repite la consulta
+            return 400, json.dumps({"error": f"filtro rechazado: {secret}"})
+        return 200, {"targets": [dict(BOVINE_PPARA, target_chembl_id="CHEMBL777002")]}
+
+    router.add(r"chembl/api/data/target", target)
+    router.add(r"chembl/api/data/status\.json", (200, {"chembl_db_version": "ChEMBL_35"}))
+    router.add(r"rest\.uniprot\.org", (200, {"results": [{"primaryAccession": "Q777003", "genes": [
+        {"geneName": {"value": secret}}]}]}, {"X-UniProt-Release": "2025_04"}))
+    router.add(r"string-db\.org/api/json/version", (200, [{"string_version": "12.0"}]))
+    router.add(r"string-db\.org/api/json/network", (200, [{"preferredName_A": secret, "preferredName_B": "RXRA",
+                                                            "score": 0.9}]))
+    router.add(r"ContentService/data/database/version", (200, "94"))
+    router.add(r"ContentService/search/query", (200, {"results": [{"entries": [{"stId": "R-BTA-777004",
+                                                                                 "name": secret}]}]}))
+    orders = {"molecula": ["molecula", "pubchem", secret, "--peligros"],
+              "diana": ["diana", secret, "--organismo", "Bos taurus"],
+              "proteina": ["proteina", f"gene:{secret}"],
+              "red_string": ["red", secret, "RXRA"],
+              "rutas": ["rutas", "buscar", secret]}
+    for action, argv in orders.items():
+        code, out, _ = run(capsys, ["--json", *argv, "--sensibilidad", "confidencial"])
+        assert code in (cli.SALIDA_OK, cli.SALIDA_RESULTADO), (argv, out)
+        data = json.loads(out)
+        assert any("viajado igualmente al servicio externo" in n for n in data["notas"]), action
+        event = events(proj, action)[-1]
+        assert event["inputs"]["sensibilidad"] == "confidencial" and event["inputs"]["consulta_sha256"], action
+    trace = (proj / "research" / "procedencia.jsonl").read_text("utf-8")
+    for token in (secret, "777001", "CHEMBL777002", "Q777003", "R-BTA-777004"):
+        assert token not in trace, token
+    assert all(e["inputs"].get("confidencial") for e in events(proj) if e["action"].startswith("http"))
+    diana = events(proj, "diana")[-1]["outputs"]
+    assert diana["identificadores_sha256"] and {"sinonimo_o_simbolo": True}.items() <= {
+        t["estrategia"]: t["error"] for t in diana["estrategias"]}.items()
+    assert events(proj, "red_string")[-1]["inputs"]["puntuacion_min"] == 700          # lo que no revela, en claro
+    bundle = tmp_path / "exportacion.json"
+    code, out, _ = run(capsys, ["--json", "cache", "exportar", str(bundle)])
+    assert code == 0 and json.loads(out)["entradas"] == 0 and secret not in bundle.read_text("utf-8")
+    # Sin la opción, todo sigue en claro (comportamiento por defecto).
+    assert run(capsys, ["rutas", "buscar", secret])[0] == 0
+    assert events(proj, "rutas")[-1]["inputs"] == {"accion": "buscar", "terminos": [secret], "sensibilidad": "normal"}
 
 
 # ============================================================================ ChEMBL (D7-11)
@@ -1262,7 +1338,20 @@ def test_llm_cli_offline_omits_models(proj, router, capsys, monkeypatch):
     (proj / "config" / "modelos.toml").write_text(MODELS, "utf-8")
     monkeypatch.setattr(requests, "post", lambda *a, **k: pytest.fail("petición en modo offline"))
     code, out, _ = run(capsys, ["--offline", "llm", "preguntar", "--rol", "critico", "--prompt", "hola"])
-    assert code == 0 and "modo offline" in out and not router.calls
+    # Sin ninguna respuesta (todos omitidos) el resultado es negativo: código 1, no 0 (D9-16, tabla de D10-8).
+    assert code == cli.SALIDA_RESULTADO and "modo offline" in out and not router.calls
+    sent = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        sent.append(url)
+        resp = Resp(200, {"choices": [{"message": {"content": "opinión"}}]}, url=url)
+        resp.raise_for_status = lambda: None
+        resp.json = lambda: {"choices": [{"message": {"content": "opinión"}}]}
+        return resp
+
+    monkeypatch.setattr(requests, "post", post)
+    code, out, _ = run(capsys, ["llm", "preguntar", "--rol", "critico", "--prompt", "hola"])
+    assert code == cli.SALIDA_OK and "opinión" in out and sent == ["http://localhost:11434/v1/chat/completions"]
 
 
 # ============================================================================ doctor (D7-14, D10-12, D9-16)
