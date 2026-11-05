@@ -1000,6 +1000,28 @@ def test_la_evidencia_es_un_fichero_regular_del_proyecto_y_no_la_propia_oportuni
     assert db.effective_gates(_conn(), "O-0001", ["seguridad"])["seguridad"] == "bloqueada"
 
 
+def test_el_registro_y_el_json_de_la_oportunidad_no_son_evidencia(project):
+    """Revisión (ronda 2): `--evidencia research/nutria.sqlite` (el propio registro) desbloqueaba la compuerta de
+    seguridad. Tampoco valen la procedencia ni los JSON de la propia oportunidad en research/oportunidades/."""
+    _new_opportunity(project)
+    opp_dir = project / "research" / "oportunidades"
+    opp_dir.mkdir(parents=True, exist_ok=True)
+    (opp_dir / "O-0001.json").write_text("{}", "utf-8")
+    (opp_dir / "O-0001_puntuacion_evaluador-1.json").write_text("{}", "utf-8")
+    (opp_dir / "O-0002.json").write_text("{}", "utf-8")
+    assert _code(["--agente", "critico-red-team", "puntuar", "compuerta", "O-0001", "seguridad", "bloqueada",
+                  "--motivo", "señal"]) == 0
+    unblock = ["puntuar", "compuerta", "O-0001", "seguridad", "no_resuelta", "--motivo", "revisado", SIGN, "Ana",
+               "--evidencia"]
+    for item in ("research/nutria.sqlite", str(project / "research" / "nutria.sqlite"), "research/procedencia.jsonl",
+                 "research/../research/nutria.sqlite", "research/oportunidades/O-0001.json",
+                 "research/oportunidades/o-0001_puntuacion_evaluador-1.json"):
+        assert _code([*unblock, item]) == 3, item
+    assert db.effective_gates(_conn(), "O-0001", ["seguridad"])["seguridad"] == "bloqueada"
+    assert _code([*unblock, "research/oportunidades/O-0002.json"]) == 0      # otra oportunidad sí puede citarse
+    assert db.effective_gates(_conn(), "O-0001", ["seguridad"])["seguridad"] == "no_resuelta"
+
+
 def test_el_agente_se_guarda_sin_espacios_alrededor(project):
     """Revisión: `--agente " desarrollo-industrial "` pasaba el control de rol pero quedaba con espacios."""
     _new_opportunity(project)
@@ -1070,7 +1092,9 @@ def test_las_variantes_de_un_evaluador_cuentan_como_uno(project, capsys):
     data = _example("puntuacion_ejemplo.json")
     data["oportunidad"] = "O-0001"
     for i, (agent, rater) in enumerate((("evaluador-1", "evaluador-1"), ("evaluador-1", "evaluador-1 "),
-                                        ("Evaluador-1", "Evaluador-1"), (" EVALUADOR-1", "evaluador-1"))):
+                                        ("Evaluador-1", "Evaluador-1"), (" EVALUADOR-1", "evaluador-1"),
+                                        ("evaluador‐1", "evaluador-1"),          # guion U+2010 (revisión)
+                                        ("ｅvaluador−1", "Evaluador–1"))):  # NFKC, menos y semirraya
         data["evaluador"] = rater
         path = _write_json(project / f"variante_{i}.json", data)
         assert _code(["--agente", agent, "puntuar", "registrar", "--datos", path]) == 0
@@ -1626,6 +1650,18 @@ def test_el_hook_web_en_claro_tampoco_guarda_secretos_de_la_consulta(tmp_path):
     text = cfg.provenance_path.read_text("utf-8")
     assert [s for s in ("SECRETO123", "T0K3N", "persona@example.org") if s in text] == []
     assert provenance.read_events(cfg)[-1]["inputs"]["consulta"].startswith("choline dairy")
+    # revisión (ronda 2): un correo suelto en la consulta quedaba en claro; también en la ruta de una URL
+    query = "rumen-protected choline carnitine synergy contacto ana@example.org api_key=SECRETO4"
+    assert _run_web_hook(tmp_path, _web("WebSearch", {"query": query}, {"results": []}),
+                         NUTRIA_PROCEDENCIA_WEB="claro").returncode == 0
+    url = "https://lector:clave@api.example.org/usuarios/luis.p%40example.org/perfil?q=rumen"
+    assert _run_web_hook(tmp_path, _web("WebFetch", {"url": url}, {"result": "r"}),
+                         NUTRIA_PROCEDENCIA_WEB="claro").returncode == 0
+    text = cfg.provenance_path.read_text("utf-8")
+    assert [s for s in ("ana@example.org", "SECRETO4", "luis.p", "lector", "clave@") if s in text] == []
+    events = provenance.read_events(cfg)
+    assert events[-2]["inputs"]["consulta"].startswith("rumen-protected choline carnitine synergy contacto ***@***")
+    assert events[-1]["inputs"]["url"] == "https://***@api.example.org/usuarios/***@***/perfil?q=rumen"
 
 
 def test_el_hook_web_nunca_bloquea(tmp_path):

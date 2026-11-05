@@ -8,8 +8,9 @@ Las consultas web pueden revelar una idea confidencial (regla 11) y el fichero s
 (modo "hash") solo se guardan el dominio y el SHA-256 de la URL (WebFetch) o el SHA-256 de la consulta (WebSearch).
 Con NUTRIA_PROCEDENCIA_WEB=claro se guardan la URL y la consulta en claro; cualquier otro valor se trata como "hash"
 (falla en cerrado). La URL se redacta siempre antes de guardarla o de calcular su huella: sin credenciales
-(usuario:clave@), sin parámetros sensibles (api_key, key, token, email, mailto...), sin fragmento y sin los secretos
-configurados (`nutria.http.redact`); la consulta en claro, también (`redact_text`). La pregunta que el agente hace
+(usuario:clave@), sin parámetros sensibles (api_key, key, token, email, mailto...), sin fragmento, sin direcciones de
+correo y sin los secretos configurados (`nutria.http.redact`); la consulta en claro, también (`redact_text`, que
+quita además un correo suelto: "contacto ana@example.org"). La pregunta que el agente hace
 sobre la página (prompt de WebFetch) se guarda como huella. Límites: la huella de una URL o de una consulta corta se
 puede confirmar adivinándola (no es un cifrado), y el hook solo decide qué queda registrado: la consulta llega igual
 al servicio externo.
@@ -42,32 +43,39 @@ def web_mode(value: str | None) -> str:
     return "claro" if (value or "").strip().lower() == "claro" else "hash"
 
 
+# Dirección de correo suelta (también codificada en una URL: ana%40example.org).
+_EMAIL_RE = re.compile(r"[\w.+-]+(@|%40)[\w-]+(\.[\w-]+)+", re.IGNORECASE)
+
+
 def redact_text(text: str, cfg=None) -> str:
     """Texto sin los secretos que reconoce `nutria.http.redact` (valores configurados, pares clave=valor sensibles,
-    tokens Bearer y direcciones mailto:); si no se puede importar, el texto tal cual."""
+    tokens Bearer y direcciones mailto:; si no se puede importar, sin ellos) ni direcciones de correo sueltas."""
     try:
         from nutria.http import redact
-        return redact(text, cfg)
+        text = redact(text, cfg)
     except Exception:  # noqa: BLE001 - sin requests u otra dependencia: se aplica solo la limpieza local
-        return text
+        pass
+    return _EMAIL_RE.sub(f"{MASK}@{MASK}", text)
 
 
 def redact_url(url: str, cfg=None) -> str:
-    """URL sin credenciales, parámetros sensibles ni secretos configurados (`nutria.http.redact`, si se puede
-    importar; si no, solo la limpieza de este módulo)."""
-    url = redact_text(url, cfg)
+    """URL sin credenciales, parámetros sensibles, correos ni secretos configurados (`redact_text`)."""
     try:
         parts = urlsplit(url)
     except ValueError:
         return MASK
     netloc = parts.netloc
-    if "@" in netloc:                                     # https://usuario:clave@host/
+    if "@" in netloc:                                     # https://usuario:clave@host/ (antes de buscar correos)
         netloc = f"{MASK}@{netloc.rsplit('@', 1)[1]}"
+    try:
+        parts = urlsplit(redact_text(urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), cfg))
+    except ValueError:
+        return MASK
     kept = []
     for piece in re.split(r"[&;]", parts.query) if parts.query else []:
         name = piece.split("=", 1)[0].strip().lower()
         kept.append(f"{piece.split('=', 1)[0]}={MASK}" if name in SENSITIVE_PARAMS else piece)
-    return urlunsplit((parts.scheme, netloc, parts.path, "&".join(kept), ""))   # sin fragmento (#token=...)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(kept), ""))   # sin fragmento (#token=...)
 
 
 def _response_digest(response) -> tuple[str, int | None]:

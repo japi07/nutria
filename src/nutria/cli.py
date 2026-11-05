@@ -705,7 +705,7 @@ def _evaluador_que_registra(args) -> str:
     identificador, el del campo 'evaluador' del JSON (lo comprueba `registry.add_scores`)."""
     from .provenance import declared_agent
     quien = declared_agent(getattr(args, "agente", None))
-    if not quien.lower().startswith("evaluador"):
+    if not registry.normalize_rater(quien).startswith("evaluador"):
         raise registry.RegistryError("Solo los evaluadores independientes registran puntuaciones (regla 9): "
                                      "identifícate con --agente evaluador-<n>, el mismo identificador del campo "
                                      "'evaluador' del JSON")
@@ -715,12 +715,17 @@ def _evaluador_que_registra(args) -> str:
 def _comprobar_evidencia(cfg, estado: str, evidencia: list | None, propia: str | None = None) -> None:
     """La evidencia de una compuerta debe poder comprobarse: IDs del registro (su existencia la comprueba el
     registro; la propia oportunidad, `propia`, no vale), URL o ficheros regulares dentro del proyecto (no
-    directorios ni rutas de fuera); el texto libre no vale. En "bloqueada" no se exige nada: un error en la evidencia
-    no debe impedir un bloqueo (criterio de prudencia)."""
+    directorios ni rutas de fuera); el texto libre no vale. Tampoco valen el propio registro (la base de datos y la
+    procedencia) ni los JSON de la propia oportunidad en research/oportunidades/: no prueban nada sobre ella. En
+    "bloqueada" no se exige nada: un error en la evidencia no debe impedir un bloqueo (criterio de prudencia)."""
     import re
     if estado == "bloqueada":
         return
     raiz = Path(cfg.root).resolve()
+    base_datos = Path(cfg.db_path) if Path(cfg.db_path).is_absolute() else raiz / cfg.db_path
+    registro = [base_datos, *(Path(f"{base_datos}{sufijo}") for sufijo in ("-wal", "-shm", "-journal")),
+                Path(cfg.provenance_path)]
+    oportunidades = raiz / "research" / "oportunidades"
     faltan = []
     for item in (str(e).strip() for e in evidencia or []):
         if propia and item.casefold() == str(propia).strip().casefold():
@@ -729,9 +734,18 @@ def _comprobar_evidencia(cfg, estado: str, evidencia: list | None, propia: str |
         if not item or registry.is_registry_id(item) or re.fullmatch(r"https?://\S+", item):
             continue
         path = Path(item).expanduser()
-        candidatos = [path] if path.is_absolute() else [raiz / path, Path.cwd() / path]
-        if not any(_fichero_del_proyecto(c, raiz) for c in candidatos):
+        candidatos = [c for c in ([path] if path.is_absolute() else [raiz / path, Path.cwd() / path])
+                      if _fichero_del_proyecto(c, raiz)]
+        if not candidatos:
             faltan.append(item)
+            continue
+        real = candidatos[0].resolve()
+        propio = bool(propia) and real.suffix.casefold() == ".json" and _mismo_fichero(real.parent, oportunidades) \
+            and real.name.casefold().startswith(str(propia).strip().casefold())
+        if propio or any(_mismo_fichero(real, r) for r in registro):
+            raise registry.RegistryError(f"{item} no es evidencia de una compuerta: el registro, la procedencia y el JSON "
+                                         "de la propia oportunidad no prueban nada sobre ella. Cita el análisis "
+                                         "(research/revisiones/...), afirmaciones (A-xxxx), fuentes o URL")
     if faltan:
         raise registry.RegistryError(f"Evidencia que no se puede comprobar: {', '.join(faltan)}. Indica IDs del registro "
                                      "(A-xxxx, doi:..., pmid:...), URL o ficheros regulares que existan dentro del "
@@ -745,6 +759,14 @@ def _fichero_del_proyecto(path: Path, raiz: Path) -> bool:
     except (OSError, RuntimeError):
         return False
     return real.is_file() and (real == raiz or raiz in real.parents)
+
+
+def _mismo_fichero(a: Path, b: Path) -> bool:
+    """¿Son el mismo fichero o directorio (también con otras mayúsculas en sistemas que no las distinguen)?"""
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
 
 
 def cmd_autoria(args, cfg) -> int:

@@ -643,12 +643,19 @@ def set_hypothesis_status(conn: sqlite3.Connection, hyp_id: str, status: str, re
 
 
 # ---------------------------------------------------------------------------- puntuación y compuertas
-def normalize_rater(rater: str | None) -> str:
-    """Identificador canónico de un evaluador: sin espacios sobrantes y en minúsculas.
+# Guiones tipográficos (U+2010 a U+2015, U+2212 menos, U+FE58, U+FE63, U+FF0D) que se confunden con el guion ASCII.
+_DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−﹘﹣－"), "-")
 
-    'evaluador-1', ' evaluador-1 ' y 'Evaluador-1' son el mismo evaluador: se guardan igual y cuentan una sola vez
-    para el mínimo de evaluadores distintos del ranking."""
-    return " ".join(str(rater or "").split()).casefold()
+
+def normalize_rater(rater: str | None) -> str:
+    """Identificador canónico de un evaluador: forma Unicode NFKC, guiones tipográficos como '-', sin espacios
+    sobrantes y en minúsculas.
+
+    'evaluador-1', ' evaluador-1 ', 'Evaluador-1' y 'evaluador‐1' (guion U+2010) son el mismo evaluador: se guardan
+    igual y cuentan una sola vez para el mínimo de evaluadores distintos del ranking."""
+    import unicodedata
+    text = unicodedata.normalize("NFKC", str(rater or "")).translate(_DASHES)
+    return " ".join(text.split()).casefold()
 
 
 def add_scores(conn: sqlite3.Connection, opp_id: str, rater: str, items: list[dict],
