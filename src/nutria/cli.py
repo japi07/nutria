@@ -90,10 +90,16 @@ def _firma_solo_de_personas(args) -> None:
                    "Detectado: " + ", ".join(dict.fromkeys(motivos)) + ". Registra la acción sin firma (queda como "
                    "propuesta) y pide a la persona responsable que la firme en su propia terminal.")
         # Mismo formato que el resto de errores: el texto siempre por stderr y, con --json, además el objeto JSON por
-        # stdout ({error, codigo, tipo}).
+        # stdout ({error, codigo, tipo}). Un flujo ya cerrado (p. ej. `| head`) no cambia el resultado: código 3.
+        salidas = [(sys.stderr, f"Error de registro: {message}")]
         if getattr(args, "json", False):
-            print(json.dumps({"error": message, "codigo": 3, "tipo": "registro"}, ensure_ascii=False), flush=True)
-        print(f"Error de registro: {message}", file=sys.stderr)
+            salidas.insert(0, (sys.stdout, json.dumps({"error": message, "codigo": 3, "tipo": "registro"},
+                                                      ensure_ascii=False)))
+        for flujo, texto in salidas:
+            try:
+                print(texto, file=flujo, flush=True)
+            except (OSError, ValueError):
+                pass
         raise _FirmaRechazada(message)
 
 

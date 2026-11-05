@@ -304,6 +304,18 @@ def test_el_rechazo_sale_con_codigo_3_y_su_texto_explica_el_motivo(registered, c
     assert out.err.startswith("Error de registro: Firma humana rechazada")
 
 
+def test_el_rechazo_con_los_flujos_cerrados_sigue_saliendo_con_codigo_3(registered, monkeypatch):
+    """Quien lee la salida puede haberla cerrado (`| head`): el rechazo no da una traza, sale con el código 3."""
+    import io
+    cerrado = io.StringIO()
+    cerrado.close()
+    monkeypatch.setattr(sys, "stdout", cerrado)
+    monkeypatch.setattr(sys, "stderr", cerrado)
+    with pytest.raises(SystemExit) as exc:
+        main(["--json", "--agente", "director-cientifico", *FIRMADAS[0]])
+    assert exc.value.code == 3 and "no la registra un agente" in str(exc.value)
+
+
 @linux_only
 def test_borrar_la_variable_dentro_del_proceso_no_basta(registered):
     """El entorno inicial (/proc/<pid>/environ) conserva la marca aunque el proceso borre la variable antes de firmar."""

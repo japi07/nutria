@@ -66,8 +66,9 @@ AGENT_ENV_VARS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SES
 # Raíz de /proc (Linux) con la que se recorren los procesos antecesores. Las pruebas la sustituyen.
 PROC_ROOT = "/proc"
 # Donde no hay /proc (macOS, BSD), los antecesores se recorren con esta orden (tabla pid, ppid, terminal y orden de
-# todos los procesos). None la desactiva (lo hacen las pruebas, que simulan una terminal de persona).
-PS_COMMAND: tuple[str, ...] | None = ("ps", "-A", "-o", "pid=,ppid=,tty=,args=")
+# todos los procesos, sin recortar las líneas: -ww). None la desactiva (lo hacen las pruebas, que simulan una terminal
+# de persona).
+PS_COMMAND: tuple[str, ...] | None = ("ps", "-ww", "-A", "-o", "pid=,ppid=,tty=,args=")
 # `prev` del primer evento de un fichero vacío: SHA-256 de la cadena vacía.
 GENESIS = hashlib.sha256(b"").hexdigest()
 _HEX64 = re.compile(r"[0-9a-f]{64}")
