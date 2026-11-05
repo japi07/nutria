@@ -463,14 +463,17 @@ def test_crossref_concurrency_is_limited_between_threads(cfg, email, threads, pe
     class Slow(Session):
         def request(self, method, url, **kw):
             start = time.monotonic()
-            REAL_SLEEP(0.08)
+            REAL_SLEEP(0.15)
             with lock:
                 spans.append((start, time.monotonic()))
             return Resp(200, '{"message": {}}', url=url)
 
+    barrier = threading.Barrier(threads)
+
     def work(i):
-        HttpClient(cfg, session=Slow(Router())).get_json("https://api.crossref.org/works", params={"i": i},
-                                                         use_cache=False)
+        client = HttpClient(cfg, session=Slow(Router()))
+        barrier.wait(30)                       # todos a la vez: el máximo de solapamiento lo fija el límite
+        client.get_json("https://api.crossref.org/works", params={"i": i}, use_cache=False)
 
     workers = [threading.Thread(target=work, args=(i,)) for i in range(threads)]
     for w in workers:
@@ -1197,6 +1200,17 @@ exit 0
 """
 
 
+def _hermetic_python(proj, monkeypatch):
+    """python3 del PATH = el intérprete de las pruebas, y <proyecto>/src = el src del repositorio: la sonda del hook
+    no depende de cómo esté instalado nutria en la máquina."""
+    bin_dir = proj / "bin_pruebas"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', "utf-8")   # conserva su venv
+    (bin_dir / "python3").chmod(0o755)
+    (proj / "src").symlink_to(ROOT / "src", target_is_directory=True)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
 def _fake_venv(proj, script):
     venv = proj / ".venv" / "bin"
     venv.mkdir(parents=True, exist_ok=True)
@@ -1209,6 +1223,7 @@ def test_doctor_checks_the_hook_interpreter(proj, router, capsys, monkeypatch):
     # D10-12: doctor ejecuta una copia del propio run_hook.sh con una sonda en lugar del hook
     monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
     _doctor_ok_routes(router)
+    _hermetic_python(proj, monkeypatch)
     (proj / "scripts" / "hooks").mkdir(parents=True)
     (proj / "scripts" / "hooks" / "run_hook.sh").write_text((ROOT / "scripts" / "hooks" / "run_hook.sh").read_text(
         "utf-8"), "utf-8")
@@ -1241,6 +1256,7 @@ def test_doctor_hook_check_follows_the_installed_runner(proj, router, capsys, mo
     # Con un run_hook.sh que prueba el siguiente intérprete, una .venv rota no impide el hook si python3 sirve
     monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
     _doctor_ok_routes(router)
+    _hermetic_python(proj, monkeypatch)
     (proj / "scripts" / "hooks").mkdir(parents=True)
     (proj / "scripts" / "hooks" / "run_hook.sh").write_text(FALLTHROUGH_RUNNER, "utf-8")
     broken = _fake_venv(proj, "#!/bin/sh\necho 'ModuleNotFoundError: No module named jsonschema' >&2\nexit 3\n")
