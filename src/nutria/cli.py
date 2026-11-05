@@ -12,10 +12,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 import sqlite3
 import sys
-import unicodedata
 from importlib import resources
 from pathlib import Path
 
@@ -25,7 +23,7 @@ from .config import CONFIG_FILENAME, DEFAULT_CONFIG_TEXT, load_config
 from .http import HttpClient, NetworkError
 from .provenance import environment_snapshot, log_event, read_events, sha256_file, sha256_text
 
-SCHEMAS = ("oportunidad", "hipotesis", "extraccion", "afirmacion", "puntuacion", "conciliacion")
+SCHEMAS = ("oportunidad", "hipotesis", "extraccion", "afirmacion", "puntuacion")
 
 
 # ============================================================================ utilidades
@@ -428,22 +426,17 @@ COMPARE_IGNORED = registry.COMPARE_IGNORED
 CONCILIATED = registry.DOUBLE_CHECKED
 
 
-def _palabras(texto) -> list[str]:
-    """Palabras en minúsculas y sin tildes, para filtrar y agrupar sin depender de mayúsculas ni acentos."""
-    plano = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode().lower()
-    return re.findall(r"[a-z0-9]+", plano)
-
-
 def _coincide(valor, consulta: str) -> bool:
-    """Todas las palabras de la consulta aparecen como palabras completas ('ovino' no coincide con 'bovino')."""
-    buscadas, presentes = _palabras(consulta), set(_palabras(valor))
+    """Todas las palabras de la consulta aparecen como palabras completas, sin distinguir mayúsculas ni tildes
+    ('ovino' no coincide con 'bovino')."""
+    buscadas, presentes = registry.text_words(consulta), set(registry.text_words(valor))
     return bool(buscadas) and all(p in presentes for p in buscadas)
 
 
 def _distintos(rows: list[dict], col: str) -> dict[str, dict]:
     vistos: dict[str, dict] = {}
     for r in rows:
-        clave = " ".join(_palabras(r.get(col))) or "(sin dato)"
+        clave = " ".join(registry.text_words(r.get(col))) or "(sin dato)"
         vistos.setdefault(clave, {"valor": r.get(col) or "(sin dato)", "n": 0})["n"] += 1
     return vistos
 
@@ -460,22 +453,28 @@ def _estado_doble(row: dict, verificadas: set[int]) -> str:
 
 
 def _avisos_incidencia(rows: list[dict]) -> tuple[list[str], dict]:
-    """Variables de incidencia: avisa si faltan o se mezclan definiciones de caso o ventanas de observación."""
+    """Avisa si una variable mezcla ventanas de observación (respecto al hito) o, en las incidencias (con eventos o
+    expresadas como proporción), si mezcla definiciones de caso o le faltan la definición o la ventana."""
     avisos: list[str] = []
     detalle: dict[str, dict] = {}
     por_variable: dict[str, list[dict]] = {}
     for r in rows:
-        if r.get("ev_ctrl") is not None or r.get("ev_trt") is not None:
-            por_variable.setdefault(r["outcome"], []).append(r)
-    for variable, filas in por_variable.items():
+        por_variable.setdefault(r["outcome"], []).append(r)
+    for variable, todas in por_variable.items():
+        filas = [r for r in todas if registry.is_incidence(lambda k, r=r: r.get(registry.EXTRACTION_FIELDS[k]))]
+        ventanas = sorted({(" ".join(registry.text_words(r.get("time_reference"))), float(r["window_start_days"]),
+                            float(r["window_end_days"])) for r in todas
+                           if r.get("window_start_days") is not None and r.get("window_end_days") is not None})
+        if len(ventanas) > 1:
+            avisos.append(f"AVISO: '{variable}' mezcla {len(ventanas)} ventanas de observación: "
+                          + "; ".join(f"{h or 'hito sin indicar'} {a:g} a {b:g} d" for h, a, b in ventanas[:6]))
+        if not filas:
+            continue
         sin = [f"E{r['id']}" for r in filas if not r.get("case_definition") or r.get("window_start_days") is None
                or r.get("window_end_days") is None]
         definiciones = sorted({" ".join(str(r["case_definition"]).casefold().split()) for r in filas
                                if r.get("case_definition")})
-        ventanas = sorted({(" ".join(_palabras(r.get("time_reference"))), float(r["window_start_days"]),
-                            float(r["window_end_days"])) for r in filas
-                           if r.get("window_start_days") is not None and r.get("window_end_days") is not None})
-        sin_umbral = sorted({d for d in definiciones if not re.search(r"\d", d)})
+        sin_umbral = sorted({d for d in definiciones if not any(ch.isdigit() for ch in d)})
         detalle[variable] = {"definiciones": definiciones, "ventanas": [list(v) for v in ventanas],
                              "sin_definicion_o_ventana": sin, "definiciones_sin_umbral_numerico": sin_umbral}
         if sin:
@@ -487,9 +486,6 @@ def _avisos_incidencia(rows: list[dict]) -> tuple[list[str], dict]:
         if len(definiciones) > 1:
             avisos.append(f"AVISO: '{variable}' mezcla {len(definiciones)} definiciones de caso: "
                           + " | ".join(definiciones[:5]))
-        if len(ventanas) > 1:
-            avisos.append(f"AVISO: '{variable}' mezcla {len(ventanas)} ventanas de observación: "
-                          + "; ".join(f"{h or 'hito sin indicar'} {a:g} a {b:g} d" for h, a, b in ventanas[:6]))
     return avisos, detalle
 
 

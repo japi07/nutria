@@ -20,6 +20,7 @@ from nutria.provenance import sha256_file
 EXAMPLES = Path(__file__).resolve().parents[1] / "ejemplos"
 SIGN = "--firma-humana"
 GATES = ["seguridad", "regulatoria", "analitica", "propiedad_intelectual", "destino_digestivo", "etica"]
+REG = ["--agente", "regulacion-seguridad"]   # rol del triage regulatorio
 LECHE = "producción de leche"
 CETOSIS = "cetosis subclínica"
 MOTIVO = "Tabla 3, fila 2, releída en la fuente"
@@ -706,11 +707,11 @@ def test_clasificar_registra_la_decision_del_triage_con_su_actor(project, capsys
     assert last["decision"].startswith("clasificación regulatoria: indeterminada")
     assert last["decided_by"] == "regulacion-seguridad" and last["rationale"].startswith("Triage")
     # errores: grupo incoherente, oportunidad inexistente, motivo vacío, ruta desconocida, evaluador
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_nutricional", "--grupo-funcional",
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_nutricional", "--grupo-funcional",
                  "zootecnico.digestibilidad", "--motivo", "triage"]) == 3
-    assert main(["oportunidad", "clasificar", "O-0099", "--ruta", "premezcla", "--motivo", "triage"]) == 3
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "premezcla", "--motivo", "  "]) == 3
-    assert _code(["oportunidad", "clasificar", "O-0001", "--ruta", "fuera_de_alcance_medicamentos",
+    assert main([*REG, "oportunidad", "clasificar", "O-0099", "--ruta", "premezcla", "--motivo", "triage"]) == 3
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "premezcla", "--motivo", "  "]) == 3
+    assert _code([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "fuera_de_alcance_medicamentos",
                   "--motivo", "x"]) == 2
     with pytest.raises(SystemExit, match="evaluadores"):
         main(["--agente", "evaluador-1", "oportunidad", "clasificar", "O-0001", "--ruta", "premezcla", "--motivo", "x"])
@@ -741,10 +742,12 @@ def test_clasificar_fuera_de_alcance_bloquea_y_salir_exige_firma(project, capsys
 
 def test_reclasificar_reabre_la_compuerta_regulatoria_superada(project, capsys):
     assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "pienso_complementario", "--motivo", "triage"]) == 0
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "pienso_complementario", "--motivo",
+                 "triage"]) == 0
     assert main(["puntuar", "compuerta", "O-0001", "regulatoria", "superada", "--motivo", "ok", SIGN, "Ana"]) == 0
     # repetir la misma clasificación no cambia nada
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "pienso_complementario", "--motivo", "revisado"]) == 0
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "pienso_complementario", "--motivo",
+                 "revisado"]) == 0
     assert db.effective_gates(_conn(), "O-0001", GATES)["regulatoria"] == "superada"
     # otra clasificación invalida la decisión anterior
     assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta",
@@ -761,5 +764,28 @@ def test_clasificar_respeta_la_alegacion_de_finalidad_nutricional(project):
                                  "tipo": "finalidad_nutricional_especifica"}
     opp["ruta_regulatoria_preliminar"] = "pienso_dietetico"
     assert main(["oportunidad", "nueva", "--datos", _write(project / "o.json", opp)]) == 0
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_zootecnico", "--motivo", "triage"]) == 3
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_zootecnico", "--motivo", "triage"]) == 3
     assert db.get_opportunity(_conn(), "O-0001")["regulatory_route"] == "pienso_dietetico"
+
+
+def test_clasificar_sin_firma_solo_el_rol_del_triage(project, capsys, monkeypatch):
+    """Sin firma humana, la clasificación la hace regulacion-seguridad; cualquiera puede proponer una ruta
+    fuera_de_alcance_* (bloquea, como 'bloqueada'); una persona clasifica con su firma."""
+    assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
+    for quien in ([], ["--agente", "director-cientifico"], ["--agente", "regulacion-seguridad-falso"]):
+        capsys.readouterr()
+        assert main([*quien, "oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo",
+                     "triage"]) == 3
+        assert "corresponde a regulacion-seguridad" in capsys.readouterr().err
+    assert db.get_opportunity(_conn(), "O-0001")["regulatory_route"] == "indeterminada"
+    monkeypatch.setenv("NUTRIA_AGENT", "regulacion-seguridad")
+    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--situacion", "catalogado",
+                 "--motivo", "Triage: materia prima del Catálogo"]) == 0
+    monkeypatch.delenv("NUTRIA_AGENT")
+    assert main(["--agente", "director-cientifico", "oportunidad", "clasificar", "O-0001", "--ruta",
+                 "fuera_de_alcance_biocida", "--motivo", "Se presenta como desinfectante del pezón"]) == 0
+    assert db.effective_gates(_conn(), "O-0001", GATES)["regulatoria"] == "bloqueada"
+    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "materia_prima", "--motivo",
+                 "Rediseño revisado: sin alegación biocida", SIGN, "Ana"]) == 0
+    opp = db.get_opportunity(_conn(), "O-0001")
+    assert (opp["regulatory_route"], opp["regulatory_situation"]) == ("materia_prima", None)

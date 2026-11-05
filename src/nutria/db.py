@@ -1229,6 +1229,8 @@ def list_claims(conn: sqlite3.Connection, entity_id: str | None = None) -> list[
 
 # ---------------------------------------------------------------------------- oportunidades
 CLASSIFICATION_FIELDS = ("ruta_regulatoria_preliminar", "grupo_funcional", "situacion")
+# Rol que hace el triage regulatorio y propone la compuerta regulatoria (CLAUDE.md, equipo).
+CLASSIFICATION_OWNER = "regulacion-seguridad"
 
 
 def _block_regulatory_gate(conn: sqlite3.Connection, opp_id: str, route: str, actor: str | None) -> str | None:
@@ -1301,8 +1303,11 @@ def add_opportunity(conn: sqlite3.Connection, data: dict, actor: str | None = No
 def classify_opportunity(conn: sqlite3.Connection, opp_id: str, route: str, reason: str,
                          functional_group: str | None = None, situation: str | None = None,
                          actor: str | None = None, human_signoff: str | None = None) -> dict:
-    """Actualiza la clasificación regulatoria (resultado del triage) con decisión registrada.
+    """Sustituye la clasificación regulatoria (ruta, grupo funcional y situación) por el resultado del triage, con
+    decisión registrada y actor.
 
+    - Sin firma humana, solo el rol del triage regulatorio (CLASSIFICATION_OWNER, por --agente o NUTRIA_AGENT)
+      clasifica; una ruta fuera_de_alcance_* la puede proponer cualquiera (criterio de prudencia, como "bloqueada").
     - Una ruta fuera_de_alcance_* bloquea en el acto la compuerta regulatoria (mismo mecanismo que el alta).
     - Salir de una ruta fuera_de_alcance_* exige firma humana (rediseño revisado); la compuerta sigue bloqueada
       hasta que una persona la revise.
@@ -1311,6 +1316,13 @@ def classify_opportunity(conn: sqlite3.Connection, opp_id: str, route: str, reas
     if not (reason or "").strip():
         raise RegistryError("La clasificación necesita un motivo (resultado del triage regulatorio)")
     signed = human_signoff.strip() if human_signoff and human_signoff.strip() else None
+    role = current_actor(actor).strip()
+    if not signed and route not in OUT_OF_SCOPE_ROUTES and role != CLASSIFICATION_OWNER:
+        raise RegistryError(
+            f"Clasificar una oportunidad (resultado del triage regulatorio) corresponde a {CLASSIFICATION_OWNER} "
+            f"(nutria --agente {CLASSIFICATION_OWNER} oportunidad clasificar ...); '{role}' no es ese rol. Cualquier "
+            "agente puede proponer una ruta fuera_de_alcance_* (bloquea la compuerta regulatoria) y una persona "
+            "clasifica en su terminal con --firma-humana")
     with transaction(conn):
         opp = get_opportunity(conn, opp_id)
         if opp is None:
