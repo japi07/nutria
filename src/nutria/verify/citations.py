@@ -403,8 +403,9 @@ _NUMBER_WORDS = {w: str(i) for i, w in enumerate(
 def _series_marker(text: str, tok: _Tok) -> str | None:
     """Número de una parte de una serie al principio del título o de un subtítulo ("...: I. A review of ...", "II.
     Milk production", "2) ..."): un romano o una cifra tras ":", "." o "—" y seguido de "." o ")"; o None."""
-    if not re.fullmatch(r"\s*[.)]", text[tok.end:tok.end + 1] or "x") or not text[tok.end:].strip(" .)"):
-        return None                   # sin punto detrás, o al final del título (el punto final de PubMed)
+    after = text[tok.end:tok.end + 2]
+    if after[:1] not in (".", ")") or not after[1:2].isspace() or not text[tok.end:].strip(" .)"):
+        return None                   # sin ". " detrás (no un decimal: "2.5"), o al final del título (punto de PubMed)
     before = text[:tok.start].rstrip()
     if before and before[-1] not in ":.—–":
         return None
@@ -715,6 +716,7 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
     "Smith J Pérez J" hacen de Pérez el primer autor; "Juan A. Pérez" (nombre, inicial y apellido) sí es uno."""
     lead: list[_Tok] = []
     prev_end = 0
+    cased = any(ch.isupper() for ch in text)          # una cita toda en minúsculas no corta en la primera palabra
     separator = r"[,;&(\[:]|[.?!]\s"
     for idx, tok in enumerate(toks):
         gap = text[prev_end:tok.start]
@@ -730,7 +732,7 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
                     break             # apellido + iniciales + otro apellido con iniciales: segundo autor
         if _has_digit(tok.norm) or tok.norm in _LEAD_CONJ:
             break
-        if tok.raw[:1].islower() and tok.norm not in _PARTICLES:
+        if cased and tok.raw[:1].islower() and tok.norm not in _PARTICLES:
             break
         lead.append(tok)
         prev_end = tok.end

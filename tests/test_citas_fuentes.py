@@ -656,6 +656,9 @@ def test_cita_que_no_empieza_por_los_autores_es_discrepancia(net):
     for entry in (f"(1) Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.",
                   f"[1] Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10."):
         assert c.verify_doi(Client(), DOI, entry).ok, entry
+    lower = f"pérez j, garcía a. 2020. {TITLE.lower()}. j dairy sci 103:1-10."     # cita toda en minúsculas
+    assert c.verify_doi(Client(), DOI, lower).ok
+    assert c.verify_doi(Client(), DOI, lower.replace("pérez", "smith")).author_ok is False
     net.cr[DOI] = cr_msg(DOI, authors=[("D'Angelo", "Marco"), ("García", "Ana")])
     assert c.verify_doi(Client(), DOI, f"d'Angelo M, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.").ok
 
