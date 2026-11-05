@@ -15,7 +15,10 @@
 - Revisión de la ronda 1: sin git en las pruebas que no lo piden (test_http.py intermitente), antecesores con `ps`
   donde no hay /proc, opciones y --agente construidos con variables, multiplexores y ssh -t, git que descarta cambios,
   mayúsculas en los nombres del registro, falsos positivos del hook, INSERT OR REPLACE, evaluadores normalizados,
-  evidencia (ficheros regulares del proyecto, no la propia oportunidad) y aviso de integridad en el listado.
+  evidencia (ficheros regulares del proyecto, no la propia oportunidad) y aviso de integridad en el listado; además,
+  nutria solo directamente en los subagentes (no desde Python, xargs ni eval), la clave con comodines bajo .config,
+  el rechazo de la firma también por stderr con --json y sin traza con los flujos cerrados, y la consulta web
+  redactada en claro.
 
 Las pruebas que firman como una persona llaman a `main()` en el mismo proceso: el fixture automático de conftest.py
 quita las señales de agente (también si pytest corre dentro de Claude Code).
