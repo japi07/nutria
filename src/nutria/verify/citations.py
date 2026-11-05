@@ -1031,7 +1031,7 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
     if journal_names and not _is_non_journal(pub_types) and not title_unlocated and not check.title_absent:
         if region is not None:
             check.journal_ok, check.journal_in_citation = _check_journal(text, toks, region[1], journal_names)
-        elif lead and not variants:
+        elif lead:                    # sin título en el registro (si lo tiene y la cita no, ya es discrepancia)
             check.journal_ok, check.journal_in_citation = _check_journal(
                 text, toks, lead[-1].end, journal_names, skip_authors=(author_words, acronyms))
     return check

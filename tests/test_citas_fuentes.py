@@ -323,7 +323,9 @@ def test_cita_sin_titulo_es_discrepancia_y_no_se_sella(net):
     # verificada. La base la rechazaba (cobertura del título < 0,6) y ahora vuelve a ser discrepancia.
     published(net)
     for entry in (f"Pérez J, García A. 2020. J Dairy Sci 103:1-10. DOI: {DOI}", f"Pérez J. DOI: {DOI}",
-                  f"Pérez J, García A, López L. 2020. Journal of Dairy Science. https://doi.org/{DOI}"):
+                  f"Pérez J, García A, López L. 2020. Journal of Dairy Science. https://doi.org/{DOI}",
+                  # un coautor que el registro no tiene no se toma por la revista (motivo único: falta el título)
+                  f"Pérez J, Ruiz B. 2020. J Dairy Sci 103:1-10. DOI: {DOI}"):
         res = c.verify_entry(Client(), entry)[0]
         assert res.status == "verificada" and res.mismatch and not res.ok and res.title_ok is False, entry
         assert "no trae el título" in res.message and "revista" not in " ".join(res.mismatch_reasons), entry
