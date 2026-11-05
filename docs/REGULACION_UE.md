@@ -104,12 +104,16 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   el anexo vigente.
 - [ ] **Antibióticos distintos de coccidiostáticos e histomonóstatos como aditivos**: no pueden autorizarse como
   aditivos para piensos (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación
-  en el texto consolidado). La prohibición no se limita a los promotores del crecimiento: alcanza también a los
-  **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos)** y a los reductores de metano con acción
-  antimicrobiana. Para esa finalidad no hay vía como pienso ni como aditivo: la compuerta `regulatoria` se propone
-  `bloqueada` salvo rediseño del activo (no basta cambiar la alegación). La auditoría externa señala además el
-  art. 107.2 del Reglamento (UE) 2019/6 (uso de antimicrobianos en medicamentos veterinarios): pendiente de
-  verificación.
+  en el texto consolidado). La prohibición no se limita a los promotores del crecimiento: vale sea cual sea la
+  finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos
+  como la monensina)** y a los reductores de metano que sean antibióticos. Para esa finalidad no hay vía como pienso
+  ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no basta cambiar la
+  alegación), y la vía del medicamento veterinario queda fuera de alcance. Con otros antimicrobianos (p. ej.
+  extractos vegetales o compuestos de síntesis) propuestos con esa finalidad, hay que comprobar si encajan en la
+  definición de antibiótico del reglamento (antimicrobiano producido por un microorganismo o derivado de él; art. 2,
+  pendiente de verificación) y si son medicamento por función (Reglamento (UE) 2019/6, art. 4); mientras no esté
+  claro, la propuesta es `no_resuelta`, nunca `superada`. La auditoría externa señala además el art. 107.2 del
+  Reglamento (UE) 2019/6 (uso de antimicrobianos en medicamentos veterinarios): pendiente de verificación.
 - [ ] **Sustancias indeseables** (Directiva 2002/32/CE): contenidos máximos; pendiente.
 
 ## Alegaciones (Reglamento (CE) 767/2009, art. 13; verificada (2026-11-04))
@@ -145,7 +149,7 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 |---|---|---|---|
 | [Reglamento (CE) 178/2002](https://eur-lex.europa.eu/eli/reg/2002/178/oj) | Legislación alimentaria general (incluye piensos), EFSA; arts. 32a y 32b añadidos por el Reglamento (UE) 2019/1381 | Siempre; antes de preparar una solicitud | verificada (2026-11-04) solo los arts. 32a y 32b; resto pendiente |
 | [Reglamento (UE) 2019/1381](https://eur-lex.europa.eu/eli/reg/2019/1381/oj) | Transparencia: asesoramiento previo de EFSA (art. 32a del Reglamento (CE) 178/2002) y notificación a EFSA de los estudios encargados para respaldar una solicitud (art. 32b); aplicable desde el 27-03-2021 | Antes de encargar estudios para un dossier | verificada (2026-11-04) |
-| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) (CELEX 32003R1831) | Aditivos: autorización, categorías, etiquetado, protección de datos; art. 11, apartado 2: los antibióticos distintos de coccidiostáticos e histomonóstatos no pueden autorizarse como aditivos (incluidos los moduladores ruminales antimicrobianos) | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente, incluido el art. 11, apartado 2 |
+| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) (CELEX 32003R1831) | Aditivos: autorización, categorías, etiquetado, protección de datos; art. 11, apartado 2: los antibióticos distintos de coccidiostáticos e histomonóstatos no pueden autorizarse como aditivos, sea cual sea la finalidad (incluidos los moduladores ruminales antimicrobianos que sean antibióticos, como los ionóforos) | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente, incluido el art. 11, apartado 2 |
 | [Reglamento (CE) 429/2008](https://eur-lex.europa.eu/eli/reg/2008/429/oj) | Preparación y presentación de solicitudes de aditivos | Nuevas autorizaciones | pendiente |
 | [Reglamento (CE) 378/2005](https://eur-lex.europa.eu/eli/reg/2005/378/oj) | Laboratorio de referencia de la UE para aditivos (EURL-FA), según la auditoría externa | Nuevas autorizaciones (método analítico) | pendiente |
 | [Reglamento (UE) 2019/962](https://eur-lex.europa.eu/eli/reg/2019/962/oj) | Grupos funcionales nuevos: estabilizadores de las condiciones fisiológicas (zootécnicos; animales sanos, resiliencia frente a factores de estrés) y otros aditivos tecnológicos | Productos de resiliencia frente al estrés oxidativo o calórico, si no son medicamento por función | verificada (2026-11-04) |

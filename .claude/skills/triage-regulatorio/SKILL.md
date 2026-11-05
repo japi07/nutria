@@ -54,10 +54,15 @@ requieren revisión de un profesional de asuntos regulatorios.
      anexo vigente);
    - [ ] antibióticos distintos de coccidiostáticos e histomonóstatos como aditivos: no pueden autorizarse
      (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación en el texto
-     consolidado). La prohibición no se limita a los antibióticos como promotores del crecimiento: alcanza también a
-     los **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos)** y a los reductores de metano con
-     acción antimicrobiana. Para esa finalidad no hay vía como pienso ni como aditivo: un "sí" aquí es `bloqueada`
-     salvo rediseño del activo (no basta cambiar la alegación).
+     consolidado). La prohibición no se limita a los antibióticos como promotores del crecimiento: vale sea cual sea
+     la finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej.
+     ionóforos como la monensina)** y a los reductores de metano que sean antibióticos. Para esa finalidad no hay vía
+     como pienso ni como aditivo: un "sí" aquí es `bloqueada` salvo rediseño del activo (no basta cambiar la
+     alegación); la vía del medicamento veterinario queda fuera de alcance (paso 2). Con otro antimicrobiano
+     propuesto como modulador ruminal (p. ej. un extracto vegetal o un compuesto de síntesis), comprueba si encaja en
+     la definición de antibiótico del propio reglamento (antimicrobiano producido por un microorganismo o derivado de
+     él; art. 2, pendiente de verificación) y si es medicamento por función (paso 2); mientras no esté claro, la
+     propuesta es `no_resuelta` con revisión de un profesional, nunca `superada`.
 7. **Alegaciones** (Reglamento (CE) 767/2009, art. 13). Redacta la alegación propuesta y comprueba:
    - 13.1: es objetiva, verificable por las autoridades y comprensible, y hay justificación científica que aportar si
      se pide (pruebas científicas públicas o investigación documentada de la empresa);

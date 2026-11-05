@@ -30,7 +30,7 @@ conclusión no está demostrada.
    `nutria buscar pubmed "<intervención> AND (\"no effect\" OR \"did not\")"`.
 7. **Novedad**: ¿ya existe el producto, la combinación o una patente? (`nutria patentes "<consulta>"`).
 8. **Regulación**: ¿la alegación implícita es de medicamento? ¿La sustancia está autorizada para esa especie? ¿Es un
-   antimicrobiano propuesto como modulador ruminal (p. ej. un ionóforo), sin vía como pienso ni como aditivo?
+   antibiótico propuesto como modulador ruminal (p. ej. un ionóforo), sin vía como pienso ni como aditivo?
 9. **Economía**: ¿el coste por animal y día es realista frente a la respuesta probable?
 
 ## Planes: lista de validación (la misma que usa el director al redactarlos)

@@ -173,7 +173,7 @@ log(`Estimación: 1 agente de extracción; después 3 por afirmación (como máx
 log(`Autor del documento: ${AUTOR || 'desconocido'} (${ORIGEN_AUTOR}); extrae y consolida ${ROL_EXTRACCION}; refutan ` +
   ENFOQUES.map((e) => `${e.id}=${e.tipo}`).join(', '))
 const extraidas = await lanzar(
-  `Lee ${ARCHIVO} e identifica las afirmaciones que sostienen su conclusión (las que, si fueran falsas, cambiarían la decisión): entre 5 y ${MAX_AFIRMACIONES}, ` +
+  `Lee ${ARCHIVO} e identifica las afirmaciones que sostienen su conclusión (las que, si fueran falsas, cambiarían la decisión): entre ${Math.min(5, MAX_AFIRMACIONES)} y ${MAX_AFIRMACIONES}, ` +
   'ordenadas de la más decisiva a la menos. Cópialas literalmente con un id A1..An. No escribiste este documento: no lo corrijas ni lo defiendas, ' +
   'y no te limites a las afirmaciones que el propio documento destaque. Solo lectura: no modifiques ningún fichero.',
   { label: 'extraccion', phase: 'Afirmaciones', agentType: ROL_EXTRACCION, schema: AFIRMACIONES },

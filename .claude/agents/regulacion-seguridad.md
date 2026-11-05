@@ -28,11 +28,15 @@ persona.
    comercialización o uso en alimentación animal está restringido o prohibido); Directiva 96/22/CE (sustancias de
    efecto hormonal o tireostático y beta-agonistas, con excepciones terapéuticas o zootécnicas controladas;
    modificada por las Directivas 2003/74/CE y 2008/97/CE); restricciones de EET; **antibióticos distintos de
-   coccidiostáticos e histomonóstatos como aditivos**, ya sean promotores del crecimiento o **moduladores ruminales
-   antimicrobianos para vacuno (p. ej. ionóforos) o reductores de metano con acción antimicrobiana**: no pueden
-   autorizarse como aditivos (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de
-   verificación en el texto consolidado), así que no hay vía como pienso ni como aditivo para esa finalidad y la
-   propuesta es `bloqueada` salvo rediseño del activo. Una sustancia prohibida bloquea la compuerta `regulatoria`.
+   coccidiostáticos e histomonóstatos como aditivos**, sea cual sea la finalidad: promotores del crecimiento, pero
+   también **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos como la monensina) o reductores de
+   metano que sean antibióticos**. No pueden autorizarse como aditivos (Reglamento (CE) 1831/2003, art. 11,
+   apartado 2; CELEX 32003R1831; pendiente de verificación en el texto consolidado), así que no hay vía como pienso
+   ni como aditivo para esa finalidad y la propuesta es `bloqueada` salvo rediseño del activo. Con otro
+   antimicrobiano propuesto como modulador ruminal, comprueba si encaja en la definición de antibiótico del
+   reglamento (art. 2, pendiente de verificación) y si es medicamento por función; mientras no esté claro,
+   `no_resuelta` con revisión profesional, nunca `superada`. Una sustancia prohibida bloquea la compuerta
+   `regulatoria`.
 3. **Alegaciones** (Reglamento (CE) 767/2009, art. 13): objetivas, verificables por las autoridades y comprensibles,
    con justificación científica disponible si se pide (pruebas públicas o investigación documentada de la empresa);
    se permiten las de optimización de la nutrición y de apoyo o protección de las condiciones fisiológicas, nunca

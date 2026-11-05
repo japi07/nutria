@@ -1636,3 +1636,51 @@ def test_p8_omg_microorganismos_y_qps():  # D5-13
                           "ADN recombinante", "QPS", "genes de resistencia", "toxigenicidad", "pendiente de verificación"):
             assert fragmento in texto, (nombre, fragmento)
     assert "Productos de fermentación con cepas modificadas | pendiente |" not in _text(ROOT / "docs" / "REGULACION_UE.md")
+
+
+# ------------------------------------------------------------------ P8: independencia en la CLI y en los prompts
+def test_p8_evaluador_no_ve_las_decisiones_propuestas(project, capsys):  # D1-3: la conclusión esperada
+    _registrar_oportunidades(project, capsys, 1)
+    code, _ = _cli(capsys, "--agente", "director-cientifico", "decision", "registrar", "--entidad", "O-0001",
+                   "--decision", "propuesta: descartar", "--motivo", "CONCLUSION-ESPERADA")
+    assert code == 0
+    for argv in (("--agente", "evaluador-2"), ("--agente", "Evaluador-1")):
+        code, out = _cli(capsys, *argv, "--json", "oportunidad", "ver", "O-0001", "--sin-puntuaciones")
+        assert code == 0
+        vista = json.loads(out)
+        assert "decisiones" not in vista and "puntuaciones" not in vista
+        assert "CONCLUSION-ESPERADA" not in out
+        assert set(vista["compuertas_efectivas"]) == set(PROPIETARIO)  # las compuertas sí son evidencia
+    # el resto de roles (director, orquestador) sigue viendo las decisiones
+    code, out = _cli(capsys, "--agente", "director-cientifico", "--json", "oportunidad", "ver", "O-0001", "--sin-puntuaciones")
+    assert code == 0 and "CONCLUSION-ESPERADA" in out
+
+
+@requires_node
+def test_p8_evaluar_pregunta_obligatoria_aunque_el_plan_traiga_la_suya(project, capsys):  # D2-18, D5-10
+    plan = {"peco": "PECO", "variables": ["leche_kg_d"], "preguntas": [
+        {"agente": "economia-mercado-pi", "pregunta": "PREGUNTA-DEL-PLAN", "entregable": "ENTREGABLE-DEL-PLAN"},
+        {"agente": "sostenibilidad-bienestar", "pregunta": "huella", "entregable": "e"}]}
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [_regla_registro(project, capsys, "O-0003"),
+                                                               {"label": "plan:O-0003", "respuesta": plan}])
+    especialistas = [c for c in out["llamadas"] if c["phase"] == "Especialistas"]
+    assert [c["agentType"] for c in especialistas] == ["desarrollo-industrial", "economia-mercado-pi", "sostenibilidad-bienestar"]
+    economia = _norm(especialistas[1]["prompt"])
+    assert "PREGUNTA-DEL-PLAN" in economia and "ENTREGABLE-DEL-PLAN" in economia
+    assert "la novedad frente a productos y patentes es tuya" in economia
+    assert "nutria --agente economia-mercado-pi puntuar compuerta O-0003 propiedad_intelectual" in economia
+    assert "nutria --agente sostenibilidad-bienestar puntuar compuerta O-0003 etica" in _norm(especialistas[2]["prompt"])
+
+
+@requires_node
+def test_p8_red_team_tope_menor_que_cinco_no_pide_imposibles():  # D10-3
+    out = run_workflow("red-team-auto", {"archivo": "research/informes/O-0003.md", "max_afirmaciones": 3})
+    assert "entre 3 y 3" in call(out, "extraccion")["prompt"]
+    assert call(out, "extraccion")["schema"]["properties"]["afirmaciones"]["maxItems"] == 3
+
+
+def test_p8_version_de_claude_code_documentada():  # D2-17
+    for nombre in ("mision-1", "oportunidad"):
+        texto = _norm(_skill(nombre))
+        assert "2.1.318" in texto and "herramienta Workflow" in texto, nombre
+    assert "2.1.42" in _norm(_skill("mision-1"))

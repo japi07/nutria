@@ -537,7 +537,8 @@ def _entity_cmd(args, cfg, kind: str) -> int:
         row = get(conn, args.id)
         if not row:
             raise SystemExit(f"No existe {args.id}")
-        row["decisiones"] = registry.list_decisions(conn, args.id)
+        if not _es_evaluador(args):  # regla 9: un evaluador no ve las decisiones propuestas (la conclusión esperada)
+            row["decisiones"] = registry.list_decisions(conn, args.id)
         if kind == "oportunidad":
             row["compuertas"] = registry.list_gates(conn, args.id)
             row["compuertas_efectivas"] = registry.effective_gates(conn, args.id, _rubric(cfg).gate_ids)
