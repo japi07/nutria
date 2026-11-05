@@ -63,11 +63,20 @@ def cache_files(cfg):
 
 
 def age_cache(cfg, days):
-    """Envejece todas las copias de la caché `days` días."""
+    """Envejece todas las copias de la caché `days` días. La fecha que cuenta es la del registro de la respuesta
+    en la procedencia (evento `http`), así que se envejecen esos eventos (y, por coherencia, los ficheros)."""
     for path in cache_files(cfg):
         record = json.loads(path.read_text("utf-8"))
         record["ts"] -= days * 86400
         path.write_text(json.dumps(record), "utf-8")
+    lines = []
+    for line in cfg.provenance_path.read_text("utf-8").splitlines():
+        event = json.loads(line)
+        if event["action"] == "http":
+            moment = datetime.fromisoformat(event["ts"]) - timedelta(days=days)
+            event["ts"] = moment.isoformat(timespec="seconds")
+        lines.append(json.dumps(event, ensure_ascii=False))
+    cfg.provenance_path.write_text("\n".join(lines) + "\n", "utf-8")
 
 
 # ============================================================================ caché, fresh y offline
@@ -113,17 +122,26 @@ def test_fresh_never_reads_cache_but_writes_it(cfg):
     assert not normal_session.calls
 
 
-def test_offline_serves_cache_even_if_expired_and_fails_without_copy(cfg):
+def test_offline_serves_expired_copy_up_to_the_maximum_age_and_fails_without_copy(cfg):
+    # D7-10: sin red se sirve una copia caducada, pero no más antigua que el máximo (180 días por defecto)
     HttpClient(cfg, session=FakeSession(FakeResponse(text='{"a": 1}'))).get_json(URL)
-    age_cache(cfg, 400)
+    age_cache(cfg, 100)
     cfg.offline = True
     session = FakeSession()
-    assert HttpClient(cfg, session=session).get_json(URL) == {"a": 1}
+    client = HttpClient(cfg, session=session)
+    assert client.get_json(URL) == {"a": 1}
+    assert client.cache_hits[-1]["antiguedad_dias"] == pytest.approx(100, abs=0.01)
     with pytest.raises(OfflineError):
         HttpClient(cfg, session=session).get_json(URL, params={"q": "otra"})
     assert not session.calls
     error = read_events(cfg, action="http_error")[-1]
     assert error["outputs"]["type"] == "OfflineError" and error["inputs"]["params"] == {"q": "otra"}
+    age_cache(cfg, 300)                               # 400 días: más que el máximo
+    with pytest.raises(OfflineError, match="más antigua que el máximo de 180 días"):
+        HttpClient(cfg, session=session).get_json(URL)
+    cfg.cache_max_offline_days = 500                  # --antiguedad-maxima 500
+    assert HttpClient(cfg, session=session).get_json(URL) == {"a": 1}
+    assert not session.calls
 
 
 def test_offline_with_fresh_raises_even_with_copy(cfg):

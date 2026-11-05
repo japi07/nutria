@@ -69,15 +69,24 @@ def _validate(kind: str, data: dict) -> None:
                              + ", ".join(undeclared))
 
 
+# Clientes HTTP y conexiones abiertos durante la orden en curso: main() los cierra al terminar.
+_RECURSOS: list = []
+
+
 def _conn(cfg):
     if not cfg.db_path.is_file():
         raise SystemExit(f"No existe la base de datos ({cfg.db_path}). Ejecuta `nutria init` en la raíz del proyecto.")
-    return registry.connect(cfg.db_path)
+    conn = registry.connect(cfg.db_path)
+    _RECURSOS.append(conn)
+    return conn
 
 
-def _client(cfg, fresh: bool = False) -> HttpClient:
-    """Cliente HTTP; con fresh=True no lee la caché (verificación de referencias)."""
-    return HttpClient(cfg, fresh=fresh)
+def _client(cfg, fresh: bool = False, confidential: bool = False) -> HttpClient:
+    """Cliente HTTP; con fresh=True no lee la caché (verificación de referencias); con confidential=True la
+    procedencia guarda solo huellas de la consulta. main() lo cierra al terminar la orden."""
+    client = HttpClient(cfg, fresh=fresh, confidential=confidential)
+    _RECURSOS.append(client)
+    return client
 
 
 def _rubric(cfg):
@@ -98,7 +107,11 @@ def _records_text(records) -> str:
 
 # ============================================================================ órdenes generales
 def cmd_init(args, cfg) -> int:
-    root = Path.cwd()
+    import os
+    # Con NUTRIA_HOME, el proyecto se crea allí (como lo buscan las demás órdenes), no en el directorio actual.
+    home = os.environ.get("NUTRIA_HOME", "").strip()
+    root = Path(home).expanduser().resolve() if home else Path.cwd()
+    root.mkdir(parents=True, exist_ok=True)
     conf = root / CONFIG_FILENAME
     if not conf.exists() or args.forzar:
         conf.write_text(DEFAULT_CONFIG_TEXT, "utf-8")
@@ -107,52 +120,216 @@ def cmd_init(args, cfg) -> int:
         (cfg.research_dir / sub).mkdir(parents=True, exist_ok=True)
     registry.init_db(cfg.db_path).close()
     log_event(cfg, "init", outputs={"entorno": environment_snapshot(cfg.root)})
-    _emit(args, {"raiz": str(root), "configuracion": str(conf), "base_de_datos": str(cfg.db_path)},
-          f"Proyecto inicializado en {root}\n  configuración: {conf}\n  base de datos: {cfg.db_path}")
+    _emit(args, {"raiz": str(root), "configuracion": str(conf), "base_de_datos": str(cfg.db_path),
+                 "nutria_home": bool(home)},
+          f"Proyecto inicializado en {root}{' (NUTRIA_HOME)' if home else ''}\n  configuración: {conf}\n"
+          f"  base de datos: {cfg.db_path}")
     return 0
 
 
-HOSTS = {
-    "PubMed (NCBI E-utilities)": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/einfo.fcgi?retmode=json",
-    "Europe PMC": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=rumen&format=json&pageSize=1",
-    "OpenAlex": "https://api.openalex.org/works?search=rumen&per-page=1",
-    "Crossref": "https://api.crossref.org/works?rows=1&query=rumen",
-    "ChEMBL": "https://www.ebi.ac.uk/chembl/api/data/status.json",
-    "PubChem": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/305/property/MolecularFormula/JSON",
-    "UniProt": "https://rest.uniprot.org/uniprotkb/search?query=gene:PPARA&size=1&format=json",
-    "STRING": "https://string-db.org/api/json/version",
-    "Reactome": "https://reactome.org/ContentService/data/database/version",
-}
+# Fuentes que comprueba `nutria doctor`: (nombre, URL, esencial). Las esenciales son las que necesitan la búsqueda
+# bibliográfica y la verificación de referencias (sin ellas no hay sello válido); si alguna falla, doctor sale con
+# código 1. STRING usa la dirección configurada (URL None); OpenAlex exige clave y Lens (aparte), token. Las URL de
+# doi.org, DataCite y EUR-Lex siguen la documentación de cada servicio y no se han probado contra ellos.
+FUENTES_DOCTOR = (
+    ("PubMed (NCBI E-utilities)", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/einfo.fcgi?retmode=json", True),
+    ("Europe PMC", "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=rumen&format=json&pageSize=1", True),
+    ("Crossref", "https://api.crossref.org/works?rows=1&query=rumen", True),
+    ("OpenAlex", "https://api.openalex.org/works?search=rumen&per-page=1", False),
+    ("ChEMBL", "https://www.ebi.ac.uk/chembl/api/data/status.json", False),
+    ("PubChem", "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/305/property/MolecularFormula/JSON", False),
+    ("UniProt", "https://rest.uniprot.org/uniprotkb/search?query=gene:PPARA&size=1&format=json", False),
+    ("STRING", None, False),
+    ("Reactome", "https://reactome.org/ContentService/data/database/version", False),
+    ("doi.org", "https://doi.org/api/handles/10.1000/182", False),
+    ("DataCite", "https://api.datacite.org/dois?query=rumen&page%5Bsize%5D=1", False),
+    ("EUR-Lex", "https://eur-lex.europa.eu/legal-content/ES/ALL/?uri=CELEX:32009R0767", False),
+)
+# Dominios de lectura con WebFetch que declara docs/FUENTES.md (los usan los agentes de Claude Code, no `nutria`).
+WEBFETCH_DOMINIOS = ("eur-lex.europa.eu", "efsa.onlinelibrary.wiley.com", "food.ec.europa.eu", "europepmc.org",
+                     "pubmed.ncbi.nlm.nih.gov", "www.feedipedia.org", "doi.org")
+_ESTADOS_DOCTOR = {"ok": "OK", "http": "HTTP", "bloqueado": "BLOQUEADO por proxy/política de red",
+                   "sin_conexion": "sin conexión", "no_comprobado": "no comprobado (modo offline)",
+                   "sin_clave": "sin clave (no se comprueba)", "sin_token": "sin token (opcional; no se comprueba)"}
+
+
+def _doctor_estado(res: dict) -> str:
+    text = _ESTADOS_DOCTOR.get(res.get("estado"), res.get("estado"))
+    if res.get("status") is not None:
+        text = f"{text} ({res['status']})"
+    return text
+
+
+def _doctor_versiones(res: dict) -> dict:
+    """Versión de la base de datos que respondió a la comprobación de doctor (si la expone)."""
+    nombre, texto = res.get("nombre"), res.get("texto") or ""
+    try:
+        if nombre == "STRING":
+            data = json.loads(texto)
+            item = data[0] if isinstance(data, list) and data else {}
+            return {"STRING": item.get("string_version")}
+        if nombre == "ChEMBL":
+            return {"ChEMBL": json.loads(texto).get("chembl_db_version")}
+        if nombre == "Reactome":
+            return {"Reactome": texto.strip()[:40] or None}
+        if nombre == "UniProt":
+            return {"UniProt": (res.get("cabeceras") or {}).get("x-uniprot-release")}
+    except (ValueError, AttributeError):
+        return {}
+    return {}
+
+
+def _doctor_hook(root: Path) -> dict:
+    """Intérprete que usaría scripts/hooks/run_hook.sh (mismo orden de búsqueda) y si importa nutria y jsonschema."""
+    import os
+    import shutil
+    import subprocess
+    if not (root / "scripts" / "hooks" / "run_hook.sh").is_file():
+        return {"estado": "no_aplica", "esencial": False,
+                "detalle": "el proyecto no tiene los hooks de Claude Code (scripts/hooks/run_hook.sh)"}
+    if not shutil.which("sh"):
+        return {"estado": "no_encontrado", "esencial": True, "detalle": "no hay `sh` para ejecutar run_hook.sh"}
+    interpreter = None
+    for candidate in (root / ".venv" / "bin" / "python", root / ".venv" / "Scripts" / "python.exe", "python3", "python"):
+        if isinstance(candidate, Path):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                interpreter = str(candidate)
+                break
+        elif shutil.which(candidate):
+            interpreter = shutil.which(candidate)
+            break
+    if not interpreter:
+        return {"estado": "no_encontrado", "esencial": True,
+                "detalle": "run_hook.sh no encuentra Python: bloqueará las escrituras en research/ (falla cerrado)"}
+    try:
+        proc = subprocess.run([interpreter, "-c", "import nutria, jsonschema; print(nutria.__file__)"],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"estado": "error", "esencial": True, "interprete": interpreter, "detalle": str(exc)[:300]}
+    if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return {"estado": "sin_dependencias", "esencial": True, "interprete": interpreter,
+                "detalle": (lines[-1] if lines else f"código {proc.returncode}")[:300]
+                + " — el hook bloqueará las escrituras en research/ que debía validar"}
+    return {"estado": "ok", "esencial": True, "interprete": interpreter, "nutria": proc.stdout.strip()}
+
+
+def _doctor_r() -> dict:
+    """Rscript y los paquetes metafor y clubSandwich (opcionales: solo para `nutria meta exportar-r`)."""
+    import shutil
+    import subprocess
+    rscript = shutil.which("Rscript")
+    if not rscript:
+        return {"estado": "no_instalado", "detalle": "opcional: solo hace falta para ejecutar el script de "
+                                                     "`nutria meta exportar-r` (paquetes metafor y clubSandwich)"}
+    out: dict = {"estado": "ok", "ruta": rscript}
+    try:
+        proc = subprocess.run([rscript, "--version"], capture_output=True, text=True, timeout=30)
+        lines = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+        out["version"] = lines[0] if lines else None
+        proc = subprocess.run([rscript, "-e", 'cat(sapply(c("metafor", "clubSandwich"), requireNamespace, '
+                                              'quietly = TRUE))'], capture_output=True, text=True, timeout=120)
+        flags = (proc.stdout or "").split()
+        out["paquetes"] = ({"metafor": flags[0] == "TRUE", "clubSandwich": flags[1] == "TRUE"}
+                           if len(flags) == 2 else None)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"estado": "error", "ruta": rscript, "detalle": str(exc)[:300]}
+    return out
 
 
 def cmd_doctor(args, cfg) -> int:
-    import requests
-    report = {"version": __version__, "raiz": str(cfg.root), "config": (cfg.root / CONFIG_FILENAME).is_file(),
-              "base_datos": cfg.db_path.is_file(), "entorno": environment_snapshot(cfg.root), "red": {},
-              "claves": {k: bool(cfg.secret(k)) for k in ("NCBI_API_KEY", "OPENALEX_API_KEY", "LENS_API_TOKEN")}}
+    from .sources import patents, stringdb
     client = _client(cfg)
-    for name, url in HOSTS.items():
-        params = {"api_key": cfg.secret("OPENALEX_API_KEY")} if name == "OpenAlex" and cfg.secret("OPENALEX_API_KEY") else None
+    report = {"version": __version__, "raiz": str(cfg.root), "config": (cfg.root / CONFIG_FILENAME).is_file(),
+              "base_datos": cfg.db_path.is_file(), "entorno": environment_snapshot(cfg.root), "offline": cfg.offline,
+              "claves": {k: bool(cfg.secret(k)) for k in ("NCBI_API_KEY", "OPENALEX_API_KEY", "LENS_API_TOKEN")},
+              "red": {}, "versiones": {}, "webfetch": {}}
+    for nombre, url, esencial in FUENTES_DOCTOR:
+        url = url or f"{stringdb.api_url(cfg)}/json/version"
+        params = None
+        if nombre == "OpenAlex":
+            if not cfg.secret("OPENALEX_API_KEY"):
+                report["red"][nombre] = {"estado": "sin_clave", "url": url, "esencial": esencial}
+                continue
+            params = {"api_key": cfg.secret("OPENALEX_API_KEY")}
+        res = client.probe(url, params=params, headers={"Accept": "*/*"})
+        res.update(nombre=nombre, url=url, esencial=esencial)
+        report["versiones"].update({k: v for k, v in _doctor_versiones(res).items() if v})
+        res.pop("texto", None)
+        res.pop("nombre", None)
+        report["red"][nombre] = res
+    if cfg.secret("LENS_API_TOKEN"):
+        res = client.probe(patents.LENS_URL, method="POST",
+                           json_body={"query": {"query_string": {"query": "rumen"}}, "size": 1},
+                           headers={"Authorization": f"Bearer {cfg.secret('LENS_API_TOKEN')}"})
+        res.pop("texto", None)
+        report["red"]["Lens"] = {**res, "url": patents.LENS_URL, "esencial": False}
+    else:
+        report["red"]["Lens"] = {"estado": "sin_token", "url": patents.LENS_URL, "esencial": False}
+    allowed = None
+    settings = cfg.root / ".claude" / "settings.json"
+    if settings.is_file():
         try:
-            resp = client.session.get(url, params=params, timeout=15)
-            report["red"][name] = f"OK ({resp.status_code})" if resp.status_code < 400 else f"HTTP {resp.status_code}"
-        except requests.exceptions.ProxyError:
-            report["red"][name] = "BLOQUEADO por proxy/política de red"
-        except requests.RequestException as exc:
-            report["red"][name] = f"sin conexión ({type(exc).__name__})"
+            allowed = set(json.loads(settings.read_text("utf-8")).get("permissions", {}).get("allow", []))
+        except (OSError, ValueError, AttributeError):
+            allowed = None
+    for domain in WEBFETCH_DOMINIOS:
+        res = client.probe(f"https://{domain}/", headers={"Accept": "*/*"})
+        res.pop("texto", None)
+        res["permitido_en_settings"] = None if allowed is None else f"WebFetch(domain:{domain})" in allowed
+        report["webfetch"][domain] = res
+    report["hook"] = _doctor_hook(cfg.root)
+    report["r"] = _doctor_r()
+    fallos = [] if report["config"] else ["nutria.toml"]
+    if not report["base_datos"]:
+        fallos.append("base de datos")
+    fallos += [n for n, r in report["red"].items() if r.get("esencial") and r["estado"] not in ("ok", "no_comprobado")]
+    if report["hook"].get("esencial") and report["hook"]["estado"] != "ok":
+        fallos.append("intérprete del hook")
+    report["fallos_esenciales"] = fallos
+    report["resultado"] = "ok" if not fallos else "fallos_esenciales"
+    log_event(cfg, "doctor", inputs={"offline": cfg.offline},
+              outputs={"red": {n: r["estado"] for n, r in report["red"].items()}, "versiones": report["versiones"],
+                       "webfetch": {d: r["estado"] for d, r in report["webfetch"].items()},
+                       "hook": report["hook"]["estado"], "r": report["r"]["estado"], "fallos_esenciales": fallos},
+              actor=args.agente)
+
     lines = [f"nutria {__version__} | raíz: {cfg.root}",
              f"  nutria.toml: {'sí' if report['config'] else 'NO (ejecuta nutria init)'} | "
-             f"base de datos: {'sí' if report['base_datos'] else 'NO'}",
+             f"base de datos: {'sí' if report['base_datos'] else 'NO (ejecuta nutria init)'}",
              "  entorno: " + ", ".join(f"{k}={v}" for k, v in report["entorno"].items() if v),
-             "  claves: " + ", ".join(f"{k}={'sí' if v else 'no'}" for k, v in report["claves"].items()),
-             "  conectividad:"] + [f"    {k:<28} {v}" for k, v in report["red"].items()]
+             "  claves: " + ", ".join(f"{k}={'sí' if v else 'no'}" for k, v in report["claves"].items())]
+    if cfg.offline:
+        lines.append("  MODO OFFLINE: no se ha hecho ninguna petición de red. Con red se comprobaría:")
+        lines += [f"    {n:<28} {r['url']}" for n, r in report["red"].items()]
+        lines += [f"    WebFetch {d:<19} https://{d}/" for d in WEBFETCH_DOMINIOS]
+    else:
+        lines.append("  fuentes de nutria (esenciales marcadas con *):")
+        lines += [f"  {'*' if r.get('esencial') else ' '} {n:<28} {_doctor_estado(r)}" for n, r in report["red"].items()]
+        if report["versiones"]:
+            lines.append("  versiones: " + " | ".join(f"{k} {v}" for k, v in report["versiones"].items()))
+        lines.append("  dominios de WebFetch (agentes de Claude Code), accesibilidad desde esta máquina:")
+        for domain, res in report["webfetch"].items():
+            allowed_text = {None: "sin .claude/settings.json", True: "preautorizado", False: "NO preautorizado"}[
+                res["permitido_en_settings"]]
+            lines.append(f"    {domain:<30} {_doctor_estado(res)} | {allowed_text}")
+    hook = report["hook"]
+    lines.append(f"  intérprete del hook (scripts/hooks/run_hook.sh): {hook['estado']}"
+                 + (f" ({hook['interprete']})" if hook.get("interprete") else "")
+                 + (f": {hook['detalle']}" if hook.get("detalle") else ""))
+    rinfo = report["r"]
+    lines.append(f"  R (Rscript): {rinfo['estado']}" + (f" ({rinfo.get('version')})" if rinfo.get("version") else "")
+                 + (f" | paquetes: {rinfo['paquetes']}" if rinfo.get("paquetes") else "")
+                 + (f": {rinfo['detalle']}" if rinfo.get("detalle") else ""))
     if not report["claves"]["OPENALEX_API_KEY"]:
         lines.append("  OpenAlex exige una clave gratuita desde el 13-02-2026: https://openalex.org/settings/api")
-    if any(not v.startswith("OK") for v in report["red"].values()):
+    if not cfg.offline and any(r["estado"] != "ok" for r in report["red"].values()
+                               if r["estado"] not in ("sin_clave", "sin_token")):
         lines.append("  Algunas fuentes no son accesibles: permite esos dominios en la red. Sin red, la verificación "
                      "de referencias queda incompleta y los sellos no son válidos.")
+    lines.append("  Resultado: " + ("OK" if not fallos else "FALLAN comprobaciones esenciales: " + ", ".join(fallos)))
     _emit(args, report, "\n".join(lines))
-    return 0
+    return SALIDA_RESULTADO if fallos else SALIDA_OK
 
 
 def cmd_estado(args, cfg) -> int:
@@ -173,23 +350,81 @@ def cmd_estado(args, cfg) -> int:
 
 
 # ============================================================================ literatura
+OPENALEX_PAGE = 200   # resultados por página de OpenAlex (máximo que admite)
+
+
+def _red_salida(client, avisos: list[str] | None = None) -> dict:
+    """Copias de la caché servidas (con su fecha y antigüedad) y avisos, para la salida de una orden."""
+    if client is None:
+        return {"cache": [], "avisos": list(avisos or [])}
+    return {"cache": list(client.cache_hits), "avisos": list(avisos or []) + list(client.avisos)}
+
+
+def _red_lineas(cfg, client, avisos: list[str] | None = None, notas: list[str] | None = None) -> list[str]:
+    """Líneas de texto con la fecha de cada copia servida desde la caché, los avisos y las notas."""
+    lines = []
+    hits = list(client.cache_hits) if client is not None else []
+    if hits:
+        lines.append("Modo offline: datos de la caché, no de la fuente actual:" if cfg.offline
+                     else "Respuestas servidas desde la caché:")
+        for hit in hits:
+            origin = ", importada" if hit.get("origen") == "importada" else ""
+            lines.append(f"  copia del {hit['fecha']} ({hit['antiguedad_dias']:.1f} días{origin}) {hit['url']}")
+    lines += [f"AVISO: {a}" for a in _red_salida(client, avisos)["avisos"]]
+    lines += [f"Nota: {n}" for n in notas or []]
+    return lines
+
+
+def _red_procedencia(client) -> list[dict]:
+    """Copias de la caché para la procedencia: fecha, huella y origen (sin la URL, que puede llevar la consulta)."""
+    if client is None:
+        return []
+    return [{"fecha": h["fecha"], "sha256": h["sha256"], "origen": h.get("origen")} for h in client.cache_hits]
+
+
+def _version_fuente(func, client, nombre: str, avisos: list[str]) -> dict:
+    """Versión de la base de datos consultada (`func(client)`), o {} con un aviso si no se pudo saber."""
+    try:
+        info = func(client) or {}
+    except NetworkError as exc:
+        avisos.append(f"No se pudo consultar la versión de {nombre}: {exc}")
+        return {}
+    if not info.get("version"):
+        avisos.append(f"{nombre} no informó de su versión: el resultado no queda ligado a una versión concreta")
+    return info
+
+
 def cmd_buscar(args, cfg) -> int:
     from .sources import europepmc, openalex, pubmed
-    client = _client(cfg)
+    from .sources.base import collect_pages, record_identifiers
+    if args.max < 1:
+        raise ValueError("--max debe ser un entero positivo")
+    confidencial = getattr(args, "sensibilidad", "normal") == "confidencial"
+    client = _client(cfg, confidential=confidencial)
     year_filter = (f" AND PUB_YEAR:[{args.desde or 1800} TO {args.hasta or 3000}]"
                    if (args.desde or args.hasta) else "")
     if args.fuente == "pubmed":
         res = pubmed.search_records(client, args.consulta, retmax=args.max, mindate=args.desde, maxdate=args.hasta,
                                     with_abstracts=args.resumenes)
     elif args.fuente == "europepmc":
-        res = europepmc.search(client, args.consulta + year_filter, page_size=args.max)
+        res = europepmc.search_all(client, args.consulta + year_filter, max_results=args.max)
     elif args.fuente == "efsa":
-        res = europepmc.efsa_journal(client, f"({args.consulta}){year_filter}", page_size=args.max)
+        res = europepmc.search_all(client, europepmc.efsa_query(f"({args.consulta}){year_filter}"),
+                                   max_results=args.max)
     else:
-        res = openalex.search(client, args.consulta, per_page=args.max,
-                              from_year=int(args.desde) if args.desde else None,
-                              to_year=int(args.hasta) if args.hasta else None)
+        from_year = int(args.desde) if args.desde else None
+        to_year = int(args.hasta) if args.hasta else None
+
+        def page(cursor, size):
+            found = openalex.search(client, args.consulta, per_page=size, cursor=cursor or "*",
+                                    from_year=from_year, to_year=to_year)
+            return {"count": found["count"], "records": found["records"], "next": found.get("next_cursor")}
+
+        res = collect_pages(page, args.max, OPENALEX_PAGE, "OpenAlex")
     records = res["records"]
+    api_avisos = list(res.get("avisos") or [])
+    incompleto = bool(res.get("incompleto"))
+    total = res.get("count") or 0
     registered = []
     if args.registrar and records:
         conn = _conn(cfg)
@@ -197,19 +432,43 @@ def cmd_buscar(args, cfg) -> int:
             for rec in records:
                 if rec.key:
                     registered.append(registry.upsert_source(conn, {**rec.to_dict(), "verified": False}, args.agente))
-    log_event(cfg, "busqueda", inputs={"fuente": args.fuente, "consulta": args.consulta, "max": args.max,
-                                       "desde": args.desde, "hasta": args.hasta},
-              outputs={"total": res.get("count"), "devueltos": len(records), "registrados": len(registered)},
-              actor=args.agente)
-    header = f"{args.fuente}: {res.get('count', 0)} resultados totales; mostrando {len(records)}"
+    identifiers = record_identifiers(records)
+    inputs = {"fuente": args.fuente, "max": args.max, "desde": args.desde, "hasta": args.hasta,
+              "sensibilidad": "confidencial" if confidencial else "normal"}
+    outputs = {"total": total, "devueltos": len(records), "registrados": len(registered),
+               "paginas": res.get("paginas"), "incompleto": incompleto, "cache": _red_procedencia(client)}
+    if confidencial:
+        # Ni la consulta ni lo que devolvió quedan en claro en el registro versionado.
+        inputs["consulta_sha256"] = sha256_text(args.consulta)
+        outputs["identificadores_sha256"] = sha256_text(json.dumps(identifiers, sort_keys=True))
+        outputs["avisos_api"] = len(api_avisos)
+    else:
+        inputs["consulta"] = args.consulta
+        outputs["identificadores"] = identifiers
+        outputs["avisos"] = api_avisos
+    log_event(cfg, "busqueda", inputs=inputs, outputs=outputs, actor=args.agente)
+    notas = []
+    if confidencial:
+        notas.append("consulta confidencial: la procedencia guarda solo su huella SHA-256 (y la de los identificadores "
+                     f"devueltos), pero la consulta ha viajado igualmente al servicio externo ({args.fuente})")
+    header = f"{args.fuente}: {total} resultados totales; mostrando {len(records)}"
+    if (res.get("paginas") or 0) > 1:
+        header += f" ({res['paginas']} páginas)"
+    if incompleto:
+        header += "\nRESULTADOS INCOMPLETOS: una parte de la consulta falló (ver avisos)"
+    elif total > len(records):
+        header += f"\nHay más resultados: sube --max (ahora {args.max}) para recuperarlos"
     if res.get("query_translation"):
         header += f"\nTraducción de la consulta: {res['query_translation']}"
     if registered:
         header += (f"\nRegistradas {len(registered)} fuentes SIN verificar (no sirven para [PUB] hasta "
                    "`nutria verificar --pendientes`)")
-    _emit(args, {"total": res.get("count"), "registros": [r.to_dict() for r in records], "registradas": registered},
-          header + "\n" + _records_text(records))
-    return 0
+    extra = _red_lineas(cfg, client, api_avisos, notas)
+    _emit(args, {"total": total, "registros": [r.to_dict() for r in records], "registradas": registered,
+                 "devueltos": len(records), "paginas": res.get("paginas"), "incompleto": incompleto,
+                 **_red_salida(client, api_avisos), "notas": notas},
+          header + "\n" + _records_text(records) + ("\n" + "\n".join(extra) if extra else ""))
+    return SALIDA_RESULTADO if incompleto else SALIDA_OK
 
 
 def cmd_fuente(args, cfg) -> int:
@@ -235,7 +494,7 @@ def cmd_fuente(args, cfg) -> int:
     if args.doi:
         ver = verify_doi(client, args.doi)
         if ver.status != "verificada":
-            raise SystemExit(f"No se registra: {ver.status} ({ver.message})")
+            raise ErrorOrden(f"No se registra: {ver.status} ({ver.message})", _salida_verificacion(ver))
         try:
             rec, via = crossref.work(client, ver.identifier).to_dict(), "crossref"
         except NotFoundError:
@@ -244,7 +503,7 @@ def cmd_fuente(args, cfg) -> int:
     elif args.pmid:
         ver = verify_pmid(client, args.pmid)
         if ver.status != "verificada":
-            raise SystemExit(f"No se registra: {ver.status} ({ver.message})")
+            raise ErrorOrden(f"No se registra: {ver.status} ({ver.message})", _salida_verificacion(ver))
         rec, via = pubmed.summaries(client, [args.pmid])[0].to_dict(), "pubmed"
         rec["retracted"] = ver.retracted
     else:
@@ -296,7 +555,7 @@ def cmd_verificar(args, cfg) -> int:
                   outputs={"estado": res.status, "retractado": res.retracted, "discrepancia": res.mismatch},
                   actor=args.agente)
         _emit(args, res.to_dict(), _verification_text(res))
-        return 0 if res.ok else 2
+        return _salida_verificacion(res)
     if args.pendientes:
         conn = _conn(cfg)
         rows = registry.list_sources(conn, unverified_only=False)
@@ -323,87 +582,255 @@ def cmd_verificar(args, cfg) -> int:
 
 
 # ============================================================================ moléculas, proteínas, redes
+GHS_MAX_CID = 3   # CID de PubChem cuya clasificación GHS se consulta con --peligros
+
+
+def _json_text(data) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+
+
+def _fuente_texto(fuente: dict) -> str:
+    parts = [fuente.get("nombre", "")]
+    if fuente.get("version"):
+        parts.append(f"versión {fuente['version']}")
+    if fuente.get("fecha_publicacion"):
+        parts.append(f"publicada {fuente['fecha_publicacion']}")
+    if fuente.get("url"):
+        parts.append(fuente["url"])
+    return "Fuente: " + ", ".join(p for p in parts if p)
+
+
 def cmd_molecula(args, cfg) -> int:
     client = _client(cfg)
+    avisos: list[str] = []
+    incompleto = False
     if args.fuente == "pubchem":
         from .sources import pubchem
         data = pubchem.compound_by_name(client, args.nombre)
+        fuente = {"nombre": "PubChem"}
         if args.peligros:
-            for p in data[:3]:
-                p["GHS_frases_H"] = pubchem.ghs_hazards(client, p["CID"])
+            for index, compound in enumerate(data):
+                if index < GHS_MAX_CID:
+                    ghs = pubchem.ghs_classification(client, compound["CID"])
+                else:
+                    ghs = pubchem.ghs_not_queried(f"solo se consulta la clasificación GHS de los {GHS_MAX_CID} "
+                                                  "primeros CID")
+                compound["GHS"] = ghs
+                compound["GHS_frases_H"] = ghs["frases_H"]
+                if ghs["estado"] == pubchem.GHS_ERROR:
+                    incompleto = True
+                    avisos.append(f"CID {compound.get('CID')}: {ghs['detalle']}")
+        identifiers = [c.get("CID") for c in data]
     else:
         from .sources import chembl
         data = chembl.molecule_search(client, args.nombre, limit=args.max)
         if args.mecanismos:
             for m in data[:3]:
                 m["mecanismos"] = chembl.mechanisms(client, m["chembl_id"])
-    log_event(cfg, "molecula", inputs={"fuente": args.fuente, "nombre": args.nombre}, outputs={"n": len(data)},
-              actor=args.agente)
-    _emit(args, data)
-    return 0
+        fuente = {"nombre": "ChEMBL", **_version_fuente(chembl.release, client, "ChEMBL", avisos)}
+        identifiers = [m.get("chembl_id") for m in data]
+    outputs = {"n": len(data), "identificadores": identifiers, "fuente": fuente, "incompleto": incompleto,
+               "cache": _red_procedencia(client)}
+    if args.fuente == "pubchem" and args.peligros:
+        outputs["ghs"] = {str(c.get("CID")): c["GHS"]["estado"] for c in data}
+    log_event(cfg, "molecula", inputs={"fuente": args.fuente, "nombre": args.nombre, "peligros": args.peligros,
+                                       "mecanismos": args.mecanismos}, outputs=outputs, actor=args.agente)
+    lines = [_json_text(data), _fuente_texto(fuente)]
+    if args.fuente == "pubchem" and args.peligros:
+        lines += [f"GHS CID {c.get('CID')}: {c['GHS']['estado']}"
+                  + (f" ({', '.join(c['GHS']['frases_H'])})" if c["GHS"]["frases_H"] else "")
+                  + f" — {c['GHS']['detalle']}" for c in data]
+    lines += _red_lineas(cfg, client, avisos)
+    _emit(args, {"resultados": data, "fuente": fuente, "incompleto": incompleto, **_red_salida(client, avisos)},
+          "\n".join(lines))
+    return SALIDA_RESULTADO if incompleto else SALIDA_OK
 
 
 def cmd_diana(args, cfg) -> int:
     from .sources import chembl
     client = _client(cfg)
-    targets = chembl.target_search(client, args.consulta, organism=args.organismo, limit=args.max)
+    avisos: list[str] = []
+    tried: list[dict] = []
+    targets = chembl.target_search(client, args.consulta, organism=args.organismo, limit=args.max, tried=tried)
+    if args.organismo and not targets:
+        avisos.append(f"ChEMBL no devolvió dianas de «{args.organismo.strip()}» para «{args.consulta}» ni por nombre "
+                      "preferido, ni por número de acceso, ni por sinónimo o símbolo de gen. No demuestra que no exista "
+                      "la diana en esa especie (ChEMBL tiene pocas dianas de especies ganaderas): busca el ortólogo con "
+                      "`nutria proteina` (UniProt) y etiqueta la diana de otra especie como evidencia de otra especie")
     if args.actividades and targets:
         for t in targets[:2]:
             t["actividades"] = chembl.activities(client, target_chembl_id=t["target_chembl_id"], limit=25)
+    fuente = {"nombre": "ChEMBL", **_version_fuente(chembl.release, client, "ChEMBL", avisos)}
     log_event(cfg, "diana", inputs={"consulta": args.consulta, "organismo": args.organismo},
-              outputs={"n": len(targets)}, actor=args.agente)
-    _emit(args, targets)
-    return 0
+              outputs={"n": len(targets), "identificadores": [t["target_chembl_id"] for t in targets],
+                       "estrategias": tried, "fuente": fuente, "cache": _red_procedencia(client)}, actor=args.agente)
+    lines = [_json_text(targets),
+             "Estrategias: " + ", ".join(f"{t['estrategia']} ({t['n']})" for t in tried), _fuente_texto(fuente)]
+    lines += _red_lineas(cfg, client, avisos)
+    _emit(args, {"resultados": targets, "estrategias": tried, "fuente": fuente, **_red_salida(client, avisos)},
+          "\n".join(lines))
+    return SALIDA_OK
 
 
 def cmd_proteina(args, cfg) -> int:
     from .sources import uniprot
     from .sources.base import taxon_id
     client = _client(cfg)
+    avisos: list[str] = []
     rows = uniprot.search(client, args.consulta, taxon=taxon_id(args.especie) if args.especie else None,
                           size=args.max, reviewed_only=args.revisadas)
+    fuente = {"nombre": "UniProtKB", **uniprot.release(client)}
+    if not fuente.get("version"):
+        avisos.append("UniProt no informó de su versión (cabecera X-UniProt-Release): el resultado no queda ligado a "
+                      "una versión concreta")
     log_event(cfg, "proteina", inputs={"consulta": args.consulta, "especie": args.especie},
-              outputs={"n": len(rows)}, actor=args.agente)
+              outputs={"n": len(rows), "identificadores": [r["accesion"] for r in rows], "fuente": fuente,
+                       "cache": _red_procedencia(client)}, actor=args.agente)
     text = "\n".join(f"{r['accesion']:<12} {','.join(r['genes'])[:20]:<20} {r['organismo'] or '':<18} "
                      f"{'rev' if r['revisada'] else 'no rev'}  {r['proteina'] or ''}" for r in rows) or "(sin resultados)"
-    _emit(args, rows, text)
-    return 0
+    lines = [text, _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
+    _emit(args, {"resultados": rows, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    return SALIDA_OK
 
 
 def cmd_red(args, cfg) -> int:
     from .sources import stringdb
     from .sources.base import taxon_id
     client = _client(cfg)
+    avisos: list[str] = []
     species = taxon_id(args.especie)
+    if not stringdb.is_versioned(cfg):
+        avisos.append(f"La dirección de STRING configurada ({stringdb.base_url(cfg)}) no es versionada: los resultados "
+                      "pueden cambiar entre versiones (usa https://version-X-Y.string-db.org en nutria.toml)")
     data = {"interacciones": stringdb.network(client, args.genes, species, args.puntuacion_min)}
     if args.enriquecimiento:
         data["enriquecimiento"] = stringdb.enrichment(client, args.genes, species)
-    log_event(cfg, "red_string", inputs={"genes": args.genes, "especie": species}, actor=args.agente,
-              outputs={"interacciones": len(data["interacciones"])})
-    _emit(args, data)
-    return 0
+    fuente = {"nombre": "STRING", "url": stringdb.base_url(cfg),
+              **_version_fuente(stringdb.version, client, "STRING", avisos)}
+    log_event(cfg, "red_string", inputs={"genes": args.genes, "especie": species, "puntuacion_min": args.puntuacion_min},
+              actor=args.agente,
+              outputs={"interacciones": len(data["interacciones"]),
+                       "enriquecimiento": len(data["enriquecimiento"]) if "enriquecimiento" in data else None,
+                       "fuente": fuente, "cache": _red_procedencia(client)})
+    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
+    _emit(args, {**data, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    return SALIDA_OK
 
 
 def cmd_rutas(args, cfg) -> int:
     from .sources import reactome
     client = _client(cfg)
+    avisos: list[str] = []
     if args.accion == "buscar":
         data = reactome.search(client, " ".join(args.terminos), species=args.especie)
+        identifiers = [r["id"] for r in data]
     else:
         data = reactome.analyze_genes(client, args.terminos)
-    log_event(cfg, "rutas", inputs={"accion": args.accion, "terminos": args.terminos}, actor=args.agente)
-    _emit(args, data)
-    return 0
+        identifiers = [r["id"] for r in data["rutas"]]
+        avisos.append("Análisis con proyección a humano: los genes de otras especies se asignan a ortólogos humanos "
+                      "(aproximación)")
+    fuente = {"nombre": "Reactome", **_version_fuente(reactome.version, client, "Reactome", avisos)}
+    log_event(cfg, "rutas", inputs={"accion": args.accion, "terminos": args.terminos}, actor=args.agente,
+              outputs={"n": len(identifiers), "identificadores": identifiers, "fuente": fuente,
+                       "cache": _red_procedencia(client)})
+    lines = [_json_text(data), _fuente_texto(fuente)] + _red_lineas(cfg, client, avisos)
+    _emit(args, {"resultados": data, "fuente": fuente, **_red_salida(client, avisos)}, "\n".join(lines))
+    return SALIDA_OK
 
 
 def cmd_patentes(args, cfg) -> int:
     from .sources import patents
-    data = {"enlaces": patents.search_links(args.consulta)}
+    registrar = bool(getattr(args, "registrar_consulta", False))
+    client = None
+    data: dict = {"enlaces": patents.search_links(args.consulta)}
+    notas = ["los enlaces se generan aquí, sin enviar nada; ábrelos solo si la consulta puede salir del proyecto"]
     if args.lens:
-        data["lens"] = patents.lens_search(_client(cfg), args.consulta, size=args.max)
-    log_event(cfg, "busqueda_patentes", inputs={"consulta": args.consulta}, actor=args.agente)
-    _emit(args, data)
-    return 0
+        client = _client(cfg, confidential=not registrar)
+        meta: dict = {}
+        data["lens"] = patents.lens_search(client, args.consulta, size=args.max, meta=meta)
+        data["lens_total"] = meta.get("total")
+        notas.append("la consulta se ha enviado a la API de Lens (servicio externo): no protege una idea patentable")
+    inputs: dict = {"lens": bool(args.lens), "max": args.max}
+    lens_ids = [item.get("lens_id") for item in data.get("lens") or []]
+    outputs: dict = {"n_lens": len(lens_ids) if args.lens else None, "cache": _red_procedencia(client)}
+    if registrar:
+        inputs["consulta"] = args.consulta
+        outputs["lens_ids"] = lens_ids
+    else:
+        # Consulta de patentes: puede revelar una combinación inventiva; en el registro versionado solo su huella.
+        inputs.update(consulta_sha256=sha256_text(args.consulta), confidencial=True)
+        if lens_ids:
+            outputs["lens_ids_sha256"] = sha256_text(json.dumps(lens_ids))
+        notas.append("la procedencia guarda solo la huella SHA-256 de la consulta (usa --registrar-consulta para "
+                     "guardarla en claro)")
+    log_event(cfg, "busqueda_patentes", inputs=inputs, outputs=outputs, actor=args.agente)
+    lines = [_json_text(data)] + _red_lineas(cfg, client, None, notas)
+    _emit(args, {**data, "consulta_en_procedencia": "en claro" if registrar else "solo huella SHA-256",
+                 **_red_salida(client), "notas": notas}, "\n".join(lines))
+    return SALIDA_OK
+
+
+def cmd_normativa(args, cfg) -> int:
+    from .sources import eurlex
+    client = _client(cfg)
+    doc = eurlex.document(client, args.celex, language=args.idioma)
+    avisos = list(doc.pop("avisos", []))
+    consultado = client.cache_hits[-1]["fecha"] if client.cache_hits else None
+    log_event(cfg, "normativa", inputs={"fuente": "eur-lex", "celex": doc["celex"], "idioma": doc["idioma"]},
+              outputs={"titulo": doc["titulo"], "fecha_documento": doc["fecha_documento"], "eli": doc["eli"],
+                       "en_vigor": doc["en_vigor"], "ultima_consolidada": doc["ultima_consolidada"],
+                       "avisos": avisos, "cache": _red_procedencia(client)}, actor=args.agente)
+    nota = ("metadatos leídos de la página de EUR-Lex, sin interpretar: compruébalos en el texto oficial antes de "
+            "citarlos; no sustituyen la verificación manual de la URL (`nutria verificar manual`, solo personas)")
+    vigor = {True: "en vigor", False: "NO en vigor", None: "no consta"}[doc["en_vigor"]]
+    consolidated = doc["ultima_consolidada"]
+    lines = [f"CELEX {doc['celex']} (EUR-Lex, {doc['idioma']})",
+             f"  título: {doc['titulo'] or 'no consta'}",
+             f"  fecha del documento: {doc['fecha_documento'] or 'no consta'} | publicación: "
+             f"{doc['fecha_publicacion'] or 'no consta'} | vigencia: {vigor}",
+             f"  ELI: {doc['eli'] or 'no consta'}",
+             f"  URL: {doc['url']}",
+             "  última versión consolidada: " + (f"{consolidated['celex']} ({consolidated['fecha']}) {consolidated['url']}"
+                                                if consolidated else "no consta en la página")]
+    lines += _red_lineas(cfg, client, avisos, [nota])
+    _emit(args, {**doc, "fecha_copia": consultado, **_red_salida(client, avisos), "nota": nota}, "\n".join(lines))
+    return SALIDA_OK
+
+
+def cmd_cache(args, cfg) -> int:
+    from .http import export_cache, import_cache, inspect_cache
+    client = _client(cfg)
+    if args.accion == "exportar":
+        destination = Path(args.fichero)
+        if destination.exists() and not args.forzar:
+            raise ValueError(f"{destination} ya existe (usa --forzar para sobrescribirlo)")
+        res = export_cache(client, destination)
+        log_event(cfg, "cache_exportar", inputs={"fichero": str(destination)},
+                  outputs={"entradas": res["entradas"], "sha256": res["sha256"], "no_exportadas": res["no_exportadas"]},
+                  actor=args.agente)
+        aviso = ("la exportación contiene las consultas y las respuestas en claro (también las de búsquedas "
+                 "confidenciales y de patentes): trátala como un dato confidencial del proyecto")
+        lines = [f"Exportadas {res['entradas']} copias a {destination} (sha256 {res['sha256']})"]
+        if res["no_exportadas"]:
+            lines.append("No exportadas (no válidas): " + "; ".join(f"{k}: {v}" for k, v in res["no_exportadas"].items()))
+        lines.append(f"AVISO: {aviso}")
+        _emit(args, {**res, "aviso": aviso}, "\n".join(lines))
+        return SALIDA_OK
+    if args.accion == "importar":
+        res = import_cache(client, Path(args.fichero))
+        lines = [f"Importadas {res['importadas']} copias de {res['fichero']} (conservan su fecha original; "
+                 f"{res['conservadas_locales']} copias locales iguales o más recientes se mantienen)"]
+        lines += [f"RECHAZADA entrada {r['indice']}: {r['motivo']}" for r in res["rechazadas"]]
+        lines.append("Nota: una copia importada vale lo que valga su origen; la importación queda en la procedencia "
+                     "con la huella del fichero, y la verificación de referencias nunca usa la caché")
+        _emit(args, res, "\n".join(lines))
+        return SALIDA_RESULTADO if res["rechazadas"] else SALIDA_OK
+    res = inspect_cache(client)
+    lines = [f"Copias válidas: {res['validas']}"
+             + (f" (de {res['mas_antigua']} a {res['mas_reciente']})" if res["validas"] else "")]
+    lines += [f"Descartables: {v} — {k}" for k, v in res["descartables"].items()]
+    _emit(args, res, "\n".join(lines))
+    return SALIDA_RESULTADO if res["descartables"] else SALIDA_OK
 
 
 # ============================================================================ registro de evidencia
@@ -978,12 +1405,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="nombre del agente que ejecuta la orden (procedencia)")
     common.add_argument("--offline", action="store_true", default=argparse.SUPPRESS,
                         help="usar solo la caché, sin red (la verificación de referencias quedará incompleta)")
+    common.add_argument("--antiguedad-maxima", dest="antiguedad_maxima", type=float, metavar="DIAS",
+                        default=argparse.SUPPRESS,
+                        help="con --offline, antigüedad máxima de las copias de la caché (por defecto 180 días)")
 
     p = argparse.ArgumentParser(prog="nutria",
-                                description="Herramientas del sistema de I+D computacional en nutrición animal.")
+                                description="Herramientas del sistema de I+D computacional en nutrición animal.",
+                                epilog=_texto_codigos_salida(), formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true", default=False, help="salida JSON")
     p.add_argument("--agente", default=None, help="nombre del agente que ejecuta la orden (procedencia)")
     p.add_argument("--offline", action="store_true", default=False, help="usar solo la caché, sin red")
+    p.add_argument("--antiguedad-maxima", dest="antiguedad_maxima", type=float, metavar="DIAS", default=None,
+                   help="con --offline, antigüedad máxima de las copias de la caché (por defecto 180 días)")
     p.add_argument("--version", action="version", version=f"nutria {__version__}")
     sub = p.add_subparsers(dest="orden", required=True)
 
@@ -992,6 +1425,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_init)
     sub.add_parser("doctor", parents=[common], help="comprueba entorno, claves y acceso a las fuentes").set_defaults(func=cmd_doctor)
     sub.add_parser("estado", parents=[common], help="resumen del registro de investigación").set_defaults(func=cmd_estado)
+    s = sub.add_parser("cache", parents=[common], help="caché de respuestas: comprobar, exportar e importar")
+    cs = s.add_subparsers(dest="accion", required=True)
+    cs.add_parser("comprobar", parents=[common], help="integridad de las copias (huella y registro en la procedencia)")
+    x = cs.add_parser("exportar", parents=[common], help="copias válidas, con fecha y huella, para otra máquina")
+    x.add_argument("fichero")
+    x.add_argument("--forzar", action="store_true", help="sobrescribe el fichero si existe")
+    x = cs.add_parser("importar", parents=[common], help="importa una exportación (queda en la procedencia)")
+    x.add_argument("fichero")
+    s.set_defaults(func=cmd_cache)
 
     s = sub.add_parser("buscar", parents=[common], help="busca literatura")
     s.add_argument("fuente", choices=["pubmed", "europepmc", "openalex", "efsa"])
@@ -1001,6 +1443,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--hasta", help="año final")
     s.add_argument("--resumenes", action="store_true", help="(PubMed) descarga resúmenes y MeSH")
     s.add_argument("--registrar", action="store_true", help="registra los resultados como fuentes SIN verificar")
+    s.add_argument("--sensibilidad", choices=["normal", "confidencial"], default="normal",
+                   help="confidencial: la procedencia guarda solo la huella de la consulta (que viaja igualmente "
+                        "al servicio externo)")
     s.set_defaults(func=cmd_buscar)
 
     s = sub.add_parser("fuente", parents=[common], help="registro de fuentes")
@@ -1072,7 +1517,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("consulta")
     s.add_argument("--lens", action="store_true", help="usa la API de Lens (requiere LENS_API_TOKEN)")
     s.add_argument("--max", type=int, default=20)
+    s.add_argument("--registrar-consulta", dest="registrar_consulta", action="store_true",
+                   help="guarda la consulta en claro en la procedencia (por defecto, solo su huella SHA-256)")
     s.set_defaults(func=cmd_patentes)
+
+    s = sub.add_parser("normativa", parents=[common], help="metadatos de normativa (EUR-Lex por número CELEX)")
+    ns = s.add_subparsers(dest="fuente", required=True)
+    x = ns.add_parser("eurlex", parents=[common], help="título, fecha, ELI y última versión consolidada de un acto")
+    x.add_argument("celex", help="número CELEX, p. ej. 32009R0767 (Reglamento (CE) 767/2009)")
+    x.add_argument("--idioma", default="ES", help="idioma de la página de EUR-Lex (por defecto ES)")
+    s.set_defaults(func=cmd_normativa)
 
     s = sub.add_parser("destino", parents=[common], help="destino digestivo (degradabilidad ruminal efectiva)")
     ds = s.add_subparsers(dest="accion", required=True)
@@ -1276,30 +1730,169 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    cfg = load_config()
-    if args.offline:
-        cfg.offline = True
-    cfg.actor = args.agente
+# ============================================================================ códigos de salida y errores
+# Único sitio donde se definen los códigos de salida de `nutria` (también salen en `nutria --help`).
+SALIDA_OK = 0
+SALIDA_RESULTADO = 1
+SALIDA_ENTRADA = 2
+SALIDA_REGISTRO = 3
+SALIDA_RED = 4
+SALIDA_CALCULO = 5
+SALIDA_NO_ENCONTRADO = 6
+SALIDA_INTERNO = 70
+SALIDA_INTERRUMPIDA = 130
+CODIGOS_SALIDA = {
+    SALIDA_OK: ("ok", "la orden terminó y el resultado es el esperado"),
+    SALIDA_RESULTADO: ("resultado", "la orden terminó, pero el resultado es negativo o incompleto: discrepancias en "
+                                    "`extraccion comparar`, sello no válido, referencia o informe que no supera la "
+                                    "verificación, búsqueda o consulta incompleta, caché con copias no válidas, "
+                                    "comprobaciones esenciales de `doctor` fallidas"),
+    SALIDA_ENTRADA: ("entrada", "entrada no válida: argumentos, fichero inexistente o inaccesible (directorio, "
+                                "permisos), JSON o CSV fuera de formato, identificador inexistente en el registro, "
+                                "configuración no válida"),
+    SALIDA_REGISTRO: ("registro", "regla del registro o error de la base de datos (transición o compuerta no "
+                                  "permitida, fuente sin verificar...)"),
+    SALIDA_RED: ("red", "fallo de red, host bloqueado, error o respuesta no válida del servicio, credencial rechazada, "
+                        "o modo offline sin copia válida en la caché"),
+    SALIDA_CALCULO: ("calculo", "falta una dependencia opcional o un cálculo no converge"),
+    SALIDA_NO_ENCONTRADO: ("no_encontrado", "el recurso pedido no existe en la fuente externa (HTTP 404)"),
+    SALIDA_INTERNO: ("interno", "error interno inesperado (fallo del programa; NUTRIA_DEPURAR=1 muestra la traza)"),
+    SALIDA_INTERRUMPIDA: ("interrumpida", "orden interrumpida (Ctrl+C)"),
+}
+
+
+class ErrorOrden(Exception):
+    """Error de una orden con su código de salida (tabla `CODIGOS_SALIDA`); main() lo presenta sin traza."""
+
+    def __init__(self, mensaje: str, codigo: int = SALIDA_ENTRADA):
+        super().__init__(mensaje)
+        self.codigo = codigo
+
+
+def _texto_codigos_salida() -> str:
+    import textwrap
+    lines = ["códigos de salida (con --json, los errores salen por stdout como "
+             "{\"error\": ..., \"codigo\": ..., \"tipo\": ...}):"]
+    for codigo, (_tipo, descripcion) in CODIGOS_SALIDA.items():
+        lines.append(textwrap.fill(descripcion, width=100, initial_indent=f"  {codigo:>3}  ",
+                                   subsequent_indent=" " * 7))
+    return "\n".join(lines)
+
+
+def _salida_verificacion(res) -> int:
+    """Código de salida de la verificación de un DOI o PMID."""
+    if res.status in ("error_red", "offline"):
+        return SALIDA_RED
+    if res.status == "no_encontrada":
+        return SALIDA_NO_ENCONTRADO
+    return SALIDA_OK if res.ok else SALIDA_RESULTADO
+
+
+def _error(args, mensaje, codigo: int, prefijo: str, cfg=None, motivo: str | None = None) -> int:
+    """Presenta un error (en JSON por stdout con --json; en texto por stderr si no) y devuelve su código."""
+    from .http import redact
+    texto = redact(mensaje, cfg) or prefijo
+    if getattr(args, "json", False):
+        payload = {"error": texto, "codigo": codigo, "tipo": CODIGOS_SALIDA.get(codigo, ("interno",))[0]}
+        if motivo:
+            payload["motivo"] = motivo
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"{prefijo}: {texto}", file=sys.stderr)
+    return codigo
+
+
+def _describe_oserror(exc: OSError) -> str:
+    name = getattr(exc, "filename", None)
+    reason = exc.strerror or str(exc)
+    kind = {IsADirectoryError: "es un directorio", NotADirectoryError: "no es un directorio",
+            FileNotFoundError: "no existe", PermissionError: "sin permiso", FileExistsError: "ya existe"}.get(type(exc))
+    if name:
+        return f"No se puede usar '{name}'" + (f" ({kind})" if kind else "") + f": {reason}"
+    return str(exc)
+
+
+def _parse_args(parser, argv: list[str]):
+    """Analiza los argumentos; con --json, un error de uso sale también como JSON por stdout."""
+    if "--json" not in argv:
+        return parser.parse_args(argv)
+    import contextlib
+    import io
+    buffer = io.StringIO()
     try:
+        with contextlib.redirect_stderr(buffer):
+            return parser.parse_args(argv)
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+            message = lines[-1].split(": error: ", 1)[-1] if lines else "argumentos no válidos"
+            print(json.dumps({"error": message, "codigo": SALIDA_ENTRADA, "tipo": "entrada"}, ensure_ascii=False))
+        raise
+    finally:
+        sys.stderr.write(buffer.getvalue())
+
+
+def main(argv: list[str] | None = None) -> int:
+    global _RECURSOS
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+    args = _parse_args(parser, argv)
+    import requests
+
+    from .config import positive_days
+    from .http import NotFoundError, OfflineError
+    previous, _RECURSOS = _RECURSOS, []
+    cfg = None
+    try:
+        cfg = load_config()
+        if args.offline:
+            cfg.offline = True
+        if getattr(args, "antiguedad_maxima", None) is not None:
+            cfg.cache_max_offline_days = positive_days(args.antiguedad_maxima, "--antiguedad-maxima")
+        cfg.actor = args.agente
         return int(args.func(args, cfg) or 0)
+    except SystemExit as exc:
+        if exc.code is None or isinstance(exc.code, int):
+            raise
+        # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa.
+        _error(args, str(exc.code), SALIDA_ENTRADA, "Error", cfg)
+        raise SystemExit(SALIDA_ENTRADA) from None
+    except ErrorOrden as exc:
+        return _error(args, str(exc), exc.codigo, "Error", cfg)
     except registry.RegistryError as exc:
-        print(f"Error de registro: {exc}", file=sys.stderr)
-        return 3
+        return _error(args, str(exc), SALIDA_REGISTRO, "Error de registro", cfg)
+    except NotFoundError as exc:
+        return _error(args, str(exc), SALIDA_NO_ENCONTRADO, "No encontrado", cfg, exc.motivo)
+    except OfflineError as exc:
+        return _error(args, str(exc), SALIDA_RED, "Sin red (modo offline)", cfg, exc.motivo)
     except NetworkError as exc:
-        print(f"Error de red: {exc}", file=sys.stderr)
-        return 4
-    except (ValueError, KeyError, FileNotFoundError, TypeError, ZeroDivisionError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 2
+        return _error(args, str(exc), SALIDA_RED, "Error de red", cfg, exc.motivo)
+    except (requests.RequestException, ConnectionError, TimeoutError) as exc:
+        return _error(args, f"{type(exc).__name__}: {exc}", SALIDA_RED, "Error de red", cfg)
+    except OSError as exc:  # IsADirectoryError, PermissionError, NotADirectoryError, FileNotFoundError...
+        return _error(args, _describe_oserror(exc), SALIDA_ENTRADA, "Error", cfg)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError, csv.Error) as exc:
+        return _error(args, str(exc), SALIDA_ENTRADA, "Error", cfg)
     except sqlite3.Error as exc:
-        print(f"Error de la base de datos: {exc}", file=sys.stderr)
-        return 3
+        return _error(args, str(exc), SALIDA_REGISTRO, "Error de la base de datos", cfg)
     except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 5
+        return _error(args, str(exc), SALIDA_CALCULO, "Error", cfg)
+    except KeyboardInterrupt:
+        return _error(args, "orden interrumpida", SALIDA_INTERRUMPIDA, "Interrumpida", cfg)
+    except Exception as exc:  # noqa: BLE001 - fallo del programa: mensaje claro y código propio, sin traza
+        import os
+        if os.environ.get("NUTRIA_DEPURAR", "").strip() == "1":
+            import traceback
+            traceback.print_exc()
+        return _error(args, f"{type(exc).__name__}: {exc} (fallo del programa; con NUTRIA_DEPURAR=1 se muestra la "
+                            "traza)", SALIDA_INTERNO, "Error interno", cfg)
+    finally:
+        resources, _RECURSOS = _RECURSOS, previous
+        for resource in reversed(resources):
+            try:
+                resource.close()
+            except Exception:  # noqa: BLE001 - cerrar nunca debe ocultar el resultado de la orden
+                pass
 
 
 if __name__ == "__main__":  # pragma: no cover

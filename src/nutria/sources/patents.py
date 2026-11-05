@@ -2,6 +2,10 @@
 
 La libertad de operación (FTO) exige análisis por un profesional de patentes; aquí solo
 se automatiza la búsqueda inicial de antecedentes y su registro.
+
+Los enlaces se generan localmente (no se envía nada). Con Lens, la consulta viaja a la API de Lens: la
+confidencialidad del registro local (la procedencia guarda solo la huella de la consulta) no impide esa
+divulgación. Cliente de Lens escrito según su documentación; no probado contra el servicio real.
 """
 
 from __future__ import annotations
@@ -31,13 +35,23 @@ def _get(obj, path: str):
     return obj
 
 
-def lens_search(client, query: str, size: int = 20) -> list[dict]:
+LENS_URL = "https://api.lens.org/patent/search"
+
+
+def lens_search(client, query: str, size: int = 20, meta: dict | None = None) -> list[dict]:
+    """Patentes de Lens para la consulta (sintaxis query_string de Lens). `meta`, si se pasa, recibe el total
+    que declara Lens ("total")."""
     token = client.cfg.secret("LENS_API_TOKEN")
     if not token:
-        raise NetworkError("Falta LENS_API_TOKEN en el entorno (https://www.lens.org/lens/user/subscriptions)")
+        raise NetworkError("Falta LENS_API_TOKEN en el entorno (https://www.lens.org/lens/user/subscriptions)",
+                           motivo="credenciales")
     body = {"query": {"query_string": {"query": query}}, "size": size}
-    data = client.request("POST", "https://api.lens.org/patent/search", json_body=body,
+    data = client.request("POST", LENS_URL, json_body=body,
                           headers={"Authorization": f"Bearer {token}"}, expect="json")
+    if not isinstance(data, dict):
+        raise NetworkError("Respuesta no válida de Lens (se esperaba un objeto JSON)", motivo="respuesta")
+    if meta is not None:
+        meta["total"] = data.get("total")
     out = []
     for item in data.get("data", []):
         titles = _get(item, "biblio.invention_title")

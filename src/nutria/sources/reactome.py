@@ -1,4 +1,9 @@
-"""Reactome: búsqueda de rutas y análisis de sobrerrepresentación (con proyección a humano)."""
+"""Reactome: búsqueda de rutas y análisis de sobrerrepresentación (con proyección a humano).
+
+`version` devuelve la versión de la base de datos de Reactome que responde (ContentService
+`/data/database/version`), para registrarla junto a los resultados. Según la documentación de Reactome; no
+comprobado contra el servicio real.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,14 @@ from .base import clean_text
 
 CONTENT = "https://reactome.org/ContentService"
 ANALYSIS = "https://reactome.org/AnalysisService"
+
+
+def version(client) -> dict:
+    """Versión de la base de datos de Reactome: {"version": "..."} (vacío si la respuesta no la trae)."""
+    text = client.get_text(f"{CONTENT}/data/database/version", ttl_days=1,
+                           headers={"Accept": "text/plain, */*"})
+    value = str(text or "").strip()
+    return {"version": value} if value and len(value) < 40 else {}
 
 
 def search(client, query: str, species: str = "Bos taurus", types: str = "Pathway") -> list[dict]:

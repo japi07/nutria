@@ -1,6 +1,13 @@
-"""UniProtKB REST: proteínas por gen y especie (p. ej. ortólogos bovinos)."""
+"""UniProtKB REST: proteínas por gen y especie (p. ej. ortólogos bovinos).
+
+La versión de UniProt que respondió se lee de las cabeceras `X-UniProt-Release` y `X-UniProt-Release-Date`
+(documentadas por UniProt; no comprobadas contra el servicio real), que el cliente HTTP conserva también en la
+caché.
+"""
 
 from __future__ import annotations
+
+from urllib.parse import urlparse
 
 BASE = "https://rest.uniprot.org/uniprotkb"
 FIELDS = "accession,id,protein_name,gene_names,organism_name,organism_id,length,reviewed,cc_function"
@@ -53,3 +60,11 @@ def search(client, query: str, taxon: int | None = None, size: int = 10,
     data = client.get_json(f"{BASE}/search", params={"query": q, "fields": FIELDS, "format": "json",
                                                      "size": size})
     return [parse(e) for e in data.get("results", [])]
+
+
+def release(client) -> dict:
+    """Versión de UniProt de la última respuesta (red o caché): {"version", "fecha_publicacion"}; vacío si
+    la respuesta no traía las cabeceras."""
+    headers = (getattr(client, "response_headers", None) or {}).get(urlparse(BASE).hostname, {})
+    out = {"version": headers.get("x-uniprot-release"), "fecha_publicacion": headers.get("x-uniprot-release-date")}
+    return {k: v for k, v in out.items() if v}

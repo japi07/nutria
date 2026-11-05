@@ -19,7 +19,7 @@ KEY_URL = "https://openalex.org/settings/api"
 KEY_REQUIRED_MESSAGE = (
     "OpenAlex exige una clave de API en todas las peticiones desde el 13-02-2026. Crea una gratuita en "
     f"{KEY_URL} y guárdala en la variable de entorno {KEY_ENV} (nunca en ficheros del proyecto). "
-    "Mientras tanto usa Crossref, PubMed o Europe PMC, o --offline con lo ya consultado."
+    "Mientras tanto usa Crossref, PubMed o Europe PMC."
 )
 
 
@@ -87,17 +87,24 @@ def parse(work: dict) -> Record:
 
 
 def search(client, query: str, per_page: int = 25, page: int = 1, from_year: int | None = None,
-           to_year: int | None = None, filters: list[str] | None = None) -> dict:
+           to_year: int | None = None, filters: list[str] | None = None, cursor: str | None = None) -> dict:
+    """Una página de resultados. Con `cursor` ("*" para la primera) usa la paginación por cursor de OpenAlex
+    (sin el tope de 10 000 resultados de `page`) y devuelve `next_cursor` (None al final)."""
     flt = list(filters or [])
     if from_year:
         flt.append(f"from_publication_date:{from_year}-01-01")
     if to_year:
         flt.append(f"to_publication_date:{to_year}-12-31")
-    params = {"search": query, "per-page": per_page, "page": page}
+    params = {"search": query, "per-page": per_page}
+    if cursor:
+        params["cursor"] = cursor
+    else:
+        params["page"] = page
     if flt:
         params["filter"] = ",".join(flt)
     data = client.get_json(f"{BASE}/works", params=_params(client.cfg, params), ttl_days=7)
-    return {"count": int((data.get("meta") or {}).get("count", 0) or 0),
+    meta = data.get("meta") or {}
+    return {"count": int(meta.get("count", 0) or 0), "next_cursor": meta.get("next_cursor"),
             "records": [parse(w) for w in data.get("results", [])]}
 
 

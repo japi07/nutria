@@ -130,3 +130,53 @@ class Record:
         if self.retracted:
             parts.append("[RETRACTADO]")
         return " ".join(parts)
+
+
+def record_identifiers(records) -> list[dict]:
+    """Identificadores de cada registro (DOI, PMID, PMCID, OpenAlex), sin campos vacíos: lo que la
+    procedencia guarda para poder reconstruir qué devolvió una búsqueda."""
+    out = []
+    for rec in records:
+        ids = {"doi": rec.doi, "pmid": rec.pmid, "pmcid": rec.pmcid, "openalex": rec.openalex_id}
+        out.append({k: v for k, v in ids.items() if v})
+    return out
+
+
+def collect_pages(fetch_page, max_results: int, page_size: int, label: str) -> dict:
+    """Reúne hasta `max_results` registros pidiendo páginas con `fetch_page(cursor, tamaño)`.
+
+    `fetch_page` devuelve {"count", "records", "next", "avisos"}; `next` es el cursor de la página siguiente
+    (None si no hay más). El primer cursor es None. Un fallo de red en la primera página se propaga; en las
+    siguientes se devuelve lo reunido con `incompleto=True` y un aviso. Devuelve {count, records, paginas,
+    avisos, incompleto}.
+    """
+    from ..http import NetworkError
+
+    records: list = []
+    avisos: list[str] = []
+    cursor = None
+    pages, count, incompleto = 0, 0, False
+    while len(records) < max_results:
+        size = max(1, min(int(page_size), int(max_results) - len(records)))
+        try:
+            page = fetch_page(cursor, size)
+        except NetworkError as exc:
+            if not pages:
+                raise
+            avisos.append(f"{label}: falló la página {pages + 1} ({exc}); los resultados están INCOMPLETOS")
+            incompleto = True
+            break
+        pages += 1
+        if pages == 1:
+            count = int(page.get("count") or 0)
+        for aviso in page.get("avisos") or []:
+            if aviso not in avisos:
+                avisos.append(aviso)
+        batch = list(page.get("records") or [])
+        records.extend(batch)
+        following = page.get("next")
+        if not batch or following is None or following == cursor:
+            break
+        cursor = following
+    return {"count": count, "records": records[:max_results], "paginas": pages, "avisos": avisos,
+            "incompleto": incompleto}
