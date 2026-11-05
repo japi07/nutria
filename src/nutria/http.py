@@ -281,6 +281,12 @@ def ratelimit_path(cfg, host: str) -> Path:
     return Path(cfg.cache_dir) / "ratelimit" / f"{_safe_name(host)}.lock"
 
 
+def _headers_digest(headers) -> str:
+    """Huella SHA-256 de las cabeceras conservadas (las que la procedencia registra junto al cuerpo)."""
+    clean = {str(k).lower(): str(v) for k, v in (headers or {}).items()} if isinstance(headers, dict) else {}
+    return sha256_text(json.dumps(clean, sort_keys=True))
+
+
 def _kept_headers(headers) -> dict:
     out: dict[str, str] = {}
     try:
@@ -563,36 +569,37 @@ class HttpClient:
             outputs = event["outputs"]
             if event.get("action") == "http":
                 self._index_add(self._confirmed, outputs.get("clave_cache"), outputs.get("sha256"), event.get("ts"),
-                                "red")
+                                "red", outputs.get("cabeceras"))
             elif event.get("action") == "cache_importar":
                 for item in outputs.get("entradas") or []:
                     if isinstance(item, dict):
                         self._index_add(self._confirmed, item.get("clave"), item.get("sha256"), item.get("fecha"),
-                                        "importada")
+                                        "importada", item.get("cabeceras"))
 
     @staticmethod
-    def _index_add(index: dict, key, sha, when, origin: str) -> None:
+    def _index_add(index: dict, key, sha, when, origin: str, headers=None) -> None:
         moment = _parse_ts(when) if not isinstance(when, (int, float)) else float(when)
         if isinstance(key, str) and isinstance(sha, str) and moment is not None:
-            index.setdefault(key, []).append((moment, sha, origin))
+            index.setdefault(key, []).append((moment, sha, origin, _headers_digest(headers)))
 
-    def _latest_confirmation(self, key: str, sha: str) -> tuple[float, str] | None:
+    def _latest_confirmation(self, key: str, sha: str, headers_digest: str) -> tuple[float, str] | None:
         limit = time.time() + _FUTURE_TOLERANCE_S   # una fecha futura no confirma nada
-        found = [(moment, origin) for moment, stored, origin in (self._confirmed or {}).get(key, ())
-                 if stored == sha and moment <= limit]
+        found = [(moment, origin) for moment, stored, origin, digest in (self._confirmed or {}).get(key, ())
+                 if stored == sha and digest == headers_digest and moment <= limit]
         return max(found) if found else None
 
-    def _confirmation(self, key: str, sha: str) -> tuple[float, str] | None:
-        """Fecha (y origen) más reciente en que la procedencia registra esta respuesta, o None. Lee antes lo que
-        se haya añadido a la procedencia (también lo que registren otras órdenes)."""
+    def _confirmation(self, key: str, sha: str, headers_digest: str) -> tuple[float, str] | None:
+        """Fecha (y origen) más reciente en que la procedencia registra esta respuesta (cuerpo y cabeceras
+        conservadas), o None. Lee antes lo que se haya añadido a la procedencia (también lo que registren otras
+        órdenes)."""
         self._load_confirmations()
-        return self._latest_confirmation(key, sha)
+        return self._latest_confirmation(key, sha, headers_digest)
 
-    def _remember(self, key: str, sha: str, moment: float, origin: str = "red") -> None:
+    def _remember(self, key: str, sha: str, moment: float, origin: str = "red", headers=None) -> None:
         # Sin efecto real: el evento ya está en la procedencia y la próxima lectura incremental lo incorpora;
         # se conserva para que la confirmación no dependa de volver a leer el fichero.
         if self._confirmed is not None:
-            self._confirmed.setdefault(key, []).append((moment, sha, origin))
+            self._confirmed.setdefault(key, []).append((moment, sha, origin, _headers_digest(headers)))
 
     def read_cached(self, cache_file: Path, key: str) -> tuple[dict | None, tuple[float, str] | None, str | None]:
         """Lee y valida una copia: (registro, (fecha, origen), None) si es válida; (None, None, motivo) si no
@@ -618,10 +625,13 @@ class HttpClient:
             written = float(record.get("ts"))
         except (TypeError, ValueError):
             return None, None, "la copia no tiene una fecha válida"
-        confirmed = self._confirmation(key, actual)
+        headers = record.get("cabeceras") or {}
+        if not isinstance(headers, dict):
+            return None, None, "cabeceras con formato no válido"
+        confirmed = self._confirmation(key, actual, _headers_digest(headers))
         if confirmed is None:
-            return None, None, ("la procedencia no registra esta respuesta (ni un evento `http` con la misma clave y "
-                                "huella ni una importación con `nutria cache importar`)")
+            return None, None, ("la procedencia no registra esta respuesta (ni un evento `http` con la misma clave, "
+                                "huella y cabeceras ni una importación con `nutria cache importar`)")
         # La más antigua de las dos fechas: ni el fichero ni la procedencia pueden rejuvenecer una copia.
         return record, (min(confirmed[0], written), confirmed[1]), None
 
@@ -670,12 +680,23 @@ class HttpClient:
             self.response_headers[urlparse(url).hostname or ""] = dict(headers)
         return value, None
 
+    @staticmethod
+    def _was_confidential(cache_file: Path) -> bool:
+        try:
+            return bool(json.loads(cache_file.read_text("utf-8")).get("confidencial"))
+        except (OSError, ValueError, AttributeError):
+            return False
+
     def write_cache(self, cache_file: Path, key: str, method: str, url: str, params: dict, json_body, data,
-                    body: str, headers: dict | None, moment: float) -> None:
+                    body: str, headers: dict | None, moment: float, confidential: bool | None = None) -> None:
+        """Escribe la copia (fichero temporal y renombrado atómico). `confidencial` marca las consultas confidenciales
+        (no se exportan salvo petición expresa); la marca no se pierde aunque la misma consulta se repita sin ella."""
+        confidential = self.confidential if confidential is None else bool(confidential)
+        confidential = confidential or self._was_confidential(cache_file)
         record = {"formato": CACHE_FORMAT, "clave": key, "ts": moment, "fecha": _iso(moment), "method": method,
                   "url": redact(url, self.cfg), "params": _cache_params(params), "json": json_body, "data": data,
                   "sha256": sha256_text(body), "bytes": len(body.encode("utf-8")), "cabeceras": headers or {},
-                  "body": body}
+                  "confidencial": confidential, "body": body}
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(record, default=str), "utf-8")
@@ -773,7 +794,7 @@ class HttpClient:
             if use_cache:
                 try:
                     self.write_cache(cache_file, key, method, url, params, json_body, data, body, kept, moment)
-                    self._remember(key, sha, moment)
+                    self._remember(key, sha, moment, "red", kept)
                 except OSError as exc:  # la respuesta es válida aunque no pueda guardarse
                     self.avisos.append(f"No se pudo guardar la copia en la caché ({type(exc).__name__}: {exc})")
             return value
@@ -842,7 +863,7 @@ def iter_cache_files(cfg):
 
 def inspect_cache(client: HttpClient) -> dict:
     """Clasifica las copias de la caché: válidas (íntegras y registradas en la procedencia) y descartables."""
-    valid, invalid = 0, {}
+    valid, confidential, invalid = 0, 0, {}
     oldest, newest = None, None
     for path in iter_cache_files(client.cfg):
         record, confirmed, problem = client.read_cached(path, path.stem)
@@ -850,26 +871,40 @@ def inspect_cache(client: HttpClient) -> dict:
             invalid[problem or "desconocido"] = invalid.get(problem or "desconocido", 0) + 1
             continue
         valid += 1
+        confidential += bool(record.get("confidencial"))
         oldest = confirmed[0] if oldest is None else min(oldest, confirmed[0])
         newest = confirmed[0] if newest is None else max(newest, confirmed[0])
-    return {"validas": valid, "descartables": invalid,
+    return {"validas": valid, "confidenciales": confidential, "descartables": invalid,
             "mas_antigua": _iso(oldest) if oldest else None, "mas_reciente": _iso(newest) if newest else None}
 
 
-def export_cache(client: HttpClient, destination: Path) -> dict:
-    """Escribe en `destination` las copias válidas, con su petición, huella y fecha, para reproducir las mismas
-    consultas sin red en otra máquina (`import_cache`). Las copias no válidas no se exportan."""
-    entries, skipped = [], {}
+def export_cache(client: HttpClient, destination: Path, include_confidential: bool = False) -> dict:
+    """Escribe en `destination` las copias válidas, con su petición, huella, cabeceras y fecha, para reproducir las
+    mismas consultas sin red en otra máquina (`import_cache`). No se exportan las copias no válidas ni las que no
+    podrían importarse, ni (salvo `include_confidential`) las de consultas confidenciales."""
+    entries, skipped, confidential_left = [], {}, 0
+
+    def skip(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
     for path in iter_cache_files(client.cfg):
         record, confirmed, problem = client.read_cached(path, path.stem)
         if record is None:
-            skipped[problem or "desconocido"] = skipped.get(problem or "desconocido", 0) + 1
+            skip(problem or "desconocido")
             continue
-        entries.append({"clave": path.stem, "method": record.get("method"), "url": record.get("url"),
-                        "params": record.get("params") or {}, "json": record.get("json"), "data": record.get("data"),
-                        "sha256": record["sha256"], "bytes": len(record["body"].encode("utf-8")),
-                        "fecha": _iso(confirmed[0]), "origen": confirmed[1],
-                        "cabeceras": record.get("cabeceras") or {}, "body": record["body"]})
+        if record.get("confidencial") and not include_confidential:
+            confidential_left += 1
+            continue
+        entry = {"clave": path.stem, "method": record.get("method"), "url": record.get("url"),
+                 "params": record.get("params") or {}, "json": record.get("json"), "data": record.get("data"),
+                 "sha256": record["sha256"], "bytes": len(record["body"].encode("utf-8")),
+                 "fecha": _iso(confirmed[0]), "origen": confirmed[1], "cabeceras": record.get("cabeceras") or {},
+                 "confidencial": bool(record.get("confidencial")), "body": record["body"]}
+        problem = _import_problem(entry)
+        if problem:
+            skip(f"no se podría importar: {problem}")
+            continue
+        entries.append(entry)
     bundle = {"formato": EXPORT_FORMAT, "exportado": utc_now(), "nutria": __version__, "entradas": entries}
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -877,7 +912,8 @@ def export_cache(client: HttpClient, destination: Path) -> dict:
     tmp.write_text(json.dumps(bundle, ensure_ascii=False, default=str), "utf-8")
     os.replace(tmp, destination)
     return {"fichero": str(destination), "entradas": len(entries), "no_exportadas": skipped,
-            "sha256": sha256_file(destination)}
+            "confidenciales_omitidas": confidential_left,
+            "confidenciales_incluidas": sum(1 for e in entries if e["confidencial"]), "sha256": sha256_file(destination)}
 
 
 def _import_problem(item) -> str | None:
@@ -889,6 +925,8 @@ def _import_problem(item) -> str | None:
             return f"falta '{name}' o no es texto"
     if not isinstance(item.get("params", {}), dict):
         return "'params' no es un objeto"
+    if not isinstance(item.get("cabeceras") or {}, dict):
+        return "'cabeceras' no es un objeto"
     if not _HEX64_RE.fullmatch(item["clave"]) or not _HEX64_RE.fullmatch(item["sha256"]):
         return "clave o huella con formato no válido"
     if not re.match(r"(?i)https?://", item["url"]):
@@ -929,18 +967,21 @@ def import_cache(client: HttpClient, source: Path) -> dict:
         if local is not None and confirmed[0] >= _parse_ts(item["fecha"]):
             kept_local += 1
             continue
-        accepted.append(item)
+        # Solo las cabeceras que conserva el cliente (versión de la base de datos), en minúsculas: lo mismo que se
+        # registra en la procedencia y se escribe en la copia, para que su huella coincida al leerla.
+        accepted.append({**item, "cabeceras": _kept_headers(item.get("cabeceras") or {})})
     log_event(client.cfg, "cache_importar",
               inputs={"fichero": str(source), "sha256": sha256_file(source), "exportado": bundle.get("exportado"),
                       "nutria_origen": bundle.get("nutria")},
-              outputs={"entradas": [{"clave": i["clave"], "sha256": i["sha256"], "fecha": i["fecha"]} for i in accepted],
+              outputs={"entradas": [{"clave": i["clave"], "sha256": i["sha256"], "fecha": i["fecha"],
+                                     "cabeceras": i["cabeceras"]} for i in accepted],
                        "rechazadas": len(rejected), "conservadas_locales": kept_local})
     for item in accepted:
         moment = _parse_ts(item["fecha"])
-        headers = item.get("cabeceras") if isinstance(item.get("cabeceras"), dict) else {}
+        headers = item["cabeceras"]
         client.write_cache(client._cache_file(item["clave"]), item["clave"], item["method"].upper(), item["url"],
                            item.get("params") or {}, item.get("json"), item.get("data"), item["body"], headers,
-                           moment)
-        client._remember(item["clave"], item["sha256"], moment, "importada")
+                           moment, confidential=bool(item.get("confidencial")))
+        client._remember(item["clave"], item["sha256"], moment, "importada", headers)
     return {"fichero": str(source), "importadas": len(accepted), "rechazadas": rejected,
             "conservadas_locales": kept_local}

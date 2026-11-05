@@ -273,6 +273,45 @@ def test_confirmation_written_by_another_process_is_seen(cfg):
     assert reader.get_json(URL) == {"a": 1} and len(net.calls) == 2
 
 
+def test_tampered_cached_headers_are_discarded(cfg):
+    # D3-16, variante: la versión de UniProt viaja en las cabeceras de la copia; cambiarla (sin tocar el cuerpo)
+    # no debe colar una versión falsa
+    net = Router()
+    net.add(r"rest\.uniprot\.org", (200, {"results": []}, {"X-UniProt-Release": "2025_04"}))
+    uniprot.search(HttpClient(cfg, session=Session(net)), "gene:PPARA")
+    (path,) = cache_files(cfg.cache_dir)
+    record = json.loads(path.read_text("utf-8"))
+    assert record["cabeceras"] == {"x-uniprot-release": "2025_04"}
+    record["cabeceras"]["x-uniprot-release"] = "2099_01"
+    path.write_text(json.dumps(record), "utf-8")
+    cfg.offline = True
+    with pytest.raises(OfflineError, match="procedencia no registra"):
+        uniprot.search(HttpClient(cfg, session=Session(net)), "gene:PPARA")
+    record["cabeceras"] = "x"
+    path.write_text(json.dumps(record), "utf-8")
+    with pytest.raises(OfflineError, match="cabeceras con formato no válido"):
+        uniprot.search(HttpClient(cfg, session=Session(net)), "gene:PPARA")
+
+
+def test_confidential_mark_is_sticky_and_export_skips_entries_that_could_not_be_imported(cfg, tmp_path):
+    net = Router()
+    net.add(r"api\.example\.org", (200, '{"a": 1}'))
+    HttpClient(cfg, session=Session(net), confidential=True).get_json(URL, params={"q": "idea"}, use_cache=True)
+    HttpClient(cfg, session=Session(net), fresh=True).get_json(URL, params={"q": "idea"})   # misma consulta, normal
+    (path,) = cache_files(cfg.cache_dir)
+    assert json.loads(path.read_text("utf-8"))["confidencial"] is True
+    res = http.export_cache(HttpClient(cfg, session=Session(net)), tmp_path / "a.json")
+    assert res["entradas"] == 0 and res["confidenciales_omitidas"] == 1
+    HttpClient(cfg, session=Session(net)).get_json(URL, params={"q": "otra"})
+    for path in cache_files(cfg.cache_dir):                       # metadatos de la petición alterados
+        record = json.loads(path.read_text("utf-8"))
+        record["url"] = "https://api.example.org/otra-ruta"
+        path.write_text(json.dumps(record), "utf-8")
+    res = http.export_cache(HttpClient(cfg, session=Session(net)), tmp_path / "b.json", include_confidential=True)
+    assert res["entradas"] == 0
+    assert res["no_exportadas"] == {"no se podría importar: la clave no corresponde a la petición declarada": 2}
+
+
 # ============================================================================ sin red: fecha y antigüedad (D7-10)
 def test_offline_cli_reports_copy_dates_and_enforces_the_maximum_age(proj, router, capsys, monkeypatch):
     monkeypatch.setenv("NCBI_API_KEY", "k1")
@@ -318,13 +357,18 @@ def test_cache_export_and_import_reproduce_queries_offline_on_another_machine(pr
     _fill_cache(router, capsys, monkeypatch)
     bundle = tmp_path / "cache.json"
     code, out, _ = run(capsys, ["cache", "exportar", str(bundle)])
-    assert code == 0 and "en claro" in out
+    assert code == 0 and "en claro" in out and "No exportadas 1 copias de consultas confidenciales" in out
     data = json.loads(bundle.read_text("utf-8"))
-    assert data["formato"] == http.EXPORT_FORMAT and len(data["entradas"]) == 5
+    assert data["formato"] == http.EXPORT_FORMAT and len(data["entradas"]) == 4      # sin la consulta de patentes
+    assert "choline carnitine" not in bundle.read_text("utf-8")
+    assert run(capsys, ["cache", "exportar", str(bundle)])[0] == cli.SALIDA_ENTRADA      # no sobrescribe
+    code, out, _ = run(capsys, ["cache", "exportar", str(bundle), "--forzar", "--incluir-confidenciales"])
+    assert code == 0 and "1 consulta(s) CONFIDENCIAL(ES)" in out
+    data = json.loads(bundle.read_text("utf-8"))
+    assert len(data["entradas"]) == 5 and sum(e["confidencial"] for e in data["entradas"]) == 1
     assert SECRET not in bundle.read_text("utf-8")
     assert {e["method"] for e in data["entradas"]} == {"GET", "POST"}
     assert events(proj, "cache_exportar")[-1]["outputs"]["entradas"] == 5
-    assert run(capsys, ["cache", "exportar", str(bundle)])[0] == cli.SALIDA_ENTRADA      # no sobrescribe
     other = tmp_path / "otra_maquina"
     other.mkdir()
     monkeypatch.chdir(other)
@@ -343,7 +387,10 @@ def test_cache_export_and_import_reproduce_queries_offline_on_another_machine(pr
     code, out, _ = run(capsys, ["cache", "importar", str(bundle)])           # repetir: se conservan las locales
     assert code == 0 and "5 copias locales" in out
     code, out, _ = run(capsys, ["--json", "cache", "comprobar"])
-    assert code == 0 and json.loads(out)["validas"] == 5
+    assert code == 0 and json.loads(out)["validas"] == 5 and json.loads(out)["confidenciales"] == 1
+    again = tmp_path / "de_nuevo.json"                     # la marca de confidencialidad viaja con la copia
+    assert run(capsys, ["cache", "exportar", str(again)])[0] == 0
+    assert len(json.loads(again.read_text("utf-8"))["entradas"]) == 4
 
 
 @pytest.mark.parametrize("change, reason", [

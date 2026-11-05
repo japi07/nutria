@@ -852,13 +852,22 @@ def cmd_cache(args, cfg) -> int:
         destination = Path(args.fichero)
         if destination.exists() and not args.forzar:
             raise ValueError(f"{destination} ya existe (usa --forzar para sobrescribirlo)")
-        res = export_cache(client, destination)
-        log_event(cfg, "cache_exportar", inputs={"fichero": str(destination)},
-                  outputs={"entradas": res["entradas"], "sha256": res["sha256"], "no_exportadas": res["no_exportadas"]},
+        res = export_cache(client, destination, include_confidential=args.incluir_confidenciales)
+        log_event(cfg, "cache_exportar", inputs={"fichero": str(destination),
+                                                 "incluir_confidenciales": args.incluir_confidenciales},
+                  outputs={"entradas": res["entradas"], "sha256": res["sha256"], "no_exportadas": res["no_exportadas"],
+                           "confidenciales_omitidas": res["confidenciales_omitidas"],
+                           "confidenciales_incluidas": res["confidenciales_incluidas"]},
                   actor=args.agente)
-        aviso = ("la exportación contiene las consultas y las respuestas en claro (también las de búsquedas "
-                 "confidenciales y de patentes): trátala como un dato confidencial del proyecto")
+        aviso = ("la exportación contiene las consultas y las respuestas en claro: trátala como un dato del proyecto "
+                 "y no la publiques ni la versiones sin revisarla")
+        if res["confidenciales_incluidas"]:
+            aviso += (f"; incluye {res['confidenciales_incluidas']} consulta(s) CONFIDENCIAL(ES) (búsquedas con "
+                      "--sensibilidad confidencial o de patentes) que pueden revelar una idea patentable")
         lines = [f"Exportadas {res['entradas']} copias a {destination} (sha256 {res['sha256']})"]
+        if res["confidenciales_omitidas"]:
+            lines.append(f"No exportadas {res['confidenciales_omitidas']} copias de consultas confidenciales (usa "
+                         "--incluir-confidenciales solo si la otra máquina puede recibirlas)")
         if res["no_exportadas"]:
             lines.append("No exportadas (no válidas): " + "; ".join(f"{k}: {v}" for k, v in res["no_exportadas"].items()))
         lines.append(f"AVISO: {aviso}")
@@ -875,7 +884,8 @@ def cmd_cache(args, cfg) -> int:
         return SALIDA_RESULTADO if res["rechazadas"] else SALIDA_OK
     res = inspect_cache(client)
     lines = [f"Copias válidas: {res['validas']}"
-             + (f" (de {res['mas_antigua']} a {res['mas_reciente']})" if res["validas"] else "")]
+             + (f" (de {res['mas_antigua']} a {res['mas_reciente']}; {res['confidenciales']} de consultas "
+                "confidenciales)" if res["validas"] else "")]
     lines += [f"Descartables: {v} — {k}" for k, v in res["descartables"].items()]
     _emit(args, res, "\n".join(lines))
     return SALIDA_RESULTADO if res["descartables"] else SALIDA_OK
@@ -1479,6 +1489,8 @@ def build_parser() -> argparse.ArgumentParser:
     x = cs.add_parser("exportar", parents=[common], help="copias válidas, con fecha y huella, para otra máquina")
     x.add_argument("fichero")
     x.add_argument("--forzar", action="store_true", help="sobrescribe el fichero si existe")
+    x.add_argument("--incluir-confidenciales", dest="incluir_confidenciales", action="store_true",
+                   help="incluye las copias de consultas confidenciales (por defecto se omiten)")
     x = cs.add_parser("importar", parents=[common], help="importa una exportación (queda en la procedencia)")
     x.add_argument("fichero")
     s.set_defaults(func=cmd_cache)
