@@ -44,19 +44,23 @@ Sin red (`check_report`):
   (2018)», «Smith J. (2019)»), con el año sustituido por «en prensa», «com. pers.» o «datos no publicados», con
   coautores sin paréntesis («García et al. 2018»), tras «según» o «véase» («según García 2018»), con el año y un
   verbo de cita junto al apellido («En 2018, García demostró», «García demostró en 2018», «García en 2018 mostró»,
-  «publicado en 2018 por García»), «García et al.» o «García y col.» sin año o, en una columna de estudios o fuentes
-  de una tabla, «García 2018». Las instituciones cuentan como autores («(NASEM, 2021)», «La EFSA publicó en 2020»);
-  «(Agenda 2030)», «(PAC, 2023)», «Grupo A (2019)», los meses y las palabras de función («Se observó en 2019») no.
-  No se detecta «Autor Año» sin paréntesis en prosa (sin «según», «véase» ni verbo de cita) ni una cita tras una
+  «publicado en 2018 por García», también en inglés: «In 2018, Smith showed»), «García et al.» o «García y col.» sin
+  año, una línea con forma de referencia («García J, Pérez M. 2018. Título», «[^1]: García, 2018.»: con punto, coma
+  o paréntesis entre los autores y el año) o, en una columna de estudios o fuentes de una tabla, «García 2018». Las
+  instituciones cuentan como autores («(NASEM, 2021)», «La EFSA publicó en 2020»); «(Agenda 2030)», «(PAC, 2023)»,
+  «Grupo A (2019)», «adoptado en 2009 por el Parlamento», los meses y las palabras de función («Se observó en 2019»)
+  no. No se detecta «Autor Año» sin paréntesis en prosa (sin «según», «véase» ni verbo de cita) ni una cita tras una
   entradilla sin palabra de cita («(en García, 2018)», para no leer «(en España, 2019)» como cita). Son error
   siempre las citas numéricas («[1]», «[3, 4]», «[1-3]», «(ref. 3)»; no los intervalos con decimales, con unidad
   o tras «IC», «rango», «escala» o «%») y las referencias mal escritas («(R1)», «(R1, R2)», «{R1}», «según R1»).
   Una cita numérica entre paréntesis al final de la frase («... la cetosis (1).», salvo tras «ecuación», «tabla»,
-  «dieta»...) y un número volado tras una palabra («transición¹», «<sup>1</sup>»; no «m²», «R²», «tau²» ni «10⁶»)
-  son error en revisado o final y aviso en borrador (en las tablas, aviso: pueden ser notas). Un DOI, un PMID, un
-  PMCID, un arXiv, un ISBN o el enlace a un artículo (doi.org, PubMed, rutas /article/...) en el cuerpo no se
-  verifica ni cuenta en el sello: error en los informes y en revisado o final, aviso en otros documentos en
-  borrador y en los bloques de código; otros enlaces (normativa, herramientas), aviso.
+  «dieta»...; si la línea tiene otros números entre paréntesis, «leve (1) o grave (2).», puede ser una enumeración:
+  aviso) y un número volado tras una palabra («transición¹», «<sup>1</sup>»; no «m²», «R²», «tau²», «10⁶» ni
+  «(kg/d)²») son error en revisado o final y aviso en borrador (en las tablas, aviso: pueden ser notas). Un DOI, un
+  PMID, un PMCID, un arXiv, un ISBN o el enlace a un artículo (doi.org, PubMed, rutas /article/...) en el cuerpo no
+  se verifica ni cuenta en el sello: error en los informes y en revisado o final, aviso en otros documentos en
+  borrador, en los bloques de código y si es el identificador de una entrada de la bibliografía (que sí se verifica:
+  se cita con su [Rn]); otros enlaces (normativa, herramientas), aviso, y el sello dice cuántos hay.
 - Bibliografía: la sección 20 o, si no existe, la última sección de nivel 2 titulada Bibliografía o Referencias.
   Una entrada puede ocupar varias líneas (hasta la siguiente entrada, una línea en blanco o un encabezado). Un
   `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía (o un identificador de la
@@ -276,6 +280,8 @@ _CITE_VERBS = (r"(?:demostr\w*|mostr\w*|observ\w*|encontr\w*|describ\w*|descri\w
                r"hall[oóa]\w*|señal\w*|senal\w*|indic\w*|conclu\w*|comprob\w*|report\w*|document\w*|estudi\w*|"
                r"evalu\w*|analiz\w*|midi\w*|confirm\w*|sugiri\w*|sugier\w*|showed|found|reported|observed|"
                r"demonstrated|described|proposed|concluded)")
+# Entre los autores de una referencia y su año: «, 2018», «. 2018», «(2018)» o el punto de las iniciales («J. 2018»).
+_REF_YEAR_SEP = r"(?:\s*[,.]\s*\(?|\s*\(|(?:(?<=\.)|(?<=\.\s))\s*)"
 AUTHOR_YEAR_RES = (
     # (Smith et al., 2019; ...), [Smith y col. 2019], (véase Smith y Jones, 2019), (Smith, Jones y Brown, 2019),
     # (García Pérez, 2018), (de Vries, 2018), (revisado por García, 2018), (García, en prensa)
@@ -294,18 +300,21 @@ AUTHOR_YEAR_RES = (
     # Smith et al., García y col. (sin año): sigue siendo una cita
     re.compile(rf"(?<![\w'’\-]){_FIRST}\s+(?:et\s+al\b|[ye]\s+cols?\.)"),
     # En 2018, García demostró...; García demostró en 2018...: el año y un verbo de cita junto al apellido
-    re.compile(rf"(?i:\ben\s+(?:el\s+año\s+)?)(?:19|20)\d{{2}}\s*,?\s+{_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})"),
-    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})\s+(?i:en\s+(?:el\s+año\s+)?)"
+    re.compile(rf"(?i:\b(?:en|in)\s+(?:el\s+año\s+)?)(?:19|20)\d{{2}}\s*,?\s+{_FIRST}{_AUTHORS}\s+"
+               rf"(?i:{_CITE_VERBS})"),
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})\s+(?i:(?:en|in)\s+(?:el\s+año\s+)?)"
                rf"(?:19|20)\d{{2}}(?![\w/\-–])"),
-    # García en 2018 mostró...; un trabajo publicado en 2018 por García
+    # García en 2018 mostró...; un trabajo publicado (descrito, estudiado...) en 2018 por García (con un verbo de
+    # cita: «adoptado en 2009 por el Parlamento Europeo» no es una cita)
     re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?i:en\s+)(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERBS})"),
-    re.compile(rf"(?i:\ben\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
+    re.compile(rf"(?i:\b{_CITE_VERBS}\s+en\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
     # Referencia bibliográfica fuera de la bibliografía: una línea que empieza por un autor con sus iniciales y el año
     # («García J. 2018. Título...», «- García J, Pérez M. 2018.») o una nota al pie con autor y año («[^1]: García,
-    # 2018.», «[^2]: García J, Pérez M. 2018. Título»)
-    re.compile(rf"^\s{{0,3}}(?:[-*+]\s+|\d+[.)]\s+)?(?:{_REF_AUTHORS}|{_NAME}{_INITIALS_REQ}{_AUTHORS})\s*[,.]?\s*"
-               rf"\(?(?:19|20)\d{{2}}[a-z]?\)?\s*[.,:;]", re.MULTILINE),
-    re.compile(rf"^\s{{0,3}}\[\^[^\]\n]+\]:\s*(?:{_LEADIN})?(?:{_REF_AUTHORS}|{_FIRST}{_AUTHORS})\s*[,.]?\s*\(?"
+    # 2018.», «[^2]: García J, Pérez M. 2018. Título»). Entre los autores y el año va un punto, una coma o un
+    # paréntesis, como en una referencia («- Cooperativa A 2020: 50 vacas» no lo es).
+    re.compile(rf"^\s{{0,3}}(?:[-*+]\s+|\d+[.)]\s+)?(?:{_REF_AUTHORS}|{_NAME}{_INITIALS_REQ}{_AUTHORS})"
+               rf"{_REF_YEAR_SEP}(?:19|20)\d{{2}}[a-z]?\)?\s*[.,:;]", re.MULTILINE),
+    re.compile(rf"^\s{{0,3}}\[\^[^\]\n]+\]:\s*(?:{_LEADIN})?(?:{_REF_AUTHORS}|{_FIRST}{_AUTHORS}){_REF_YEAR_SEP}"
                rf"(?:(?:19|20)\d{{2}}|{_STATUS})", re.MULTILINE),
 )
 _IN_PARENS_ONLY = 1          # índice de AUTHOR_YEAR_RES que solo cuenta dentro de un paréntesis o corchete abierto
@@ -342,8 +351,9 @@ STAT_FIGURE_RE = re.compile(r"(?<![\w^])(?:OR|RR|HR|IRR|SMD|DME|DMP|MD|DM|RD|ROM
 _INTERVAL_CONTEXT_RE = re.compile(r"(?i)(?:\bIC\b|\bCI\b|interval|rango|range|escala|scale|puntuaci|score|%|entre)"
                                   r"[^.;\[\]]{0,15}$")
 # Número volado tras una palabra o un signo de puntuación («transición¹», «leche.²», «<sup>1</sup>»): una cita
-# numérica o una nota escrita a mano; no «m²», «R²», «Ca²⁺» ni «10⁶» (palabras de menos de tres letras o cifras).
-SUPERSCRIPT_CITATION_RE = re.compile(r"(?:(?<=[^\W\d_]{3})|(?<=[.,;:)\]»”\"’']))"
+# numérica o una nota escrita a mano; no «m²», «R²», «Ca²⁺» ni «10⁶» (palabras de menos de tres letras o cifras) ni
+# una unidad al cuadrado tras un paréntesis («(kg/d)²», la de una varianza).
+SUPERSCRIPT_CITATION_RE = re.compile(r"(?:(?<=[^\W\d_]{3})|(?<=[.,;:»”\"’']))"
                                      r"\^([1-9]\d{0,2}(?:[,–-]\^?[1-9]\d{0,2})*)(?![\d^])")
 # Notación matemática con superíndice: «tau²», «chi²», «sigma²» (no son números volados).
 _SUPERSCRIPT_EXEMPT = {"tau", "chi", "phi", "psi", "sigma", "rho", "eta", "omega", "theta", "lambda", "beta", "gamma",
@@ -397,17 +407,18 @@ _SUPERSCRIPT_RUN_RE = re.compile(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+")
 _SUP_TAG_RE = re.compile(r"<sup\b[^>]*>\s*([0-9+\-−,–\s]{1,16}?)\s*</sup\s*>", re.IGNORECASE)
 
 
-def _visible(line: str) -> str:
+def _visible(line: str, marks: bool = True) -> str:
     """Aproxima el texto que ve quien lee el Markdown, para comprobarlo: entidades HTML decodificadas, NFKC, sin
     caracteres de formato invisibles (anchura cero, marcas de dirección, también los escritos como entidad: «&#8203;»),
     letras cirílicas o griegas que imitan a las latinas y sin escapes con barra invertida. Los superíndices numéricos
     se leen «^n» y no se pegan a lo anterior: «m²» es «m^2» (unidad), «R²» no es la referencia «(R2)» y «transición¹»
-    o «transición<sup>1</sup>» es un número volado."""
+    o «transición<sup>1</sup>» es un número volado. Con `marks=False` los superíndices quedan como en NFKC («Ca2+»):
+    es el texto de las entradas de la bibliografía, que se comparan con los metadatos de la fuente."""
     if "&" in line:
         line = re.sub(r"[\r\n]", " ", html.unescape(line))
-    if "<" in line:
+    if marks and "<" in line:
         line = _SUP_TAG_RE.sub(lambda m: "^" + re.sub(r"\s+", "", m.group(1)), line)
-    if _SUPERSCRIPT_RUN_RE.search(line):
+    if marks and _SUPERSCRIPT_RUN_RE.search(line):
         line = _SUPERSCRIPT_RUN_RE.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT_DIGITS), line)
     line = unicodedata.normalize("NFKC", line)
     if any(unicodedata.category(ch) == "Cf" for ch in line):
@@ -519,6 +530,7 @@ class _Doc:
     fm_end: int | None = None                 # delimitador final (None si no se cerró)
     issues: list[Issue] = field(default_factory=list)
     fm_html_comment: int | None = None        # línea del front matter con un comentario HTML (YAML no lo admite)
+    plain: list[str] = field(default_factory=list)   # texto visible sin marcar los superíndices (bibliografía)
 
     @property
     def fm_lines(self) -> range:
@@ -547,7 +559,11 @@ def _parse(text: str) -> _Doc:
     raw = _normalize_newlines(text).split("\n")
     stripped, unclosed = _strip_comments(raw)
     lines = [_visible(line) for line in stripped]
-    doc = _Doc(lines=lines, fence=[False] * len(lines), headings=[])
+    # Sin marcar los superíndices: las entradas de la bibliografía se comparan con los metadatos de la fuente
+    # («Ca²⁺» es «Ca2+», como en Crossref y PubMed, no «Ca^2+»).
+    plain = [_visible(line, marks=False) if ("<" in line or "&" in line or _SUPERSCRIPT_RUN_RE.search(line))
+             else lines[k] for k, line in enumerate(stripped)]
+    doc = _Doc(lines=lines, fence=[False] * len(lines), headings=[], plain=plain)
     if unclosed is not None:
         doc.issues.append(Issue("error", "Comentario HTML sin cerrar: su contenido no se ve al renderizar el "
                                          "documento (ciérralo con -->); se comprueba como texto", unclosed + 1))
@@ -931,13 +947,14 @@ def _bibliography(doc: _Doc) -> _Bib | None:
             if doc.fence[i] and ID_HINT_RE.search(line):
                 stray.append(i + 1)
             continue
-        m = ENTRY_RE.match(line)
+        text = doc.plain[i] if i < len(doc.plain) else line
+        m = ENTRY_RE.match(text)
         if m:
             current = BibEntry(m.group(1), i + 1, m.group(2).strip())
             entries.append(current)
             entry_lines.add(i)
         elif current is not None:
-            current.text = f"{current.text} {line.strip()}".strip()
+            current.text = f"{current.text} {text.strip()}".strip()
             entry_lines.add(i)
         elif ID_HINT_RE.search(line):
             stray.append(i + 1)
@@ -1184,10 +1201,39 @@ def _paren_numeric_citations(text: str):
             yield m.group(0).strip()
 
 
-def _body_identifier_issues(line: str, i: int, sev: str) -> list[Issue]:
+def _known_identifiers(entries: list[BibEntry]) -> dict[str, str]:
+    """{«doi:...» o «pmid:...»: [Rn]} de las entradas de la bibliografía (las que se verifican y cuentan en el sello)."""
+    known: dict[str, str] = {}
+    for entry in entries:
+        ids = extract_identifiers(entry.text)
+        for doi in ids["doi"]:
+            known.setdefault(f"doi:{doi.lower()}", entry.ref)
+        for pmid in ids["pmid"]:
+            known.setdefault(f"pmid:{pmid}", entry.ref)
+    return known
+
+
+def _bibliography_ref_for(identifier: str, known: dict[str, str]) -> str | None:
+    """La [Rn] de la bibliografía con ese DOI o PMID (un DOI cortado por un paréntesis, «10.1016/S0022-0302(20»,
+    cuenta si es el principio del de la entrada), o None."""
+    doi = re.search(r"10\.\d{4,9}/[^\s\"<>]+", identifier)
+    if doi:
+        value = doi.group(0).rstrip(".,;:)]").lower()
+        for key, ref in known.items():
+            if key.startswith("doi:") and (key[4:] == value or (len(value) >= 12 and key[4:].startswith(value))):
+                return ref
+        return None
+    pmid = re.search(r"(?<!\d)(\d{5,9})(?!\d)", identifier)
+    if pmid and re.search(r"(?i)pmid|pubmed", identifier):
+        return known.get(f"pmid:{pmid.group(1)}")
+    return None
+
+
+def _body_identifier_issues(line: str, i: int, sev: str, known: dict[str, str] | None = None) -> list[Issue]:
     """Un DOI, un PMID o el enlace a un artículo (doi.org, PubMed, revistas) en el cuerpo cita una fuente que no se
-    verifica: el sello contaría solo las de la bibliografía. Error en los informes y en revisado o final (`sev`); otro
-    enlace, aviso (normativa, herramientas o datos: si es una fuente, va en la bibliografía)."""
+    verifica: el sello contaría solo las de la bibliografía. Error en los informes y en revisado o final (`sev`); si
+    el identificador es el de una entrada de la bibliografía (`known`), que sí se verifica, aviso: cítala con su
+    [Rn]. Otro enlace, aviso (normativa, herramientas o datos: si es una fuente, va en la bibliografía)."""
     found = [m.group(0).rstrip(".,;:") for rx in (_BODY_DOI_RE, _BODY_PMID_RE) for m in rx.finditer(line)]
     spans = _code_spans(line)
     urls = [(m.group(0).rstrip(".,;:"), m.start()) for m in _BODY_URL_RE.finditer(line)]
@@ -1196,10 +1242,16 @@ def _body_identifier_issues(line: str, i: int, sev: str) -> list[Issue]:
     others = [u for u, pos in urls if u not in found and not any(f in u for f in found)
               and not any(a <= pos < b for a, b in spans)]
     out = []
-    if found:
-        out.append(Issue(sev, f"Identificador de una fuente en el cuerpo («{found[0][:80]}»): no se verifica ni "
+    in_bib = {f: _bibliography_ref_for(f, known or {}) for f in found}
+    unknown = [f for f in found if in_bib[f] is None]
+    if unknown:
+        out.append(Issue(sev, f"Identificador de una fuente en el cuerpo («{unknown[0][:80]}»): no se verifica ni "
                               "cuenta en el sello; cita la fuente con [Rn] y pon el identificador en su entrada de la "
                               "bibliografía (sección 20)", i + 1))
+    elif found:
+        ref = in_bib[found[0]]
+        out.append(Issue("aviso", f"Identificador de una fuente en el cuerpo («{found[0][:80]}»): es el de {ref} de la "
+                                  f"bibliografía; cítala con [{ref}]", i + 1))
     if others:
         out.append(Issue("aviso", f"Enlace en el cuerpo («{others[0][:80]}»): no se verifica; si es una fuente, cítala "
                                   "con [Rn] y su entrada en la bibliografía", i + 1))
@@ -1750,9 +1802,10 @@ def _lookup_source(conn, kind: str, value: str):
 
 
 def _registry_issues(conn, ref: str, entries: list[BibEntry], line: int, strict: bool) -> list[Issue]:
-    """La fuente de una referencia [PUB] (por su DOI o su PMID; basta uno si el registro no guarda el otro) debe estar
-    registrada, verificada y con la retractación comprobada; los identificadores de la entrada no pueden apuntar a
-    fuentes distintas del registro ni contradecir los que este guarda."""
+    """La fuente de una referencia citada con una etiqueta ([PUB] o cualquier otra: «... [SUP] [R1]»), por su DOI o su
+    PMID (basta uno si el registro no guarda el otro), debe estar registrada, verificada y con la retractación
+    comprobada; los identificadores de la entrada no pueden apuntar a fuentes distintas del registro ni contradecir los
+    que este guarda."""
     out = []
     sev = "error" if strict else "aviso"
     for entry in entries:
@@ -1774,8 +1827,8 @@ def _registry_issues(conn, ref: str, entries: list[BibEntry], line: int, strict:
             continue
         if not found:
             kind, value = idents[0]
-            out.append(Issue(sev, f"{label} se usa en una afirmación [PUB] pero no está registrada como fuente "
-                                  f"verificada (`nutria fuente agregar --{kind} {value}`)", line))
+            out.append(Issue(sev, f"{label} se cita en una afirmación del informe pero no está registrada como "
+                                  f"fuente verificada (`nutria fuente agregar --{kind} {value}`)", line))
             continue
         if len(found) > 1:
             out.append(Issue(sev, f"{label}: sus identificadores corresponden a fuentes distintas del registro "
@@ -1890,7 +1943,7 @@ _STRUCK_RE = re.compile(
     r"|<(del|s|strike)\b[^>]*>.*?</\3\s*>"
     r"|<(span|div|font|p|mark|small|em|i|b|u|sup|sub)\b[^>]*(?:line-through|\bhidden\b|display\s*:\s*none|"
     r"visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])|opacity\s*:\s*0(?![.\d]*[1-9])|"
-    r"color\s*:\s*(?:white|transparent|#fff\b|#ffffff\b))[^>]*>.*?</\4\s*>", re.IGNORECASE)
+    r"color\s*[:=]\s*[\"']?\s*(?:white|transparent|#fff\b|#ffffff\b))[^>]*>.*?</\4\s*>", re.IGNORECASE)
 _ROUTE_PHRASE_RE = re.compile(r"\b(?:ruta|via|clasificacion)\s+(?:regulatoria|preliminar|propuesta|de autorizacion)\b")
 _FALLBACK_ROUTES = ("materia_prima", "aditivo_tecnologico", "aditivo_sensorial", "aditivo_nutricional",
                     "aditivo_zootecnico", "pienso_dietetico", "fuera_de_alcance_medicamento",
@@ -2260,6 +2313,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     tables = _table_lines(doc, body)
     table_headers = _table_headers(doc, tables)
     bib_lines = set(range(bib.start, bib.end)) if bib else set()
+    known_ids = _known_identifiers(entries)
     for i in sorted(body):
         line = doc.lines[i]
         if not line.strip():
@@ -2299,8 +2353,12 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                              "entrada en la bibliografía (sección 20)", i + 1))
             paren = next(_paren_numeric_citations(scan.text), None)
             if paren and i not in tables and not doc.heading_at(i):
-                issues.append(Issue(sev_strict, f"Posible cita numérica «{paren}» al final de la frase: si es una "
-                                                "cita, escríbela como [Rn] (y su entrada en la bibliografía)", i + 1))
+                # Con otros números entre paréntesis en la línea («leve (1), moderada (2) o grave (3).») puede ser una
+                # enumeración: aviso.
+                listed = len(re.findall(r"\(\s*\d{1,3}\s*\)", scan.text)) > 1
+                issues.append(Issue("aviso" if listed else sev_strict,
+                                    f"Posible cita numérica «{paren}» al final de la frase: si es una cita, escríbela "
+                                    "como [Rn] (y su entrada en la bibliografía)", i + 1))
             for m in SUPERSCRIPT_CITATION_RE.finditer(scan.text):
                 before = re.search(r"([^\W\d_]+)$", scan.text[:m.start()])
                 if before and before.group(1).lower() in _SUPERSCRIPT_EXEMPT:
@@ -2315,7 +2373,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                                 "se verifica; muévela a la sección 20", i + 1))
             stray_entries.add(i)
         elif i not in record_lines and i not in bib_lines:
-            issues += _body_identifier_issues(line, i, "aviso" if doc.fence[i] else sev_unverified)
+            issues += _body_identifier_issues(line, i, "aviso" if doc.fence[i] else sev_unverified, known_ids)
     # Cifras con unidades, citas autor-año y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?»)
     # puede ocupar varias líneas de un párrafo, y una línea puede tener varias frases. Las cifras y las citas se buscan
     # en el texto del párrafo entero (una cifra y su unidad partidas por un salto de línea siguen siendo una cifra con
@@ -2801,7 +2859,7 @@ def check_support_quotes(client, text: str) -> tuple[list[Issue], list[dict]]:
                                         row.line))
                     details.append({"ref": ref, "cita": quote, "estado": "sin_resumen"})
                     continue
-                words, needle = _norm_words(abstract), _norm_words(quote)
+                words, needle = _norm_words(_visible(abstract)), _norm_words(quote)
                 hit = bool(_find(words, needle, 0))
                 details.append({"ref": ref, "cita": quote, "estado": "en_resumen" if hit else "no_en_resumen",
                                 "origen": origin})
@@ -2973,9 +3031,13 @@ def stamp_status(report: Path | str, conn=None) -> tuple[bool, str]:
         return False, (f"Documento por completar ({'; '.join(what)}): el sello solo registra la comprobación de un "
                        "borrador incompleto y no vale como sello del informe; complétalo y vuelve a sellar")
     total = (data.get("resumen") or {}).get("total", 0)
+    links = sum(1 for i in data.get("incidencias") or [] if isinstance(i, dict)
+                and str(i.get("message", "")).startswith("Enlace en el cuerpo"))
     refs = ("no había referencias que verificar" if not total else
             f"{(data.get('resumen') or {}).get('verificadas', 0)} de {total} referencia(s) verificadas en línea "
             "(existencia, correspondencia con la cita y retractación)")
+    if links:
+        refs += f"; {links} enlace(s) del cuerpo sin verificar (no son referencias de la bibliografía)"
     parts = [f"estado '{info.value or 'sin estado'}'", refs,
              "estructura de informe comprobada" if structure else "documento sin estructura de informe"]
     if info.strict:
