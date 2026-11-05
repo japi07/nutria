@@ -639,8 +639,8 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
                              "está justificado (transferibilidad) o son la misma especie escrita de otra forma, repite "
                              "con --mezclar-especies (el aviso las listará).")
         else:
-            avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza la "
-                          "especie como subgrupo (--subgrupo especie)")
+            avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza "
+                          "la especie como subgrupo (--subgrupo especie)")
     estados = _distintos(rows, "physiological_stage")
     if len(estados) > 1:
         avisos.append("AVISO: se combinan estados fisiológicos distintos ("

@@ -631,7 +631,8 @@ def test_comparar_sin_registrar_no_muestra_discrepancias(project, capsys, monkey
     b = _deposit(project, "x_B.json", distinta, "extractor-datos-B", indent=3)
     sin_vistazo(a, b)
     assert db.list_extractions(_conn()) == [] and db.list_extraction_comparisons(_conn()) == []
-    eventos = [json.loads(line) for line in (project / "research" / "procedencia.jsonl").read_text("utf-8").splitlines()]
+    procedencia = (project / "research" / "procedencia.jsonl").read_text("utf-8")
+    eventos = [json.loads(line) for line in procedencia.splitlines()]
     assert sum(e["action"] == "extraccion_comparar_rechazada" for e in eventos) == 6   # los intentos dejan rastro
     # el camino: la comparación registrada muestra la discrepancia y exige conciliarla
     capsys.readouterr()
@@ -1052,8 +1053,8 @@ def test_incidencia_expresada_como_porcentaje_tambien_exige_definicion_y_ventana
     for variable, unidad in (("tiempo con pH < 5,8", "%"), ("pH ruminal < 5,8", "h/d"), ("pH < 5,8", "% del tiempo"),
                              ("BHB ≥ 1,2 mmol/L", "mmol/L"), ("proteína de la leche", "%"), ("estrógenos", "pg/mL"),
                              ("digestibilidad de la FND", "%"), ("ingestión de MS", "% del PV"),
-                             ("FND de alta digestibilidad", "%"), ("high oleic acid", "% of FA"), ("BHB alto", "mmol/L"),
-                             ("peso vacío", "kg")):
+                             ("FND de alta digestibilidad", "%"), ("high oleic acid", "% of FA"),
+                             ("BHB alto", "mmol/L"), ("peso vacío", "kg")):
         _validate("extraccion", dict(sin_contexto, variable=variable, unidad=unidad))
 
 
@@ -1182,7 +1183,8 @@ def test_clasificar_con_firma_aplica_la_comprobacion_de_firma_del_registro(proje
     monkeypatch.setattr(db, "require_human_signature", comprobar, raising=False)
     with pytest.raises(db.RegistryError, match="Firma humana rechazada"):
         db.classify_opportunity(_conn(), "O-0001", "fuera_de_alcance_biocida", "Acción biocida", human_signoff="Ana")
-    assert llamadas == ["Ana"] and db.get_opportunity(_conn(), "O-0001")["regulatory_route"] != "fuera_de_alcance_biocida"
+    ruta = db.get_opportunity(_conn(), "O-0001")["regulatory_route"]
+    assert llamadas == ["Ana"] and ruta != "fuera_de_alcance_biocida"
     # sin firma no se comprueba nada (la propuesta de un agente sigue su camino)
     db.classify_opportunity(_conn(), "O-0001", "fuera_de_alcance_biocida", "Acción biocida", actor="critico-red-team")
     assert llamadas == ["Ana"]

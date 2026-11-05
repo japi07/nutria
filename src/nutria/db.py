@@ -667,9 +667,9 @@ def text_problem(value: Any, mode: str = "informado") -> str | None:
             return "no nombra la especie: solo describe a los animales"
         if mode == "especie" and any(_covered(ws, vocab["generic_group"], vocab["max_len"])
                                      and not _covered(ws, vocab["group"], vocab["max_len"]) for ws in readings):
-            return ("es genérico: un grupo de especies ('rumiantes', 'aves', 'monogástricos') con palabras genéricas no "
-                    "nombra la especie; indica la especie (p. ej. 'vacuno lechero') o, si se dirige a todo el grupo, "
-                    "solo el grupo")
+            return ("es genérico: un grupo de especies ('rumiantes', 'aves', 'monogástricos') con palabras genéricas "
+                    "no nombra la especie; indica la especie (p. ej. 'vacuno lechero') o, si se dirige a todo el "
+                    "grupo, solo el grupo")
     return None
 
 
@@ -785,9 +785,10 @@ ANIMAL_PROPORTION_RE = re.compile(
     + r")\b|\b(?:" + _ANIMAL_WORDS + r")\s+(?:con|que|with|that|having)\b")
 # Umbral en el nombre de la variable ('BHB ≥ 1,2 mmol/L', 'RCS > 200 000 células/mL'): con una unidad de proporción,
 # es la proporción de animales por encima o por debajo del umbral.
-THRESHOLD_RE = re.compile(r"[<>≤≥⩽⩾]\s*=?\s*\d|=\s*[<>]\s*\d|\b(?:mayor|menor|superior|inferior)(?:es)?\s+(?:o igual\s+)?"
-                          r"(?:que|a|de)\s+\d|\bpor (?:encima|debajo) de\s+\d|\b(?:above|below|over|under|at least"
-                          r"|greater than|less than|al menos)\s+\d")
+THRESHOLD_RE = re.compile(r"[<>≤≥⩽⩾]\s*=?\s*\d|=\s*[<>]\s*\d"
+                          r"|\b(?:mayor|menor|superior|inferior)(?:es)?\s+(?:o igual\s+)?(?:que|a|de)\s+\d"
+                          r"|\bpor (?:encima|debajo) de\s+\d|\b(?:above|below|over|under|at least|greater than"
+                          r"|less than|al menos)\s+\d")
 # Un umbral sobre el tiempo ('tiempo con pH < 5,8') no es una proporción de animales.
 TIME_OUTCOME_RE = re.compile(r"\b(?:tiempo|time|duracion|duration|horas?|hours?|minutos?|minutes?)\b")
 # La variable empieza por los animales ('vacas gestantes a 150 DEL', '% vacas con...'): proporción de animales.
