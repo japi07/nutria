@@ -700,9 +700,13 @@ def test_extraccion_no_consta_coherente_y_sin_campos_desconocidos():
 # ================================================================== D4-6 PDR, especie y etapa en la exportación
 def test_pdr_en_el_esquema_y_en_la_exportacion(project, capsys):
     base = _example("extraccion_ejemplo")[0]
-    for changes in ({"pdr_pct_ms": 17.0}, {"pdr_pct_pb": 120}, {"pdr_pct_ms": -1}):
+    for changes in ({"pdr_pct_ms": 17.0}, {"pdr_pct_pb": 120}, {"pdr_pct_ms": -1},
+                    {"pdr_pct_ms": 6.2},                       # 62 % de la PB anotado como 6,2 % de la MS
+                    {"pdr_pct_pb": 10.2, "pdr_pct_ms": 10.2}):  # la misma cifra en las dos bases
         with pytest.raises(SystemExit):
             _validate("extraccion", dict(base, **changes))
+    for changes in ({"pdr_pct_ms": 10.0}, {"pdr_pct_pb": None, "pdr_pct_ms": 10.2}, {"pdr_pct_ms": None}):
+        _validate("extraccion", {k: v for k, v in dict(base, **changes).items() if v is not None})
     _double(project, "e1", _records(_source()))
     out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "l.csv"))
     (row,) = _csv_rows(project / "l.csv")

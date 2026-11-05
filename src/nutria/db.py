@@ -792,6 +792,14 @@ def extraction_problems(data: dict) -> list[str]:
     rdp, cp = data.get("pdr_pct_ms"), data.get("pb_pct_ms")
     if _is_number(rdp) and _is_number(cp) and rdp > cp:
         problems.append(f"pdr_pct_ms ({rdp}) supera pb_pct_ms ({cp}): la PDR es una fracción de la PB")
+    rdp_cp = data.get("pdr_pct_pb")
+    if _is_number(rdp) and _is_number(cp) and _is_number(rdp_cp):
+        # las dos bases de la PDR deben cuadrar: PDR (% MS) = PDR (% PB) × PB (% MS) / 100
+        expected = rdp_cp * cp / 100
+        if abs(expected - rdp) > max(1.0, 0.1 * expected):
+            problems.append(f"pdr_pct_pb ({rdp_cp} % de la PB) y pdr_pct_ms ({rdp} % de la MS) no cuadran con pb_pct_ms "
+                            f"({cp} % de la MS): {rdp_cp} × {cp} / 100 = {expected:.1f} % de la MS. Comprueba la base de "
+                            "cada valor (¿una cifra en % de la PB anotada como % de la MS?)")
     for events, n in (("eventos_control", "n_control"), ("eventos_tratamiento", "n_tratamiento")):
         if _is_number(data.get(events)) and _is_number(data.get(n)) and data[events] > data[n]:
             problems.append(f"{events} ({data[events]}) supera {n} ({data[n]}): los eventos son animales (o unidades) "
