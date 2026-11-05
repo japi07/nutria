@@ -194,7 +194,8 @@ def test_la_fusion_de_fuentes_duplicadas_conserva_la_doble_extraccion_y_sus_regl
     """Si el trabajo de la doble extracción estaba registrado por PMID y se fusiona con su registro por DOI, las
     extracciones siguen verificadas y quien vio discrepancias de esa fuente sigue sin poder extraerla de nuevo."""
     conn = _conn()
-    pmid = db.upsert_source(conn, {"pmid": "424242", "title": "Trabajo", "verified": True, "retracted": False})
+    titulo = "Colina protegida en vacas en transición"
+    pmid = db.upsert_source(conn, {"pmid": "424242", "title": titulo, "verified": True, "retracted": False})
     _double(project, "x", _records(pmid))
     otra = _records(pmid)
     otra[0].update(variable="grasa de la leche", unidad="%", media_control=3.8, media_tratamiento=4.0)
@@ -203,8 +204,9 @@ def test_la_fusion_de_fuentes_duplicadas_conserva_la_doble_extraccion_y_sus_regl
     a = _deposit(project, "g_A.json", otra[:1], "extractor-g-A")
     b = _deposit(project, "g_B.json", distinta[:1], "extractor-g-B")
     assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
-    doi = db.upsert_source(conn, {"doi": "10.1234/fusion", "title": "Trabajo", "verified": True, "retracted": False})
-    assert db.upsert_source(conn, {"doi": "10.1234/fusion", "pmid": "424242", "verified": True}) == doi
+    doi = db.upsert_source(conn, {"doi": "10.1234/fusion", "title": titulo, "verified": True, "retracted": False})
+    assert db.upsert_source(conn, {"doi": "10.1234/fusion", "pmid": "424242", "title": titulo, "verified": True,
+                                   "verified_via": "prueba"}) == doi
     assert {r["source_id"] for r in db.list_extractions(conn)} == {doi}          # fusionadas en el DOI
     assert len(db.verified_extraction_ids(conn)) == 2
     capsys.readouterr()
