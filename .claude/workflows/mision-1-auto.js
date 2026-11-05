@@ -231,11 +231,49 @@ const contarRumiantes = (lista) => lista.filter((o) => esRumiante(o.especie)).le
 // Paso 0 de la skill: nutria doctor (fuentes accesibles), nutria estado (oportunidades ya registradas), la fecha y los
 // ficheros que ya existen (para elegir nombres que no pisen los de ejecuciones anteriores).
 const DIRECTORIOS = ['research/revisiones', 'research/oportunidades', 'research/hipotesis', 'research/planes']
+// nutria doctor da el estado de cada fuente como una cadena ("OK (200)", "BLOQUEADO por proxy/política de red") o como
+// un objeto {estado, url, esencial, detalle, status} con estado ok, http, bloqueado, sin_conexion, no_comprobado (modo
+// offline), sin_clave o sin_token: se aceptan los dos formatos. Solo "OK"/"ok" cuenta como accesible.
+const TEXTO_ESTADO_FUENTE = {
+  http: 'HTTP', bloqueado: 'BLOQUEADO por proxy/política de red', sin_conexion: 'sin conexión',
+  no_comprobado: 'no comprobado (modo offline: solo la caché)', sin_clave: 'sin clave (no se comprueba)',
+  sin_token: 'sin token (opcional; no se comprueba)',
+}
+const estadoFuente = (v) => {
+  if (typeof v === 'string') return { accesible: v.trim().startsWith('OK'), texto: v.trim() }
+  if (esObjeto(v) && typeof v.estado === 'string') {
+    const texto = (TEXTO_ESTADO_FUENTE[v.estado] || v.estado) + (v.status !== undefined && v.status !== null ? ` (${v.status})` : '')
+    return { accesible: v.estado === 'ok', texto }
+  }
+  return { accesible: false, texto: 'estado no interpretable' }
+}
+// nutria estado en texto (compacto: una línea por oportunidad, "  O-0001 [estado] título") con el resumen
+// "Oportunidades: propuesta=2, descartada=1" (u "Oportunidades: 0"). Si el número de líneas no coincide con el resumen,
+// la salida está recortada o incompleta y no se acepta (falla en cerrado).
+const interpretarEstado = (salida) => {
+  const lineas = String(salida === undefined || salida === null ? '' : salida).split('\n')
+  const resumen = lineas.map((l) => /^Oportunidades:(.*)$/.exec(l.trim())).find(Boolean)
+  if (!resumen) return { ok: false, motivo: 'la salida no es la de nutria estado (falta la línea "Oportunidades:")' }
+  let total = 0
+  if (resumen[1].trim() !== '0') {
+    for (const parte of resumen[1].split(',')) {
+      const m = /^\s*([^=,\s]+)=(\d+)\s*$/.exec(parte)
+      if (!m) return { ok: false, motivo: `resumen de oportunidades no interpretable: "${recorte(resumen[1])}"` }
+      total += Number(m[2])
+    }
+  }
+  const registradas = lineas.map((l) => /^\s*(O-\d{4,}) \[([^\]]+)\] (.*)$/.exec(l)).filter(Boolean)
+    .map((m) => ({ id: m[1], estado: m[2], titulo: m[3].trim() }))
+  if (registradas.length !== total) {
+    return { ok: false, motivo: `nutria estado resume ${total} oportunidad(es) y lista ${registradas.length}: salida recortada o incompleta` }
+  }
+  return { ok: true, registradas }
+}
 const prepararPaso0 = async () => {
   phase('Preparación')
   const r = await lanzar(
     'Paso 0 de la misión 1 (preparación de .claude/skills/mision-1/SKILL.md). Ejecuta exactamente estas cuatro órdenes, en este orden, y ninguna otra: ' +
-    `1) nutria --agente orquestador --json doctor; 2) nutria --agente orquestador --json estado; 3) date -u +%F; 4) ls -1 ${DIRECTORIOS.join(' ')}. ` +
+    `1) nutria --agente orquestador --json doctor; 2) nutria --agente orquestador estado; 3) date -u +%F; 4) ls -1 ${DIRECTORIOS.join(' ')}. ` +
     'Devuelve para cada una la orden, su código de salida y su salida estándar literal y completa (sin resumir, corregir ni reformatear). No modifiques ningún fichero.',
     { label: 'paso0', phase: 'Preparación', schema: PASO0, effort: 'low' },
   )
@@ -246,39 +284,46 @@ const prepararPaso0 = async () => {
   }
   const d = esObjeto(r.doctor) ? parsear(r.doctor.salida) : { ok: false }
   if (d.ok && esObjeto(d.valor) && esObjeto(d.valor.red)) {
-    p0.fuentes_no_accesibles = Object.keys(d.valor.red).filter((k) => !String(d.valor.red[k]).startsWith('OK')).map((k) => `${k}: ${d.valor.red[k]}`)
+    p0.fuentes_no_accesibles = Object.entries(d.valor.red).map(([k, v]) => [k, estadoFuente(v)])
+      .filter(([, e]) => !e.accesible).map(([k, e]) => `${k}: ${e.texto}`)
+    if (d.valor.offline === true) p0.avisos.push('nutria está en modo offline: solo consulta la caché y la verificación de citas quedará incompleta')
+    if (Array.isArray(d.valor.fallos_esenciales) && d.valor.fallos_esenciales.length) {
+      p0.avisos.push(`nutria doctor: fallan comprobaciones esenciales (${d.valor.fallos_esenciales.map((x) => recorte(x)).join(', ')})`)
+    }
     if (esObjeto(d.valor.claves) && d.valor.claves.OPENALEX_API_KEY === false) p0.avisos.push('falta OPENALEX_API_KEY: OpenAlex no es accesible (la exige desde el 13-02-2026)')
   } else {
     p0.avisos.push('no se pudo interpretar la salida de nutria doctor: se desconoce qué fuentes son accesibles')
   }
-  const e = esObjeto(r.estado) && r.estado.codigo_salida === 0 ? parsear(r.estado.salida) : { ok: false }
-  if (e.ok && esObjeto(e.valor) && Array.isArray(e.valor.lista_oportunidades)) {
-    p0.registradas = e.valor.lista_oportunidades.filter(esObjeto).map((o) => ({ id: o.id, titulo: o.title || '', estado: o.status || null }))
+  const e = esObjeto(r.estado) && r.estado.codigo_salida === 0
+    ? interpretarEstado(r.estado.salida)
+    : { ok: false, motivo: `la orden terminó con código ${esObjeto(r.estado) ? r.estado.codigo_salida : '?'}` }
+  if (e.ok) {
+    p0.registradas = e.registradas
     p0.ok = true
   } else {
-    p0.motivo = `no se pudo interpretar la salida de nutria estado (código ${esObjeto(r.estado) ? r.estado.codigo_salida : '?'})`
+    p0.motivo = `no se pudo interpretar la salida de nutria estado: ${e.motivo}`
   }
   const f = esObjeto(r.fecha) ? String(r.fecha.salida || '').trim() : ''
   if (fechaValida(f)) p0.fecha = f
-  // ls -1 de varios directorios: cabecera "dir:" y un nombre por línea (un directorio que no exista solo da error en
-  // stderr). Sin cabeceras reconocibles, cada nombre cuenta como ocupado en todos los directorios (falla en cerrado).
+  // ls -1 de varios directorios: cabecera "<dir>:" (relativa o absoluta) y un nombre por línea (en columnas si falta
+  // -1). Un directorio que no existe no tiene cabecera (ls lo dice por la salida de error). Falla en cerrado: los nombres
+  // que no están bajo una cabecera reconocida cuentan como ocupados en todos los directorios.
   if (esObjeto(r.ficheros) && typeof r.ficheros.salida === 'string') {
     p0.ficheros = new Map(DIRECTORIOS.map((dir) => [dir, new Set()]))
-    const sueltos = []
+    const sueltos = new Set()
     let actual = null
-    let cabeceras = 0
     for (const linea of r.ficheros.salida.split('\n').map((l) => l.trim()).filter(Boolean)) {
       if (linea.endsWith(':')) {
-        const dir = linea.slice(0, -1).replace(/^\.\//, '').replace(/\/+$/, '')
-        actual = p0.ficheros.has(dir) ? dir : null
-        cabeceras += 1
+        const ruta = linea.slice(0, -1).replace(/\\/g, '/').replace(/\/+$/, '')
+        actual = DIRECTORIOS.find((dir) => ruta === dir || ruta === `./${dir}` || ruta.endsWith(`/${dir}`)) || null
         continue
       }
-      const nombre = linea.split('/').pop()
-      if (actual) p0.ficheros.get(actual).add(nombre)
-      else sueltos.push(nombre)
+      for (const nombre of linea.split(/\s+/).map((n) => n.split('/').pop()).filter(Boolean)) {
+        if (actual) p0.ficheros.get(actual).add(nombre)
+        else sueltos.add(nombre)
+      }
     }
-    if (!cabeceras) sueltos.forEach((nombre) => DIRECTORIOS.forEach((dir) => p0.ficheros.get(dir).add(nombre)))
+    sueltos.forEach((nombre) => DIRECTORIOS.forEach((dir) => p0.ficheros.get(dir).add(nombre)))
   } else {
     p0.avisos.push('no se pudo leer qué ficheros existen: los nombres se eligen con la fecha y el título, y los agentes no sobrescriben ficheros existentes')
   }
@@ -337,9 +382,22 @@ const leerRegistro = async (id, etiqueta, fase) => {
   // Decisiones del registro (el lector no es evaluador): la firma humana de la selección la comprueba el workflow,
   // no la declara un agente.
   const decisiones = Array.isArray(o.decisiones) ? o.decisiones.filter(esObjeto) : []
-  const seleccionFirmada = decisiones.some((x) => /seleccionad/i.test(String(x.decision || '')) && String(x.human_signoff || '').trim() !== '')
   return { ok: true, estado: o.status || null, titulo: typeof o.title === 'string' ? o.title : null, efectivas: ef, bloqueadas,
-    seleccion_firmada: seleccionFirmada }
+    seleccion_firmada: seleccionFirmada(decisiones) }
+}
+// La selección está firmada si la ÚLTIMA decisión firmada por una persona sobre la selección la confirma: las
+// propuestas sin firma no cuentan, y "no seleccionada", "deseleccionada" o una retirada posterior la anulan.
+const SOBRE_SELECCION_RE = /selecci/i
+const SELECCION_NEGADA_RE = /\b(no|sin)\s+(fue\s+|es\s+|queda\s+)?selecci|deselecci|\b(retir|anul|revoc|rechaz|descart|exclu|desestim)/i
+const seleccionFirmada = (decisiones) => {
+  const ordenadas = decisiones.every((x) => Number.isInteger(x.id)) ? [...decisiones].sort((a, b) => a.id - b.id) : decisiones
+  let firmada = false
+  for (const x of ordenadas) {
+    const texto = String(x.decision || '')
+    if (!SOBRE_SELECCION_RE.test(texto) || String(x.human_signoff || '').trim() === '') continue
+    firmada = !SELECCION_NEGADA_RE.test(texto)
+  }
+  return firmada
 }
 
 // Verificación de citas: el workflow decide si es completa con la salida literal de nutria verificar.

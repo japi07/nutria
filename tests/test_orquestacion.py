@@ -879,10 +879,27 @@ DOCTOR_SIN_RED = {"orden": "nutria --agente orquestador --json doctor", "codigo_
     "claves": {"NCBI_API_KEY": False, "OPENALEX_API_KEY": False, "LENS_API_TOKEN": False}})}
 
 
-def _regla_paso0(project, capsys, fecha: str = "2026-11-04", ficheros: str | None = None) -> dict:
+def _doctor_objetos(estados: dict[str, str], **extra) -> dict:
+    """Salida de `nutria --json doctor` con el formato de objetos de la rama de clientes y red (P4): cada fuente es
+    {"estado", "url", "esencial", "detalle"?}, más "offline", "fallos_esenciales" y "resultado"."""
+    red = {}
+    for nombre, estado in estados.items():
+        red[nombre] = {"estado": estado, "url": f"https://{nombre.split()[0].lower()}.example/x", "esencial": nombre != "OpenAlex"}
+        if estado == "bloqueado":
+            red[nombre]["detalle"] = "ProxyError: Tunnel connection failed: 403 Forbidden"
+    fallos = [n for n, e in estados.items() if red[n]["esencial"] and e not in ("ok", "no_comprobado")]
+    datos = {"version": "0.1.0", "config": True, "base_datos": True, "offline": False,
+             "claves": {"NCBI_API_KEY": False, "OPENALEX_API_KEY": False, "LENS_API_TOKEN": False}, "red": red,
+             "webfetch": {"eur-lex.europa.eu": {"estado": "bloqueado", "permitido_en_settings": None}},
+             "hook": {"estado": "ok", "esencial": True}, "r": {"estado": "no_instalado"},
+             "fallos_esenciales": fallos, "resultado": "fallos_esenciales" if fallos else "ok", **extra}
+    return {"orden": "nutria --agente orquestador --json doctor", "codigo_salida": 3 if fallos else 0, "salida": json.dumps(datos)}
+
+
+def _regla_paso0(project, capsys, fecha: str = "2026-11-04", ficheros: str | None = None, doctor: dict | None = None) -> dict:
     return {"label": "paso0", "respuesta": {
-        "doctor": DOCTOR_SIN_RED,
-        "estado": _salida(capsys, "--agente", "orquestador", "--json", "estado"),
+        "doctor": doctor or DOCTOR_SIN_RED,
+        "estado": _salida(capsys, "--agente", "orquestador", "estado"),
         "fecha": {"orden": "date -u +%F", "codigo_salida": 0, "salida": f"{fecha}\n"},
         "ficheros": {"orden": "ls -1 research/revisiones research/oportunidades research/hipotesis research/planes", "codigo_salida": 0,
                      "salida": _ls(project) if ficheros is None else ficheros}}}
@@ -1394,9 +1411,10 @@ def test_p8_mision1_paso0_en_cada_fase(args, project, capsys):  # D2-15
     out = run_workflow("mision-1-auto", args, [_regla_paso0(project, capsys)])
     paso0 = out["llamadas"][0]
     assert paso0["label"] == "paso0" and out["fases"][0] == "Preparación"
-    for orden in ("nutria --agente orquestador --json doctor", "nutria --agente orquestador --json estado", "date -u +%F",
+    for orden in ("nutria --agente orquestador --json doctor", "2) nutria --agente orquestador estado;", "date -u +%F",
                   "ls -1 research/revisiones research/oportunidades research/hipotesis research/planes"):
         assert orden in paso0["prompt"], orden
+    assert "--json estado" not in paso0["prompt"]  # el registro, en texto: una línea por oportunidad (compacto)
     assert out["resultado"]["preparacion"]["fuentes_no_accesibles"] == ["PubMed (NCBI E-utilities): BLOQUEADO por proxy/política de red"]
     assert out["resultado"]["fecha"] == "2026-11-04"  # la del sistema (paso 0) si no se indica args.fecha
 
@@ -1407,6 +1425,75 @@ def test_p8_mision1_sin_registro_no_continua_la_fase_oportunidades():  # D2-15
                        [{"label": "paso0", "respuesta": None}])
     assert labels(out) == ["paso0"]
     assert out["resultado"]["detenida_en"] == "Preparación"
+
+
+@requires_node
+@pytest.mark.parametrize("doctor,no_accesibles,aviso", [
+    # formato de cadenas (esta rama)
+    (DOCTOR_SIN_RED, ["PubMed (NCBI E-utilities): BLOQUEADO por proxy/política de red"], None),
+    # formato de objetos (rama de clientes y red, P4): todas las fuentes responden
+    (_doctor_objetos({"PubMed (NCBI E-utilities)": "ok", "Europe PMC": "ok", "Crossref": "ok"}), [], None),
+    # formato de objetos con fuentes bloqueadas, sin clave y modo offline
+    (_doctor_objetos({"PubMed (NCBI E-utilities)": "ok", "Crossref": "bloqueado", "OpenAlex": "sin_clave"}),
+     ["Crossref: BLOQUEADO por proxy/política de red", "OpenAlex: sin clave (no se comprueba)"], "fallan comprobaciones esenciales (Crossref)"),
+    (_doctor_objetos({"PubMed (NCBI E-utilities)": "no_comprobado"}, offline=True),
+     ["PubMed (NCBI E-utilities): no comprobado (modo offline: solo la caché)"], "modo offline"),
+], ids=["cadenas", "objetos-ok", "objetos-bloqueados", "objetos-offline"])
+def test_p8_mision1_paso0_acepta_los_dos_formatos_de_doctor(doctor, no_accesibles, aviso, project, capsys):  # D2-15 (integración con P4)
+    out = run_workflow("mision-1-auto", {"fase": "mapa"}, [_regla_paso0(project, capsys, doctor=doctor)])
+    preparacion = out["resultado"]["preparacion"]
+    assert preparacion["fuentes_no_accesibles"] == no_accesibles
+    textos = [*out["logs"], *(c["prompt"] for c in out["llamadas"])]
+    assert not any("[object Object]" in t for t in textos)
+    mapa = call(out, "M1a:fisiologia-bioquimica")["prompt"]
+    if no_accesibles:
+        assert "Fuentes no accesibles según nutria doctor: " + "; ".join(no_accesibles) in mapa
+    else:
+        assert "Fuentes no accesibles" not in mapa
+    if aviso:
+        assert any(aviso in a for a in preparacion["avisos"]), preparacion["avisos"]
+
+
+@requires_node
+def test_p8_mision1_paso0_estado_compacto_y_comprobado(project, capsys):  # D2-15 (escala del paso 0)
+    _registrar_oportunidades(project, capsys, 24)
+    texto = _salida(capsys, "--agente", "orquestador", "estado")
+    en_json = _salida(capsys, "--agente", "orquestador", "--json", "estado")
+    assert len(texto["salida"]) * 10 < len(en_json["salida"])  # una línea por oportunidad frente a todo su "data"
+    base = _ejemplo("oportunidad_ejemplo")["titulo"]
+    gen = {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp(f"{base} (24)"), _opp("Oportunidad nueva")]}}
+    args = {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}
+    reglas = [_regla_paso0(project, capsys), gen, *_reglas_novedad(), {"label": "registro:1", "respuesta": {"id": "O-0025"}}]
+    out = run_workflow("mision-1-auto", args, reglas)
+    assert out["resultado"]["preparacion"]["oportunidades_registradas"] == 24
+    assert {"titulo": f"{base} (24)", "motivo": "ya registrada (O-0024)"} in out["resultado"]["no_registradas"]
+    # una salida recortada (falta la última línea) no se acepta: la fase no continúa (falla en cerrado)
+    recortada = {**texto, "salida": "\n".join(texto["salida"].rstrip("\n").split("\n")[:-1]) + "\n"}
+    errores = {}
+    for caso, salida_mala in (("recortada", recortada), ("json", en_json), ("codigo", {**texto, "codigo_salida": 1})):
+        paso0 = _regla_paso0(project, capsys)
+        paso0["respuesta"]["estado"] = salida_mala
+        detenida = run_workflow("mision-1-auto", args, [paso0, *reglas[1:]])
+        assert labels(detenida) == ["paso0"], caso
+        assert detenida["resultado"]["detenida_en"] == "Preparación", caso
+        errores[caso] = detenida["resultado"]["error"]
+    assert "resume 24 oportunidad(es) y lista 23: salida recortada o incompleta" in errores["recortada"]
+    assert 'falta la línea "Oportunidades:"' in errores["json"]
+    assert "terminó con código 1" in errores["codigo"]
+
+
+@requires_node
+@pytest.mark.parametrize("ficheros", [
+    "/home/ana/nutria/research/oportunidades:\nM1_2026-11-04_oportunidad-a.json\n",  # cabecera con ruta absoluta
+    "research/oportunidades:\nM1_2026-11-04_oportunidad-a.json  otro.json  tercero.json\n",  # nombres en columnas (sin -1)
+    "research/otra-carpeta:\nM1_2026-11-04_oportunidad-a.json\n\nresearch/oportunidades:\nx.json\n",  # cabecera no reconocida
+    "ls: cannot access 'research/planes': No such file or directory\nM1_2026-11-04_oportunidad-a.json\n",  # sin cabecera
+], ids=["ruta-absoluta", "columnas", "cabecera-desconocida", "sin-cabecera"])
+def test_p8_mision1_ls_falla_en_cerrado(ficheros, project, capsys):  # D2-15: no se elige un nombre que ya existe
+    reglas = [_regla_paso0(project, capsys, ficheros=ficheros),
+              {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}}, *_reglas_novedad(), *_registro_secuencial(1)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a-2.json" in call(out, "registro:1")["prompt"]
 
 
 @requires_node
@@ -1888,6 +1975,35 @@ def test_p8_mision1_firma_de_la_seleccion_segun_el_registro(project, capsys):  #
     res = {p["id"]: p for p in out["resultado"]["planes"]}
     assert res["O-0001"]["seleccion_firmada"] is True and res["O-0002"]["seleccion_firmada"] is False
     assert any("Selección sin firma humana en el registro: los planes de O-0002 son provisionales" in m for m in out["logs"])
+
+
+def _decision(n: int, texto: str, firma: str | None) -> dict:
+    return {"id": n, "ts": f"2026-11-0{n}T10:00:00+00:00", "entity_id": "O-0001", "decision": texto, "rationale": "m",
+            "decided_by": "persona" if firma else "director-cientifico", "human_signoff": firma}
+
+
+@requires_node
+@pytest.mark.parametrize("decisiones,firmada", [
+    ([_decision(1, "seleccionada M1", None)], False),  # una propuesta sin firma no es la selección
+    ([_decision(1, "propuesta top-3 M1", None), _decision(2, "seleccionada M1", "Ana")], True),
+    ([_decision(1, "no seleccionada M1 (se descarta)", "Ana")], False),
+    ([_decision(1, "deseleccionada", "Ana")], False),
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana")], False),  # la última manda
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana"), _decision(3, "seleccionada de nuevo", "Luis")], True),
+    ([_decision(2, "selección retirada", "Ana"), _decision(1, "seleccionada M1", "Ana")], False),  # por orden de registro (id)
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "no seleccionada (propuesta)", None)], True),  # sin firma no anula
+], ids=["sin-firma", "firmada", "negada", "deseleccionada", "retirada", "reseleccionada", "orden-por-id", "retirada-sin-firma"])
+def test_p8_mision1_firma_de_la_seleccion_orden_y_negacion(decisiones, firmada, project, capsys):  # D3-3 (selección firmada)
+    _registrar_oportunidades(project, capsys, 1)
+    salida = _ver(capsys, "O-0001")
+    vista = json.loads(salida["salida"])
+    vista["decisiones"] = decisiones
+    reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": {**salida, "salida": json.dumps(vista)}}]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)
+    assert out["resultado"]["planes"][0]["seleccion_firmada"] is firmada
+    prompt = call(out, "plan:O-0001")["prompt"]
+    assert ("la selección de O-0001 tiene firma humana" in prompt) is firmada
+    assert ("la selección de O-0001 NO tiene firma humana: el plan es provisional" in prompt) is not firmada
 
 
 @requires_node
