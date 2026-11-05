@@ -171,15 +171,20 @@ MIGRATIONS = {
     "gates": [("human_signoff", "TEXT"), ("signed_at", "TEXT")],
     "extractions": [("forage_pct_dm", "REAL"), ("ndf_pct_dm", "REAL"), ("starch_pct_dm", "REAL"),
                     ("fat_pct_dm", "REAL"), ("cp_pct_dm", "REAL"), ("dcad_meq_kg_dm", "REAL"),
-                    ("ev_ctrl", "REAL"), ("ev_trt", "REAL"), ("not_reported", "TEXT"),
-                    ("rdp_pct_cp", "REAL"), ("rdp_pct_dm", "REAL"), ("time_reference", "TEXT"),
+                    ("ev_ctrl", "REAL"), ("ev_trt", "REAL"), ("not_reported", "TEXT")],
+}
+# PDR, ventanas respecto al hito y definición de caso, doble extracción (comparación y pareja de registros), contexto
+# biológico de las afirmaciones y clasificación regulatoria de las oportunidades.
+for _table, _columns in {
+    "extractions": [("rdp_pct_cp", "REAL"), ("rdp_pct_dm", "REAL"), ("time_reference", "TEXT"),
                     ("window_start_days", "REAL"), ("window_end_days", "REAL"), ("case_definition", "TEXT"),
                     ("supp_start_days", "REAL"), ("supp_end_days", "REAL"), ("comparison_id", "TEXT"),
                     ("pair_a", "INTEGER"), ("pair_b", "INTEGER")],
     "claims": [("context", "TEXT")],
     "opportunities": [("functional_group", "TEXT"), ("regulatory_situation", "TEXT"), ("classified_by", "TEXT"),
                       ("classified_at", "TEXT")],
-}
+}.items():
+    MIGRATIONS.setdefault(_table, []).extend(_columns)
 
 OPPORTUNITY_STATUSES = ("propuesta", "en_evaluacion", "priorizada", "bloqueada", "descartada",
                         "en_validacion")
