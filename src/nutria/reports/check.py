@@ -132,20 +132,45 @@ _WORD_UNITS = ("puntos porcentuales", "por ciento", "ppm", "ppb", "pp", "mEq", "
                "kilocaloria", "kilocalorias", "megajulio", "megajulios", "euro", "euros", "céntimo", "céntimos",
                "centimo", "centimos", "dólar", "dólares", "dolar", "dolares", "gram", "grams", "kilogram", "kilograms",
                "liter", "liters", "litre", "litres", "tonne", "tonnes", "ton", "tons", "percent")
-_SYMBOL_UNITS = ("%", "‰", "°C", "€")
+_SYMBOL_UNITS = ("%", "‰", "°", "€", "£")
+_WORD_UNITS_RE = "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True))
+# Cifra seguida de su unidad, con cualquier espacio en medio (también un salto de línea: la comprobación se hace sobre
+# el texto del párrafo); «ºC» (indicador ordinal, que NFKC convierte en «oC») cuenta como grados; la moneda delante de
+# la cifra («€15», «US$ 2») también.
 UNIT_RE = re.compile(
-    _NUM + r"\s?(?:(?:" + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True))
-    + r")(?![^\W\d_])|(?:" + "|".join(re.escape(u) for u in _SYMBOL_UNITS) + "))",
+    r"(?:" + _NUM + r"\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:"
+    + "|".join(re.escape(u) for u in _SYMBOL_UNITS) + r")|o\s?C(?![^\W\d_]))"
+    + r"|(?<![\w$€£])(?:US\$|\$|€|£)\s*\d)",
     re.IGNORECASE)
-_NAME = r"[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúñü'\-]+"
-_COAUTHORS = r"(?:et\s+al\.?|[ye]\s+cols?\.?|y\s+colaboradores)"
+# Cabecera de una columna de tabla con unidades: «Leche (kg/d)», «Dosis, g/d», «Grasa %», «Coste €/vaca».
+_HEADER_UNIT_RE = re.compile(
+    r"(?:(?<![^\W\d_])(?:" + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True) if len(u) > 1)
+    + r")(?![^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\))", re.IGNORECASE)
+_MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
+           r"january|february|march|april|may|june|july|august|september|october|november|december)")
+# Apellido: mayúscula y al menos otra letra (con apóstrofos o guiones: «O'Neill», «García-López»); no un mes.
+_NAME = rf"(?!(?i:{_MONTHS})\b)[A-ZÀ-ÖØ-Þ][^\W\d_]+(?:['’\-][^\W\d_]+)*"
+_COAUTHORS = r"(?:et\s+al\.?|[ye]\s+cols?\.?|y\s+colaboradores|and\s+colleagues)"
+_AUTHORS = rf"(?:\s*,\s*{_NAME})*(?:\s+(?:{_COAUTHORS}|(?:y|e|and|&)\s+{_NAME}))?"
+_YEAR = r"(?P<year>(?:19|20)\d{2})[a-z]?"
+_FIRST = rf"(?P<name>{_NAME})"
 AUTHOR_YEAR_RES = (
-    # (Smith et al., 2019; Jones, 2017), (Smith y col. 2019), (Smith y Jones, 2019)
-    re.compile(rf"\(\s*{_NAME}(?:\s+(?:{_COAUTHORS}|y|and|&)\s*(?:{_NAME})?)?,?\s+(?:19|20)\d{{2}}[a-z]?\s*[;),]"),
-    # Smith et al. (2019), Smith y col. (2019), Smith y Jones (2019)
-    re.compile(rf"\b{_NAME}\s+(?:{_COAUTHORS}|y\s+{_NAME}|and\s+{_NAME}|&\s+{_NAME})\s*,?\s*\(\s*(?:19|20)\d{{2}}[a-z]?"
-               rf"\s*\)"),
+    # (Smith et al., 2019; ...), [Smith y col. 2019], (véase Smith y Jones, 2019), (Smith, Jones y Brown, 2019)
+    re.compile(rf"[(\[]\s*(?:(?:véase|vease|ver|see|cf\.?|p\.\s?ej\.,?|e\.\s?g\.,?)\s+)?{_FIRST}{_AUTHORS}\s*,?\s+"
+               rf"{_YEAR}\s*(?=[;),\]])"),
+    # las siguientes de una lista entre paréntesis: (...; Jones, 2017)
+    re.compile(rf";\s*{_FIRST}{_AUTHORS}\s*,?\s+{_YEAR}\s*(?=[;)\]])"),
+    # Smith (2019), Smith et al. (2019), Smith y col. (2019), Smith y Jones (2019), Smith, Jones y Brown (2019)
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s*[(\[]\s*{_YEAR}\s*[)\]]"),
+    # Smith et al. 2019, Smith y col., 2019 (sin paréntesis, con coautores)
+    re.compile(rf"(?<![\w'’\-]){_FIRST}\s+{_COAUTHORS}\s*,?\s+{_YEAR}(?![\w/\-–])"),
+    # Smith et al. (sin año): sigue siendo una cita
+    re.compile(rf"(?<![\w'’\-]){_FIRST}\s+et\s+al\b"),
 )
+# En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita.
+_CELL_CITATION_RE = re.compile(rf"^\s*{_FIRST}{_AUTHORS}\s*,?\s*[(\[]?\s*{_YEAR}\s*[)\]]?\s*$")
+# Cita numérica «[1]» (no es una referencia [Rn]); no «[^1]» (nota), «[texto][1]» ni «[1]: url» (enlaces).
+NUMERIC_CITATION_RE = re.compile(r"(?<![\]\w^])\[\s*([1-9]\d{0,2})\s*\](?![(:\[])")
 _RUMINANT_RE = re.compile(
     r"vacun|bovin|vaca|ternero|ternera|novill|buey|toro|ovin|oveja|cordero|caprin|cabra|cabrit|bufal|rumiant|"
     r"ciervo|camel|llama|alpaca|cattle|\bcows?\b|dairy|beef|calf|calves|heifer|steer|\bbulls?\b|sheep|\bewes?\b|"
@@ -792,13 +817,14 @@ def _scan(line: str) -> _Line:
                                    or LABEL_RE.fullmatch(f"[{m.group(1)}]") else m.group(1)), text)
     tokens: list[tuple[str, str, int]] = []
     labels: list[tuple[int, str, str]] = []
-    last_word = last_raw = ""
+    last_word = last_raw = prev_word = ""
     initial = False
     for m in _TOKEN_RE.finditer(text):
         kind, raw = m.lastgroup, m.group(0)
         if kind == "word":
             pieces = _word_pieces(raw)
             tokens += [("word", piece, m.start()) for piece in pieces]
+            prev_word = last_word
             last_word = pieces[-1] if pieces else last_word
             last_raw = raw
             # Una inicial es una mayúscula suelta que no sigue a «/» ni a una cifra («D. Sauvant», no «15 g/d.»).
@@ -807,6 +833,8 @@ def _scan(line: str) -> _Line:
         if kind == "stop" and raw == ".":
             if last_word in _ABBREVIATIONS and (len(last_raw) > 1 or last_raw.islower()):
                 continue   # «et al.», «p. ej.», «art.»: no cierran la frase
+            if last_word in ("col", "cols") and prev_word in ("y", "e"):
+                continue   # «Pérez y col. (2017)»
             if initial:
                 # «D. Sauvant»: no corta la afirmación del Anexo A, pero sí la frase al buscar cifras sin etiqueta.
                 tokens.append(("istop", raw, m.start()))
