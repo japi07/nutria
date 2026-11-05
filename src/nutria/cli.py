@@ -546,8 +546,7 @@ def _comparar_extracciones(args, cfg) -> int:
     else:
         text = (f"Comparación {res['id']} registrada: copias concordantes ({quien}). Extracciones registradas como "
                 f"'doble_concordante': {res['ids']}")
-    if res.get("aviso"):
-        text += f"\nAVISO: {res['aviso']}"
+    text += "".join(f"\nAVISO: {w}" for w in res.get("avisos") or [])
     _emit(args, res, text)
     return 1 if diffs else 0
 

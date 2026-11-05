@@ -1241,6 +1241,20 @@ def _pick_copies(conn: sqlite3.Connection, sha_a: str, sha_b: str) -> tuple[sqli
                         "distintos que trabajen de forma independiente")
 
 
+def _simple_extractions_of(conn: sqlite3.Connection, records: list[dict]) -> list[int]:
+    """Extracciones simples ya registradas (visibles para cualquiera) de las mismas fuentes y variables que unas copias
+    de doble extracción: si una copia se hizo a partir de ellas, no es independiente."""
+    wanted: dict[str, set[str]] = {}
+    for rec in records:
+        wanted.setdefault(str(rec.get("fuente")), set()).add(plain_text(rec.get("variable")))
+    out = []
+    for row in conn.execute("SELECT id, source_id, outcome FROM extractions WHERE check_status = 'simple' ORDER BY id"):
+        aliases = _source_aliases(conn, row["source_id"])
+        if any(src in aliases and plain_text(row["outcome"]) in outcomes for src, outcomes in wanted.items()):
+            out.append(int(row["id"]))
+    return out
+
+
 def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: str, actor: str | None = None,
                                    file_a: str | None = None, file_b: str | None = None) -> dict:
     """Registra la comparación de dos copias depositadas. Sin discrepancias, registra los registros como
@@ -1281,16 +1295,24 @@ def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: 
                 clean = {k: v for k, v in rec.items() if k not in EXTRACTION_SYSTEM_FIELDS}
                 ids.append(_insert_double_extracted(conn, clean, actor, "doble_concordante", comp_id, (i, i),
                                                     extractor, who))
-        warning = ("las dos copias son idénticas byte a byte: compruébese que se extrajeron de forma independiente"
-                   if sha_a == sha_b else None)
+        warnings = []
+        if sha_a == sha_b:
+            warnings.append("las dos copias son idénticas byte a byte: compruébese que se extrajeron de forma "
+                            "independiente")
+        simple = _simple_extractions_of(conn, records_a + records_b)
+        if simple:
+            warnings.append("ya había extracciones simples registradas de las mismas fuentes y variables ("
+                            + ", ".join(f"#{i}" for i in simple[:10]) + "), visibles en el registro: compruébese que "
+                            "las copias no se hicieron a partir de ellas")
+        warning = "; ".join(warnings) or None
         _log_decision(conn, comp_id, f"doble extracción comparada: {result}",
                       f"A: {file_a or copy_a['path']} ({copy_a['deposited_by']}, sha256 {sha_a[:12]}); "
                       f"B: {file_b or copy_b['path']} ({copy_b['deposited_by']}, sha256 {sha_b[:12]}); "
                       f"{len(diffs)} discrepancia(s); registradas: {ids or 'ninguna'}"
-                      + (f"; AVISO: {warning}" if warning else ""), actor)
+                      + "".join(f"; AVISO: {w}" for w in warnings), actor)
         return {"id": comp_id, "resultado": result, "discrepancias": diffs, "ids": ids,
                 "extractor_a": copy_a["deposited_by"], "extractor_b": copy_b["deposited_by"],
-                "sha256_a": sha_a, "sha256_b": sha_b, "aviso": warning}
+                "sha256_a": sha_a, "sha256_b": sha_b, "aviso": warning, "avisos": warnings}
 
 
 def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) -> tuple[dict, str, list[str]]:
@@ -1618,6 +1640,11 @@ def classify_opportunity(conn: sqlite3.Connection, opp_id: str, route: str, reas
     if not (reason or "").strip():
         raise RegistryError("La clasificación necesita un motivo (resultado del triage regulatorio)")
     signed = human_signoff.strip() if human_signoff and human_signoff.strip() else None
+    # Regla 12 en el propio registro: si el registro comprueba que una firma humana no la registra un agente
+    # (`require_human_signature`, como en las compuertas), la comprobación se aplica también al clasificar con firma.
+    check_signature = globals().get("require_human_signature")
+    if signed and callable(check_signature):
+        check_signature(signed)
     role = current_actor(actor).strip()
     if not signed and route not in OUT_OF_SCOPE_ROUTES and role != CLASSIFICATION_OWNER:
         raise RegistryError(

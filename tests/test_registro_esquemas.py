@@ -295,6 +295,31 @@ def test_doble_extraccion_exige_dos_copias_independientes_y_depositadas(project,
     assert db.list_extraction_comparisons(_conn()) == []
 
 
+def test_comparacion_avisa_de_copias_identicas_y_de_extracciones_simples_previas(project, capsys):
+    """Revisión de D2-12 (trazabilidad): si una de las copias pudo hacerse a partir de lo ya visible (la otra copia
+    byte a byte o una extracción simple de la misma fuente y variable registrada con `agregar`), la comparación lo
+    avisa y lo deja en la decisión registrada."""
+    leche = _records(_source(1))[:1]
+    assert main(["extraccion", "agregar", "--datos", _write(project / "simple.json", leche)]) == 0
+    a = _deposit(project, "s_A.json", leche, "extractor-s-A", indent=2)
+    b = _deposit(project, "s_B.json", leche, "extractor-s-B", indent=2)      # mismos bytes que A
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 0
+    out = capsys.readouterr().out
+    assert "AVISO: las dos copias son idénticas byte a byte" in out
+    assert "AVISO: ya había extracciones simples registradas de las mismas fuentes y variables (#1)" in out
+    rationale = db.list_decisions(_conn(), "CE-0001")[-1]["rationale"]
+    assert "idénticas byte a byte" in rationale and "extracciones simples" in rationale
+    # sin extracciones simples previas ni bytes idénticos, sin avisos
+    otra = _records(_source(2))[:1]
+    a = _deposit(project, "t_A.json", otra, "extractor-t-A", indent=1)
+    b = _deposit(project, "t_B.json", otra, "extractor-t-B", indent=3)
+    capsys.readouterr()
+    assert main(["--json", "extraccion", "comparar", a, b, "--registrar"]) == 0
+    res = json.loads(capsys.readouterr().out)
+    assert res["avisos"] == [] and res["aviso"] is None
+
+
 def test_un_extractor_con_dos_grafias_no_hace_las_dos_copias(project, capsys):
     """La identidad se compara sin mayúsculas, tildes ni signos: 'Extractor_Datos A' es 'extractor-datos-A'."""
     one, two = _source(1), _source(2)
@@ -1114,6 +1139,27 @@ def test_clasificar_fuera_de_alcance_bloquea_y_salir_exige_firma(project, capsys
                  SIGN, "Ana"]) == 0
     assert db.effective_gates(_conn(), "O-0001", GATES)["regulatoria"] == "bloqueada"
     assert db.list_decisions(_conn(), "O-0001")[-1]["human_signoff"] == "Ana"
+
+
+def test_clasificar_con_firma_aplica_la_comprobacion_de_firma_del_registro(project, monkeypatch):
+    """Revisión de D5-12 (regla 12 en el propio registro): si el registro comprueba que una firma humana no la registra
+    un agente (`db.require_human_signature`, como en las compuertas), clasificar con firma pasa por esa comprobación,
+    también por la API, sin la CLI."""
+    assert db.add_opportunity(_conn(), _example("oportunidad_ejemplo")) == "O-0001"
+    llamadas = []
+
+    def comprobar(signed):
+        llamadas.append(signed)
+        raise db.RegistryError("Firma humana rechazada (regla 12): prueba")
+
+    monkeypatch.setattr(db, "require_human_signature", comprobar, raising=False)
+    with pytest.raises(db.RegistryError, match="Firma humana rechazada"):
+        db.classify_opportunity(_conn(), "O-0001", "fuera_de_alcance_biocida", "Acción biocida", human_signoff="Ana")
+    assert llamadas == ["Ana"] and db.get_opportunity(_conn(), "O-0001")["regulatory_route"] != "fuera_de_alcance_biocida"
+    # sin firma no se comprueba nada (la propuesta de un agente sigue su camino)
+    db.classify_opportunity(_conn(), "O-0001", "fuera_de_alcance_biocida", "Acción biocida", actor="critico-red-team")
+    assert llamadas == ["Ana"]
+    assert db.get_opportunity(_conn(), "O-0001")["regulatory_route"] == "fuera_de_alcance_biocida"
 
 
 def test_reclasificar_reabre_la_compuerta_regulatoria_superada(project, capsys):
