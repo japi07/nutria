@@ -1413,12 +1413,13 @@ def translation_of(title: str | None, other_title: str | None, *, year=None, oth
 
 
 def _consistent(rec: Record, other: Record, doi: str) -> bool:
-    """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI, no.
-    Con otro título solo si es PubMed, declara ese mismo DOI y su título es una traducción ("[...]", ver
-    `translation_of`) con el mismo primer autor y año (±1)."""
+    """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI (que no
+    sea el que da `rec`: el DOI principal de un DOI alias), no. Con otro título solo si es PubMed, declara ese mismo
+    DOI y su título es una traducción ("[...]", ver `translation_of`) con el mismo primer autor y año (±1)."""
     norm = normalize_doi(doi)
-    if other.doi and other.doi != norm:
+    if other.doi and other.doi not in (norm, normalize_doi(rec.doi)):
         return False
+    norm = other.doi or norm
     if not rec.title or not other.title or titles_same_work(rec.title, other.title):
         return True
     if other.doi != norm or other.source != "pubmed" or not rec.authors or not other.authors:
@@ -1536,8 +1537,9 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
         if oa_rec is not None and not _consistent(rec, oa_rec, doi):
             # OpenAlex puede mezclar obras: no se toman su PMID, sus identificadores ni su "no retractado"; un
             # "retractado" sí cuenta (prudencia).
-            notes.append(f"OpenAlex da para este DOI otro título («{(oa_rec.title or '')[:80]}»): no se toman su "
-                         "PMID ni sus identificadores")
+            what = (f"otro DOI ({oa_rec.doi})" if oa_rec.doi and oa_rec.doi not in (normalize_doi(doi), rec.doi)
+                    else f"otro título («{(oa_rec.title or '')[:80]}»)")
+            notes.append(f"OpenAlex da para este DOI {what}: no se toman su PMID ni sus identificadores")
             if oa_rec.retracted:
                 checked.append("openalex")
                 retracted = True
@@ -1592,7 +1594,11 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
                           authors=rec.authors[:5], retracted=retracted, retraction_checked_via=checked,
                           source=rec.source, registration_agency=agency, license=license_, record=full)
     extra = rec.extra or {}
-    titles = [rec.title] + [f"{rec.title}: {s}" for s in extra.get("subtitles") or [] if rec.title]
+    # El título de Crossref va sin el subtítulo: la cita puede omitirlo, salvo si el subtítulo distingue el trabajo
+    # dentro de una serie ("Part 2", "I. ...", cifras, negaciones; ver `_main_title`).
+    subtitles = [_clean_meta(s) for s in extra.get("subtitles") or [] if _clean_meta(s)]
+    distinguishing = any(_SERIES_START_RE.match(s) or _critical_words(_title_tokens(s)) for s in subtitles)
+    titles = ([] if distinguishing else [rec.title]) + [f"{rec.title}: {s}" for s in subtitles if rec.title]
     titles += list(extra.get("alternative_titles") or [])
     journals = [rec.journal] + list(extra.get("container_titles") or []) + list(extra.get("short_container_titles") or [])
     for other in (oa_rec, pm_rec):

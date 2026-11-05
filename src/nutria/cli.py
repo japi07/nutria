@@ -323,8 +323,13 @@ def cmd_fuente(args, cfg) -> int:
                      f"(PMID confirmado: {rec.get('pmid') or 'ninguno'}).")
     requested = f"{ver.kind}:{ver.identifier}"
     if source_id != requested:
-        lines.append(f"  AVISO: la fuente ya estaba registrada como {source_id} (mismo trabajo): usa {source_id}, no "
-                     f"{requested}, en afirmaciones y extracciones.")
+        if not any(c.get("accion") == "alta" and c.get("id") == source_id for c in changes):
+            where = f"la fuente ya estaba registrada como {source_id} (mismo trabajo)"
+        elif source_id.startswith("doi:"):     # alta nueva: se nombra por el DOI que da la verificación
+            where = f"la fuente se registra como {source_id} (por el DOI que da la verificación)"
+        else:
+            where = f"la fuente se registra como {source_id} (el identificador que da la verificación)"
+        lines.append(f"  AVISO: {where}: usa {source_id}, no {requested}, en afirmaciones y extracciones.")
     lines += _change_lines(changes)
     _emit(args, {"id": source_id, "registro": rec, "cambios": changes}, "\n".join(lines))
     return 0
