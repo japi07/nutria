@@ -52,7 +52,9 @@ Sin red (`check_report`):
   no. No se detecta «Autor Año» sin paréntesis en prosa (sin «según», «véase» ni verbo de cita) ni una cita tras una
   entradilla sin palabra de cita («(en García, 2018)», para no leer «(en España, 2019)» como cita). Son error
   siempre las citas numéricas («[1]», «[3, 4]», «[1-3]», «(ref. 3)»; no los intervalos con decimales, con unidad
-  o tras «IC», «rango», «escala» o «%») y las referencias mal escritas («(R1)», «(R1, R2)», «{R1}», «según R1»).
+  o tras «IC», «rango», «escala» o «%») y las referencias mal escritas («(R1)», «(R1, R2)», «{R1}»); una referencia
+  sin corchetes tras una fórmula de cita («según R1», «véase R2») es error en los informes y en revisado o final, y
+  aviso en otros documentos en borrador (una crítica o una nota de verificación hablan de las referencias).
   Una cita numérica entre paréntesis al final de la frase («... la cetosis (1).», salvo tras «ecuación», «tabla»,
   «dieta»...; si la línea tiene otros números entre paréntesis, «leve (1) o grave (2).», puede ser una enumeración:
   aviso) y un número volado tras una palabra («transición¹», «<sup>1</sup>»; no «m²», «R²», «tau²», «10⁶» ni
@@ -81,7 +83,8 @@ Sin red (`check_report`):
   Las filas que no corresponden a ninguna afirmación, las que van antes de la cabecera y las que no tienen
   referencia son aviso en borrador y error en revisado o final (las negativas, siempre). Es una fila la línea que
   empieza por «|» o la que GFM muestra como fila de la tabla; la prosa con una «|» en medio, separada de la tabla, es
-  texto del informe (y una valoración negativa escrita en esa prosa, «R1 no respalda...», es error). En los informes
+  texto del informe (y una valoración negativa escrita en la prosa del anexo, «R1 no respalda...», es error, salvo
+  que la tabla ya tenga una fila negativa de esa referencia: entonces es una nota, aviso). En los informes
   y en los documentos con un Anexo A, una tabla con la columna Respaldo fuera del «## Anexo A» (en otra sección,
   bajo «## Anexo A1» o «## Annex A»), o una fila con una referencia y una valoración negativa fuera de él, es error
   siempre: ninguna valoración queda sin leer. En otros documentos (la crítica de red-team-auto con sus veredictos,
@@ -1465,7 +1468,12 @@ def _anaphoric_core(words: list[str]) -> bool:
     if words[0] in _ANAPHORA_FIRST or tuple(words[:2]) in _ANAPHORA_PAIRS:
         return True
     if words[0] in ("segun", "como") and len(words) > 1 and words[1] in _DEMONSTRATIVES:
-        return True       # «Según este ensayo», «Como estos autores»
+        # «Según este ensayo», «Como estos autores» remiten a la frase anterior; si sigue la afirmación («Según este
+        # ensayo la colina aumentó la leche»), se juzga lo que sigue.
+        rest = words[3:]
+        if sum(1 for w in rest if w not in _NON_CONTENT) <= 1:
+            return True
+        return _anaphoric_core(rest)
     if _demonstrative_subject(words):
         return True
 
@@ -2334,9 +2342,12 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             refs = " ".join(f"[R{n}]" for n in re.findall(r"\d+", m.group(0)))
             issues.append(Issue("error", f"Referencia «{m.group(0)}» mal escrita: escribe {refs} (cada una entre "
                                          "corchetes, para que se compruebe)", i + 1))
+        # «según R1» sin corchetes: error en los informes y en revisado o final; en otros borradores (una crítica o una
+        # nota de verificación hablan de las referencias del informe) y en el código, aviso.
         for m in BARE_REF_RE.finditer(scan.text):
-            issues.append(Issue("error", f"Referencia «{m.group(0)}» sin corchetes: escribe [{m.group(1)}] (para que "
-                                         "se compruebe con su entrada de la bibliografía)", i + 1))
+            issues.append(Issue("aviso" if doc.fence[i] else sev_unverified,
+                                f"Referencia «{m.group(0)}» sin corchetes: escribe [{m.group(1)}] (para que se "
+                                "compruebe con su entrada de la bibliografía)", i + 1))
         for _pos, name, raw in scan.labels:
             if raw != f"[{name}]":
                 issues.append(Issue("aviso", f"Etiqueta «{raw}» con formato no canónico: cuenta como [{name}]; "
@@ -2515,9 +2526,17 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                             "Fila del Anexo A sin referencia [Rn] reconocible: no cuenta como respaldo y su texto no "
                             "se comprueba como el del cuerpo" + (" (declara no_respalda o no_verificable)" if negative
                                                               else ""), line_no))
+    # Una valoración negativa escrita como texto en el anexo: error, salvo que la tabla ya tenga una fila negativa de
+    # cada referencia que menciona (una nota que la explica: «R2 no verificable: sin acceso al texto completo»).
+    negative_refs = {ref for r in support.rows if r.value in _NEGATIVE_SUPPORT for ref in r.refs}
     for line_no in support.prose:
-        issues.append(Issue("error", "Valoración de respaldo negativa escrita como texto en el Anexo A: va en su fila "
-                                     "de la tabla (| Ref | Afirmación | Respaldo | Motivo |)", line_no))
+        mentioned = set(re.findall(r"\bR\d+\b", doc.lines[line_no - 1]))
+        if mentioned and mentioned <= negative_refs:
+            issues.append(Issue("aviso", "Valoración de respaldo negativa también escrita como texto en el Anexo A: "
+                                         "cuenta la fila de la tabla", line_no))
+        else:
+            issues.append(Issue("error", "Valoración de respaldo negativa escrita como texto en el Anexo A: va en su "
+                                         "fila de la tabla (| Ref | Afirmación | Respaldo | Motivo |)", line_no))
     if support.header and not support.claim_col:
         issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la columna Afirmación: el respaldo se "
                                         "comprueba por afirmación, no por referencia"))

@@ -1585,8 +1585,9 @@ def test_round2_citation_forms_are_errors_even_in_draft(body, what):
     # D3-4 (ronda 2): formas naturales que pasaban también en la base y en la ronda 1
     assert any(what in e for e in _body_errors(body)), body
     errors = [str(i) for i in _body_issues(body, status="borrador") if i.severity == "error"]
-    # en un borrador, los identificadores solo son error en los informes (aquí, un documento sin ruta: aviso)
-    if what != "Identificador de una fuente":
+    # en un borrador, los identificadores y «según R1» solo son error en los informes (aquí, un documento sin ruta:
+    # aviso; test_round3b_bare_references_are_errors_in_reports_and_warnings_in_other_drafts)
+    if what not in ("Identificador de una fuente", "sin corchetes"):
         assert any(what in e for e in errors), body
 
 
@@ -1720,7 +1721,8 @@ def test_annex_prose_with_a_pipe_is_checked_as_text():
 
 
 @pytest.mark.parametrize("opening", ["Así,", "Por ello,", "Dicho esto,", "Tal como se esperaba,", "Esto es,",
-                                     "Según el ensayo,", "Tal como indica el ensayo,", "Por ello"])
+                                     "Según el ensayo,", "Tal como indica el ensayo,", "Por ello", "Según este ensayo,",
+                                     "Según este ensayo", "Como muestran estos datos,", "Según estos autores,"])
 def test_anaphora_connectors_are_not_remissions(opening):
     # D3-3 (falsos positivos de la ronda 2): un conector inicial seguido de la afirmación completa no remite
     claim = f"{opening} la colina protegida aumentó la producción de leche en vacas en transición"
@@ -1736,6 +1738,10 @@ def test_anaphora_connectors_are_not_remissions(opening):
      "Esto, según el ensayo, aumentó la leche en multíparas"),
     ("La colina aumenta la leche. Así, así lo indica el ensayo [PUB] [R1].", "así lo indica el ensayo"),
     ("La colina aumenta la leche. Así lo indica el ensayo [SUP] [R1].", "Así lo indica el ensayo"),
+    # una entradilla seguida de coma no oculta la remisión que viene detrás
+    ("La colina aumenta la leche. Según el ensayo de campo, esto se confirmó en vacas lecheras multíparas [PUB] [R1].",
+     "Según el ensayo de campo, esto se confirmó en vacas lecheras multíparas"),
+    ("La colina aumenta la leche. Según este ensayo [PUB] [R1].", "Según este ensayo"),
 ])
 def test_remissions_with_a_source_subject_or_any_cited_label(body, row):
     assert any("remite a la frase anterior" in e for e in _body_errors(body, ANNEX + f"\n| R1 | {row} | respalda | x |"))
@@ -1875,3 +1881,38 @@ def test_round3b_font_color_attribute_hides_text_in_section_14(project):
         text = final.replace("| seguridad | no_resuelta |", f"| seguridad | {hidden} |")
         assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path)), \
             hidden
+
+
+def test_round3b_bare_references_are_errors_in_reports_and_warnings_in_other_drafts(tmp_path, project):
+    # «según R1» sin corchetes: error en los informes (también en borrador) y en revisado o final; en una crítica o una
+    # nota de research/revisiones en borrador, aviso (hablan de las referencias del informe), y el hook no la bloquea.
+    body = "Según R1, la dosis del ensayo fue otra [SUP]."
+    report = tmp_path / "research" / "informes" / "nota.md"
+    review = tmp_path / "research" / "revisiones" / "nota.md"
+    assert any("sin corchetes" in e for e in _errors(_draft(body), require_sections=False, path=report))
+    issues = chk.check_report(_draft(body), require_sections=False, path=review)
+    assert any("sin corchetes" in str(i) and i.severity == "aviso" for i in issues)
+    assert not any("sin corchetes" in str(i) and i.severity == "error" for i in issues)
+    final = _draft(body).replace("estado: borrador", "estado: final")
+    assert any("sin corchetes" in e for e in _errors(final, require_sections=False, path=review))
+    hooks = _hook_project(project)
+    note = project / "research" / "revisiones" / "O-0001_critica.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(_draft(body), "utf-8")
+    assert _run_hook(hooks, _payload(note)) is None
+    in_report = _filled_report(project)
+    assert _run_hook(hooks, _payload(in_report)) is None                      # el informe en borrador pasa
+    in_report.write_text(in_report.read_text("utf-8").replace(CLAIM_B, CLAIM_B + "\n\n" + body, 1), "utf-8")
+    decision = _run_hook(hooks, _payload(in_report))
+    assert decision["decision"] == "block" and "sin corchetes" in decision["reason"]
+
+
+def test_round3b_negative_note_in_the_annex_is_a_warning_when_the_table_has_the_row():
+    claim = "La misma dosis redujo el BHB plasmático en el posparto temprano"
+    rows = ANNEX.replace(f"| R2 | {claim} | parcial | otra dosis |", f"| R2 | {claim} | no_verificable | sin resumen |")
+    note = "\n\nR2 no verificable: no hay acceso al texto completo."
+    issues = _body_issues("", rows + note, status="borrador")
+    assert any("también escrita como texto" in str(i) and i.severity == "aviso" for i in issues)
+    assert not any("escrita como texto" in str(i) and i.severity == "error" for i in issues)
+    # sin la fila negativa en la tabla, la valoración escrita como texto es un error (no puede sustituir a la fila)
+    assert any("Valoración de respaldo negativa escrita como texto" in e for e in _body_errors("", ANNEX + note))
