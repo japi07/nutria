@@ -3,10 +3,13 @@
   "problema": "Ejemplo de formato: describe el problema y su carga con fuente [Rn] o etiqueta [DESC].",
   "especie": "vacuno lechero",
   "etapa": "periodo de transición (-21 a +21 días respecto al parto)",
+  "raza": "no_consta",
+  "estado_fisiologico": "vacas multíparas sanas (ejemplo de formato)",
   "mecanismo": "Ejemplo de formato: mecanismo propuesto, incluido el destino digestivo en la especie diana.",
   "candidatos": ["Compuesto X (forma protegida)", "Combinación X + Y"],
   "tipo_producto": "formulacion_protegida",
   "ruta_regulatoria_preliminar": "indeterminada",
+  "situacion": "desconocido",
   "evidencia_resumen": "Ejemplo de formato: síntesis con etiquetas [PUB]/[HIP] y fuentes registradas.",
   "lagunas": ["Destino ruminal del compuesto X [DESC]", "Dosis-respuesta en la especie diana [DESC]"],
   "novedad": {

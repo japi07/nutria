@@ -108,18 +108,13 @@ def _schema(kind: str) -> dict:
 
 
 def _validate(kind: str, data: dict) -> None:
-    import jsonschema
-    validator = jsonschema.Draft202012Validator(_schema(kind))
-    errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+    errors = registry.schema_errors(kind, data)  # esquema JSON + textos informados y específicos ("x-texto")
     if errors:
-        detail = "; ".join(f"{'/'.join(map(str, e.path)) or '(raíz)'}: {e.message}" for e in errors[:8])
-        raise SystemExit(f"JSON no válido para '{kind}': {detail}")
+        raise SystemExit(f"JSON no válido para '{kind}': {'; '.join(errors[:8])}")
     if kind == "extraccion":
-        declared = set(data.get("no_consta") or [])
-        undeclared = [k for k in _schema("extraccion")["required"] if data.get(k) is None and k not in declared]
-        if undeclared:
-            raise SystemExit("Extracción: campos obligatorios a null sin declararlos en 'no_consta': "
-                             + ", ".join(undeclared))
+        problems = registry.extraction_problems(data)
+        if problems:
+            raise SystemExit("Extracción: " + "; ".join(problems))
 
 
 # Clientes HTTP y conexiones abiertos durante la orden en curso: main() los cierra al terminar.
@@ -1240,38 +1235,310 @@ ANALYSIS_COLUMNS = [
     ("dosis_unidad", "dose_unit"), ("dosis_base", "dose_basis"), ("forma_producto", "product_form"),
     ("media_trt", "mean_trt"), ("media_ctrl", "mean_ctrl"), ("disp_trt", "disp_trt"), ("disp_ctrl", "disp_ctrl"),
     ("tipo_disp", "dispersion_type"), ("n_trt", "n_trt"), ("n_ctrl", "n_ctrl"), ("ev_trt", "ev_trt"),
-    ("ev_ctrl", "ev_ctrl"), ("forraje_pct_ms", "forage_pct_dm"), ("fnd_pct_ms", "ndf_pct_dm"),
+    ("ev_ctrl", "ev_ctrl"), ("hito_referencia", "time_reference"), ("ventana_inicio_dias", "window_start_days"),
+    ("ventana_fin_dias", "window_end_days"), ("definicion_caso", "case_definition"),
+    ("suplementacion_inicio_dias", "supp_start_days"), ("suplementacion_fin_dias", "supp_end_days"),
+    ("forraje_pct_ms", "forage_pct_dm"), ("fnd_pct_ms", "ndf_pct_dm"),
     ("almidon_pct_ms", "starch_pct_dm"), ("grasa_pct_ms", "fat_pct_dm"), ("pb_pct_ms", "cp_pct_dm"),
+    ("pdr_pct_pb", "rdp_pct_cp"), ("pdr_pct_ms", "rdp_pct_dm"),
     ("dcad_meq_kg_ms", "dcad_meq_kg_dm"), ("financiacion", "funding"), ("estado_verificacion", "check_status"),
+    ("id_doble_extraccion", "comparison_id"),
 ]
-COMPARE_IGNORED = {"notas", "estado_verificacion", "verificado_por"}
-CONCILIATED = ("doble_concordante", "resuelta")
+# Moderadores numéricos de la dieta basal: columna del CSV de análisis -> columna del registro.
+NUMERIC_MODERATORS = {"forraje_pct_ms": "forage_pct_dm", "fnd_pct_ms": "ndf_pct_dm", "almidon_pct_ms": "starch_pct_dm",
+                      "grasa_pct_ms": "fat_pct_dm", "pb_pct_ms": "cp_pct_dm", "pdr_pct_pb": "rdp_pct_cp",
+                      "pdr_pct_ms": "rdp_pct_dm", "dcad_meq_kg_ms": "dcad_meq_kg_dm"}
+COMPARE_IGNORED = registry.COMPARE_IGNORED
+CONCILIATED = registry.DOUBLE_CHECKED
 
 
-def _same(a, b) -> bool:
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
-        return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(a)), abs(float(b)))
-    return a == b
+def _coincide(valor, consulta: str) -> bool:
+    """Todas las palabras de la consulta aparecen como palabras completas, sin distinguir mayúsculas ni tildes
+    ('ovino' no coincide con 'bovino')."""
+    buscadas, presentes = registry.text_words(consulta), set(registry.text_words(valor))
+    return bool(buscadas) and all(p in presentes for p in buscadas)
+
+
+def _distintos(rows: list[dict], col: str) -> dict[str, dict]:
+    vistos: dict[str, dict] = {}
+    for r in rows:
+        clave = " ".join(registry.text_words(r.get(col))) or "(sin dato)"
+        vistos.setdefault(clave, {"valor": r.get(col) or "(sin dato)", "n": 0})["n"] += 1
+    return vistos
+
+
+def _moderadores_ausentes(row: dict) -> list[str]:
+    return [name for name, col in NUMERIC_MODERATORS.items() if row.get(col) is None]
+
+
+def _estado_efectivo(row: dict, verificadas: set[int], comparaciones: set[str]) -> str:
+    """Estado de doble extracción que respalda el registro: un 'doble_concordante' o 'resuelta' que no salió de una
+    comparación registrada (o cuyos valores ya no son los de su comparación) no se presenta como tal."""
+    status = row["check_status"]
+    if status not in CONCILIATED or row["id"] in verificadas:
+        return status
+    if row.get("comparison_id") in comparaciones:
+        return f"{status}_no_coincide_con_su_comparacion"
+    return f"{status}_sin_comparacion_registrada"
+
+
+def _estado_doble(row: dict, verificadas: set[int], comparaciones: set[str] = frozenset()) -> str:
+    status = row["check_status"]
+    if status in CONCILIATED and row["id"] not in verificadas:
+        if row.get("comparison_id") in comparaciones:
+            return f"{status} declarado, pero la fila NO coincide con su comparación {row['comparison_id']} (no cuenta)"
+        return f"{status} declarado SIN comparación registrada (no cuenta)"
+    return f"{status} ({row['comparison_id']})" if row.get("comparison_id") else status
+
+
+def _avisos_incidencia(rows: list[dict]) -> tuple[list[str], dict]:
+    """Avisa si una variable mezcla ventanas de observación (respecto al hito) o, en las incidencias (con eventos o
+    expresadas como proporción), si mezcla definiciones de caso o le faltan la definición o la ventana."""
+    avisos: list[str] = []
+    detalle: dict[str, dict] = {}
+    por_variable: dict[str, list[dict]] = {}
+    for r in rows:
+        por_variable.setdefault(r["outcome"], []).append(r)
+    for variable, todas in por_variable.items():
+        filas = [r for r in todas if registry.is_incidence(lambda k, r=r: r.get(registry.EXTRACTION_FIELDS[k]))]
+        ventanas = sorted({(" ".join(registry.text_words(r.get("time_reference"))), float(r["window_start_days"]),
+                            float(r["window_end_days"])) for r in todas
+                           if r.get("window_start_days") is not None and r.get("window_end_days") is not None})
+        if len(ventanas) > 1:
+            avisos.append(f"AVISO: '{variable}' mezcla {len(ventanas)} ventanas de observación: "
+                          + "; ".join(f"{h or 'hito sin indicar'} {a:g} a {b:g} d" for h, a, b in ventanas[:6]))
+        if not filas:
+            continue
+        sin = [f"E{r['id']}" for r in filas if not r.get("case_definition") or r.get("window_start_days") is None
+               or r.get("window_end_days") is None]
+        definiciones = sorted({" ".join(str(r["case_definition"]).casefold().split()) for r in filas
+                               if r.get("case_definition")})
+        sin_umbral = sorted({d for d in definiciones if not any(ch.isdigit() for ch in d)})
+        detalle[variable] = {"definiciones": definiciones, "ventanas": [list(v) for v in ventanas],
+                             "sin_definicion_o_ventana": sin, "definiciones_sin_umbral_numerico": sin_umbral}
+        if sin:
+            avisos.append(f"AVISO: '{variable}': {len(sin)} registro(s) de incidencia sin definición de caso o sin "
+                          f"ventana respecto al hito ({', '.join(sin[:10])})")
+        if sin_umbral:
+            avisos.append(f"AVISO: '{variable}': definición de caso sin umbral numérico ({' | '.join(sin_umbral[:5])}); "
+                          "compruébese que es un criterio clínico y no un umbral omitido")
+        if len(definiciones) > 1:
+            avisos.append(f"AVISO: '{variable}' mezcla {len(definiciones)} definiciones de caso: "
+                          + " | ".join(definiciones[:5]))
+    return avisos, detalle
+
+
+def _texto_discrepancias(diffs: list[dict]) -> str:
+    return "\n".join(f"registro {d['registro']} | {d['campo']}: A={d['a']!r}  B={d['b']!r}" for d in diffs)
+
+
+COMPARAR_SOLO_REGISTRADA = (
+    "Las copias de una doble extracción solo se comparan con --registrar, en el proyecto: cada extractor deposita la "
+    "suya (`nutria --agente <id> extraccion depositar --datos <fichero>`) y quien concilia ejecuta `nutria --agente "
+    "<id> extraccion comparar A.json B.json --registrar`, que registra la comparación (sha256 de las dos copias, "
+    "extractores y discrepancias) y muestra las discrepancias. nutria no las muestra sin registrarlas, ni dentro ni "
+    "fuera de un proyecto: verlas antes permitiría igualar las copias (o sustituirlas por otras de extractores nuevos) "
+    "y obtener 'doble_concordante' sin conciliación ni rastro.")
+
+
+def _comparar_extracciones(args, cfg) -> int:
+    if not args.registrar:
+        # Ningún par de ficheros (dos borradores, una copia depositada reformateada o por la entrada estándar frente a
+        # un borrador, dos copias depositadas), ni desde otro directorio fuera del proyecto: toda comparación de copias
+        # deja rastro en el registro. En el proyecto, el intento queda en la procedencia; fuera no se escribe nada.
+        if cfg.db_path.is_file():
+            log_event(cfg, "extraccion_comparar_rechazada", inputs={"a": args.a, "b": args.b},
+                      outputs={"motivo": "sin --registrar"}, actor=args.agente)
+        raise registry.RegistryError(COMPARAR_SOLO_REGISTRADA)
+    if "-" in (args.a, args.b):
+        raise SystemExit("--registrar necesita las rutas de los dos ficheros: su sha256 identifica cada copia depositada")
+    path_a, path_b = Path(args.a), Path(args.b)
+    sha_a, sha_b = sha256_file(path_a), sha256_file(path_b)
+    if path_a.resolve() == path_b.resolve() or path_a.samefile(path_b):
+        raise SystemExit("A y B son el mismo fichero: la doble extracción compara dos copias independientes")
+    conn = _conn(cfg)
+    res = registry.register_extraction_comparison(conn, sha_a, sha_b, args.agente, file_a=args.a, file_b=args.b)
+    diffs = res["discrepancias"]
+    log_event(cfg, "extraccion_comparar", inputs={"a": args.a, "b": args.b, "sha256_a": sha_a, "sha256_b": sha_b,
+                                                  "registrar": True},
+              outputs={"comparacion": res["id"], "resultado": res["resultado"], "discrepancias": len(diffs),
+                       "ids": res["ids"]}, actor=args.agente)
+    quien = f"A: {res['extractor_a']}, B: {res['extractor_b']}"
+    if diffs:
+        text = (_texto_discrepancias(diffs) + f"\nComparación {res['id']} registrada con {len(diffs)} discrepancia(s) "
+                f"({quien}); no se registra ninguna extracción. Resuelve cada discrepancia releyendo la fuente y "
+                f"registra la conciliación: nutria extraccion conciliar {res['id']} --datos <conciliacion.json> "
+                "(formato en ejemplos/conciliacion_ejemplo.json).")
+    else:
+        text = (f"Comparación {res['id']} registrada: copias concordantes ({quien}). Extracciones registradas como "
+                f"'doble_concordante': {res['ids']}")
+    text += "".join(f"\nAVISO: {w}" for w in res.get("avisos") or [])
+    _emit(args, res, text)
+    return 1 if diffs else 0
+
+
+def _leer_fichero_json(path: str) -> tuple[object, str]:
+    """Lee un JSON de un fichero (no de la entrada estándar) y devuelve también el sha256 de sus bytes."""
+    if path == "-":
+        raise SystemExit("Esta orden necesita la ruta de un fichero: su sha256 queda en el registro")
+    raw = Path(path).read_bytes()
+    return json.loads(raw.decode("utf-8")), sha256_text(raw)
+
+
+def _depositar_copia(args, cfg, conn) -> int:
+    data, sha = _leer_fichero_json(args.json_file)
+    records = data if isinstance(data, list) else [data]
+    for i, item in enumerate(records, 1):
+        try:
+            _validate("extraccion", item)
+        except SystemExit as exc:
+            raise SystemExit(f"Registro {i} de {args.json_file}: {exc}") from None
+    res = registry.deposit_extraction_copy(conn, records, sha, args.json_file, args.agente)
+    log_event(cfg, "extraccion_depositar", inputs={"archivo": args.json_file, "sha256": sha}, outputs=res,
+              actor=args.agente)
+    _emit(args, res, f"Copia {'depositada' if res['nueva'] else 'ya depositada'}: #{res['id']} ({res['registros']} "
+                     f"registro(s), sha256 {sha[:12]}…, extractor {res['extractor']}). No entra en el análisis hasta "
+                     "compararla con la otra copia: nutria extraccion comparar A.json B.json --registrar")
+    return 0
+
+
+def _conciliar_extracciones(args, cfg, conn) -> int:
+    data, sha = _leer_fichero_json(args.json_file)
+    _validate("conciliacion", data)
+    res = registry.conciliate_extraction_comparison(conn, args.id, data, sha, args.agente)
+    log_event(cfg, "extraccion_conciliar", inputs={"comparacion": args.id, "archivo": args.json_file, "sha256": sha},
+              outputs={"ids": res["ids"], "no_resueltos": len(res["no_resueltos"])}, actor=args.agente)
+    estados = ", ".join(f"#{d['id']} {d['estado']}" for d in res["registros"]) or "ninguna"
+    _emit(args, res, f"Conciliación de {args.id} registrada. Extracciones: {estados}. No resueltos (sin registrar): "
+                     f"{len(res['no_resueltos'])}" + "".join(f"\nAVISO: {w}" for w in res.get("avisos") or []))
+    return 0
+
+
+def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_de_filtro: list[dict],
+                           comparaciones: set[str] = frozenset()) -> int:
+    if not rows:
+        raise SystemExit("No hay extracciones con esos filtros"
+                         + (f" (--especie/--etapa dejan fuera {len(fuera_de_filtro)}: especies "
+                            + ", ".join(_distintos(fuera_de_filtro, "species")) + ")" if fuera_de_filtro else ""))
+    excluded: dict[str, int] = {}
+    if args.formato == "analisis" and not args.incluir_sin_conciliar:
+        # Doble extracción (regla del proyecto): al análisis solo pasan los registros cuyo estado respalda una
+        # comparación (y, si hubo discrepancias, una conciliación) registradas por el sistema.
+        kept = []
+        for r in rows:
+            if r["id"] in verificadas:
+                kept.append(r)
+                continue
+            motivo = _estado_efectivo(r, verificadas, comparaciones)
+            excluded[motivo] = excluded.get(motivo, 0) + 1
+        rows = kept
+        if not rows:
+            raise SystemExit("Ninguna extracción con doble extracción verificada (comparación registrada con "
+                             f"`extraccion comparar A B --registrar` o conciliación registrada) con esos filtros "
+                             f"(excluidas: {excluded}). Solo para una exploración, usa --incluir-sin-conciliar.")
+    sin_casos: dict[str, dict] = {}
+    if args.casos_completos:
+        desconocidos = [m for m in args.casos_completos if m not in NUMERIC_MODERATORS]
+        if desconocidos:
+            raise SystemExit(f"--casos-completos: moderadores desconocidos ({', '.join(desconocidos)}); válidos: "
+                             + ", ".join(NUMERIC_MODERATORS))
+        kept = []
+        for r in rows:
+            faltan = [m for m in args.casos_completos if r.get(NUMERIC_MODERATORS[m]) is None]
+            if faltan:
+                sin_casos[f"E{r['id']}"] = {"estudio": r["source_id"], "faltan": faltan}
+            else:
+                kept.append(r)
+        rows = kept
+        if not rows:
+            raise SystemExit("Ningún registro informa de todos los moderadores pedidos en --casos-completos")
+    avisos: list[str] = []
+    especies = _distintos(rows, "species")
+    if len(especies) > 1:
+        lista = ", ".join(f"{v['valor']} ({v['n']})" for v in especies.values())
+        if args.formato == "registro":
+            # el volcado del registro no es un análisis: lista todas las especies y solo avisa
+            avisos.append(f"AVISO: el volcado incluye especies distintas ({lista}); para el análisis, exporta con "
+                          "--especie")
+        elif not args.mezclar_especies:
+            raise SystemExit(f"El resultado mezcla especies: {lista}. Filtra con --especie (y --etapa) o, si combinarlas "
+                             "está justificado (transferibilidad) o son la misma especie escrita de otra forma, repite "
+                             "con --mezclar-especies (el aviso las listará).")
+        else:
+            avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza "
+                          "la especie como subgrupo (--subgrupo especie)")
+    estados = _distintos(rows, "physiological_stage")
+    if len(estados) > 1:
+        avisos.append("AVISO: se combinan estados fisiológicos distintos ("
+                      + ", ".join(f"{v['valor']} ({v['n']})" for v in estados.values()) + ")")
+    if fuera_de_filtro:
+        avisos.append(f"AVISO: --especie/--etapa dejan fuera {len(fuera_de_filtro)} registro(s) de esas variables "
+                      "(especies: " + ", ".join(f"{v['valor']} ({v['n']})" for v in
+                                                _distintos(fuera_de_filtro, "species").values())
+                      + "; estados: " + ", ".join(f"{v['valor']} ({v['n']})" for v in
+                                                  _distintos(fuera_de_filtro, "physiological_stage").values())
+                      + "): compruébese que no son la misma especie o etapa escrita de otra forma")
+    por_estudio: dict[tuple, list[str]] = {}
+    for r in rows:
+        por_estudio.setdefault((r["source_id"], r["outcome"]), []).append(f"E{r['id']}")
+    repetidos = {k: v for k, v in por_estudio.items() if len(v) > 1}
+    if repetidos:
+        avisos.append(f"AVISO: {len(repetidos)} estudio(s) aportan varias comparaciones de la misma variable ("
+                      + "; ".join(f"{s} {o}: {', '.join(ids)}" for (s, o), ids in list(repetidos.items())[:6])
+                      + "): son dependientes (en meta analizar, --agregar-estudio) y no deben ser el mismo dato "
+                      "extraído dos veces")
+    ausentes: dict[str, set[str]] = {}
+    for r in rows:
+        faltan = _moderadores_ausentes(r)
+        if faltan:
+            ausentes.setdefault(r["source_id"], set()).update(faltan)
+    if ausentes:
+        avisos.append(f"AVISO: {len(ausentes)} estudio(s) no informan de algún moderador numérico (columna "
+                      "moderadores_no_informados; para una meta-regresión de casos completos usa --casos-completos): "
+                      + "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in list(ausentes.items())[:8])
+                      + (" ..." if len(ausentes) > 8 else ""))
+    if sin_casos:
+        avisos.append(f"Excluidos por --casos-completos ({len(sin_casos)}): "
+                      + "; ".join(f"{k} {v['estudio']} sin {', '.join(v['faltan'])}" for k, v in sin_casos.items()))
+    avisos_inc, incidencia = _avisos_incidencia(rows)
+    avisos += avisos_inc
+    if excluded:
+        avisos.append("Excluidas por no tener doble extracción verificada: "
+                      + ", ".join(f"{k}={v}" for k, v in sorted(excluded.items()))
+                      + " (usa --incluir-sin-conciliar solo para una exploración)")
+    elif args.formato == "analisis" and args.incluir_sin_conciliar:
+        pending = sum(1 for r in rows if r["id"] not in verificadas)
+        if pending:
+            avisos.append(f"AVISO: {pending} fila(s) sin doble extracción verificada incluidas: el análisis es solo "
+                          "exploratorio")
+    if args.formato == "registro":
+        fieldnames = list(rows[0].keys()) + ["doble_extraccion_verificada"]
+        out_rows = [{**r, "doble_extraccion_verificada": "si" if r["id"] in verificadas else "no"} for r in rows]
+    else:
+        fieldnames = (["estudio", "comparacion"] + [name for name, _col in ANALYSIS_COLUMNS[1:]]
+                      + ["doble_extraccion_verificada", "moderadores_no_informados"])
+        out_rows = [{"estudio": r["source_id"], "comparacion": f"E{r['id']}",
+                     **{name: r.get(col) for name, col in ANALYSIS_COLUMNS[1:]},
+                     # el estado efectivo: un 'doble_concordante' sin comparación registrada no se presenta como tal
+                     "estado_verificacion": _estado_efectivo(r, verificadas, comparaciones),
+                     "doble_extraccion_verificada": "si" if r["id"] in verificadas else "no",
+                     "moderadores_no_informados": ";".join(_moderadores_ausentes(r))} for r in rows]
+    with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(out_rows)
+    _emit(args, {"filas": len(rows), "csv": args.csv, "formato": args.formato, "excluidas": excluded,
+                 "especies": {v["valor"]: v["n"] for v in especies.values()},
+                 "moderadores_no_informados": {k: sorted(v) for k, v in ausentes.items()},
+                 "excluidas_por_casos_completos": sin_casos, "fuera_de_filtro": [f"E{r['id']}" for r in fuera_de_filtro],
+                 "incidencia": incidencia, "avisos": avisos},
+          f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato})" + "".join(f"\n{a}" for a in avisos))
+    return 0
 
 
 def cmd_extraccion(args, cfg) -> int:
     if args.accion == "comparar":
-        a, b = _load_json(args.a), _load_json(args.b)
-        a, b = (a if isinstance(a, list) else [a]), (b if isinstance(b, list) else [b])
-        diffs = []
-        if len(a) != len(b):
-            diffs.append({"registro": None, "campo": "(número de registros)", "a": len(a), "b": len(b)})
-        for i, (x, y) in enumerate(zip(a, b), 1):
-            for key in sorted((set(x) | set(y)) - COMPARE_IGNORED):
-                if not _same(x.get(key), y.get(key)):
-                    diffs.append({"registro": i, "campo": key, "a": x.get(key), "b": y.get(key)})
-        text = ("Extracciones concordantes: marca ambas como 'doble_concordante'." if not diffs else
-                "\n".join(f"registro {d['registro']} | {d['campo']}: A={d['a']!r}  B={d['b']!r}" for d in diffs)
-                + f"\n{len(diffs)} discrepancia(s): resuélvelas releyendo la fuente y marca 'resuelta'.")
-        log_event(cfg, "extraccion_comparar", inputs={"a": args.a, "b": args.b}, outputs={"discrepancias": len(diffs)},
-                  actor=args.agente)
-        _emit(args, {"discrepancias": diffs}, text)
-        return 1 if diffs else 0
+        return _comparar_extracciones(args, cfg)
     conn = _conn(cfg)
     if args.accion == "agregar":
         data = _load_json(args.json_file)
@@ -1282,46 +1549,31 @@ def cmd_extraccion(args, cfg) -> int:
             ids = [registry.add_extraction(conn, item, args.agente) for item in items]
         _emit(args, {"ids": ids}, f"Extracciones registradas: {ids}")
         return 0
-    rows = registry.list_extractions(conn, source_id=args.fuente, outcome=args.variable)
-    if args.accion == "exportar":
-        if not rows:
-            raise SystemExit("No hay extracciones con esos filtros")
-        excluded: dict[str, int] = {}
-        if args.formato == "analisis" and not args.incluir_sin_conciliar:
-            # Doble extracción (regla del proyecto): al análisis solo pasan los registros conciliados.
-            for r in rows:
-                if r["check_status"] not in CONCILIATED:
-                    excluded[r["check_status"]] = excluded.get(r["check_status"], 0) + 1
-            rows = [r for r in rows if r["check_status"] in CONCILIATED]
-            if not rows:
-                raise SystemExit("Ninguna extracción conciliada ('doble_concordante' o 'resuelta') con esos filtros "
-                                 f"(excluidas: {excluded}). Concilia la doble extracción con `extraccion comparar` o, "
-                                 "solo para una exploración, usa --incluir-sin-conciliar.")
-        if args.formato == "registro":
-            fieldnames = list(rows[0].keys())
-            out_rows = rows
-        else:
-            fieldnames = ["estudio", "comparacion"] + [name for name, _col in ANALYSIS_COLUMNS[1:]]
-            out_rows = [{"estudio": r["source_id"], "comparacion": f"E{r['id']}",
-                         **{name: r.get(col) for name, col in ANALYSIS_COLUMNS[1:]}} for r in rows]
-        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(out_rows)
-        note = ""
-        if excluded:
-            note = ("\nExcluidas por no estar conciliadas: "
-                    + ", ".join(f"{k}={v}" for k, v in sorted(excluded.items()))
-                    + " (usa --incluir-sin-conciliar solo para una exploración)")
-        elif args.formato == "analisis" and args.incluir_sin_conciliar:
-            pending = sum(1 for r in rows if r["check_status"] not in CONCILIATED)
-            if pending:
-                note = f"\nAVISO: {pending} fila(s) sin conciliar incluidas: el análisis es solo exploratorio"
-        _emit(args, {"filas": len(rows), "csv": args.csv, "formato": args.formato, "excluidas": excluded},
-              f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato}){note}")
+    if args.accion == "depositar":
+        return _depositar_copia(args, cfg, conn)
+    if args.accion == "conciliar":
+        return _conciliar_extracciones(args, cfg, conn)
+    if args.accion == "comparaciones":
+        rows = registry.list_extraction_comparisons(conn, pending_only=args.pendientes)
+        _emit(args, rows, "\n".join(
+            f"{r['id']} {r['result']}{' (conciliada)' if r.get('conciliation') else ''} | A: {r['file_a']} "
+            f"({r['actor_a']}) | B: {r['file_b']} ({r['actor_b']}) | {len(r['discrepancies'] or [])} discrepancia(s)"
+            for r in rows) or "(sin comparaciones)")
         return 0
+    rows = todas = registry.list_extractions(conn, source_id=args.fuente, outcome=args.variable)
+    if args.especie:
+        rows = [r for r in rows if _coincide(r.get("species"), args.especie)]
+    if args.etapa:
+        rows = [r for r in rows if _coincide(r.get("physiological_stage"), args.etapa)]
+    verificadas = registry.verified_extraction_ids(conn)
+    comparaciones = {c["id"] for c in registry.list_extraction_comparisons(conn)}
+    if args.accion == "exportar":
+        dentro = {r["id"] for r in rows}
+        return _exportar_extracciones(args, rows, verificadas, [r for r in todas if r["id"] not in dentro],
+                                      comparaciones)
     _emit(args, rows, "\n".join(f"#{r['id']} {r['source_id']} | {r['species']} | {r['intervention']} | {r['outcome']} "
-                                f"({r['outcome_unit']}) | {r['check_status']}" for r in rows) or "(sin extracciones)")
+                                f"({r['outcome_unit']}) | {_estado_doble(r, verificadas, comparaciones)}" for r in rows)
+          or "(sin extracciones)")
     return 0
 
 
@@ -1337,7 +1589,9 @@ def cmd_afirmacion(args, cfg) -> int:
         _emit(args, {"ids": ids}, f"Afirmaciones registradas: {ids}")
         return 0
     rows = registry.list_claims(conn, entity_id=args.entidad)
-    _emit(args, rows, "\n".join(f"{r['id']} [{r['label']}] {r['text']} {r['source_ids'] or ''}" for r in rows)
+    _emit(args, rows, "\n".join(f"{r['id']} [{r['label']}] {r['text']} {r['source_ids'] or ''}"
+                                + (f" | {r['context'].get('especie')}" if isinstance(r.get("context"), dict) else "")
+                                for r in rows)
           or "(sin afirmaciones)")
     return 0
 
@@ -1381,11 +1635,38 @@ def _entity_cmd(args, cfg, kind: str) -> int:
 
 
 def cmd_oportunidad(args, cfg) -> int:
+    if args.accion == "clasificar":
+        return _clasificar_oportunidad(args, cfg)
     return _entity_cmd(args, cfg, "oportunidad")
 
 
 def cmd_hipotesis(args, cfg) -> int:
     return _entity_cmd(args, cfg, "hipotesis")
+
+
+def _opciones_esquema(kind: str, campo: str) -> list[str]:
+    return list(registry.load_schema(kind)["properties"][campo]["enum"])
+
+
+def _clasificar_oportunidad(args, cfg) -> int:
+    """`oportunidad clasificar`: registra la clasificación regulatoria que resulta del triage (ruta, grupo funcional y
+    situación), con decisión y actor. Una ruta fuera_de_alcance_* bloquea la compuerta regulatoria."""
+    _no_para_evaluadores(args, "clasificar oportunidades")
+    conn = _conn(cfg)
+    res = registry.classify_opportunity(conn, args.id, args.ruta, args.motivo, functional_group=args.grupo_funcional,
+                                        situation=args.situacion, actor=args.agente, human_signoff=args.firma_humana)
+    log_event(cfg, "oportunidad_clasificar", inputs={"id": args.id, "ruta": args.ruta, "grupo_funcional":
+                                                     args.grupo_funcional, "situacion": args.situacion},
+              outputs=res, actor=args.agente)
+    previa, nueva = res["anterior"], res["nueva"]
+    text = (f"{args.id}: clasificación {previa['ruta'] or 'sin ruta'} -> {nueva['ruta']}"
+            + (f" | grupo funcional {nueva['grupo_funcional']}" if nueva["grupo_funcional"] else "")
+            + (f" | situación {nueva['situacion']}" if nueva["situacion"] else "")
+            + f" | compuerta regulatoria: {res['compuerta_regulatoria']}"
+            + (f" (cambio automático: {res['cambio_compuerta_regulatoria']})" if res["cambio_compuerta_regulatoria"]
+               else ""))
+    _emit(args, res, text)
+    return 0
 
 
 def cmd_puntuar(args, cfg) -> int:
@@ -2589,16 +2870,40 @@ def build_parser() -> argparse.ArgumentParser:
         x = es.add_parser(name, parents=[common])
         x.add_argument("--fuente")
         x.add_argument("--variable")
+        x.add_argument("--especie", help="solo los registros cuya especie contiene estas palabras completas "
+                                         "(p. ej. 'vacuno lechero'; 'ovino' no incluye 'bovino')")
+        x.add_argument("--etapa", "--estado-fisiologico", dest="etapa",
+                       help="solo los registros cuyo estado fisiológico contiene estas palabras completas")
         if name == "exportar":
             x.add_argument("--csv", required=True)
             x.add_argument("--formato", choices=["analisis", "registro"], default="analisis",
                            help="analisis: columnas que espera `nutria meta analizar`; registro: columnas internas")
             x.add_argument("--incluir-sin-conciliar", action="store_true",
-                           help="incluye en el formato analisis las extracciones 'simple' o con 'discrepancia' "
+                           help="incluye en el formato analisis las extracciones sin doble extracción verificada "
                                 "(solo para exploración; por defecto se excluyen)")
-    x = es.add_parser("comparar", parents=[common], help="doble extracción: diferencias campo a campo")
+            x.add_argument("--mezclar-especies", dest="mezclar_especies", action="store_true",
+                           help="permite exportar varias especies juntas (si no, se niega); avisa en todo caso")
+            x.add_argument("--casos-completos", dest="casos_completos", nargs="+", metavar="MODERADOR",
+                           help="exporta solo los registros que informan de estos moderadores numéricos "
+                                "(meta-regresión de casos completos) y lista los excluidos")
+    x = es.add_parser("comparar", parents=[common],
+                      help="doble extracción: compara y registra dos copias depositadas (--registrar)")
     x.add_argument("a")
     x.add_argument("b")
+    x.add_argument("--registrar", action="store_true",
+                   help="obligatoria: registra la comparación de dos copias depositadas por extractores distintos; "
+                        "sin discrepancias, registra los registros como 'doble_concordante'. Las discrepancias no se "
+                        "muestran sin registrarlas (ni dentro ni fuera de un proyecto)")
+    x = es.add_parser("depositar", parents=[common],
+                      help="deposita una copia de doble extracción (sha256 y extractor) sin registrarla")
+    x.add_argument("--datos", dest="json_file", required=True, help="fichero JSON de la copia (A o B)")
+    x = es.add_parser("conciliar", parents=[common],
+                      help="registra la conciliación de una comparación con discrepancias (registros 'resuelta')")
+    x.add_argument("id", help="comparación registrada (CE-xxxx)")
+    x.add_argument("--datos", dest="json_file", required=True,
+                   help="fichero JSON de la conciliación (ver ejemplos/conciliacion_ejemplo.json)")
+    x = es.add_parser("comparaciones", parents=[common], help="comparaciones de doble extracción registradas")
+    x.add_argument("--pendientes", action="store_true", help="solo las que tienen discrepancias sin conciliar")
     s.set_defaults(func=cmd_extraccion)
 
     s = sub.add_parser("afirmacion", parents=[common], help="afirmaciones etiquetadas")
@@ -2628,6 +2933,23 @@ def build_parser() -> argparse.ArgumentParser:
         x.add_argument("nuevo_estado", choices=statuses)
         x.add_argument("--motivo", required=True)
         x.add_argument("--firma-humana", dest="firma_humana", help="persona que valida la decisión (solo personas)")
+        if kind == "oportunidad":
+            x = ks.add_parser("clasificar", parents=[common],
+                              help="sustituye la clasificación regulatoria (ruta, grupo funcional y situación) por el "
+                                   "resultado del triage (sin firma, solo --agente regulacion-seguridad; una ruta "
+                                   "fuera_de_alcance_* la propone cualquiera y bloquea la compuerta regulatoria)")
+            x.add_argument("id")
+            x.add_argument("--ruta", required=True, choices=_opciones_esquema("oportunidad", "ruta_regulatoria_preliminar"))
+            x.add_argument("--grupo-funcional", dest="grupo_funcional", metavar="CATEGORIA.GRUPO",
+                           choices=_opciones_esquema("oportunidad", "grupo_funcional"),
+                           help="categoría y grupo funcional del anexo I del Reglamento (CE) 1831/2003; "
+                                "obligatorio con una ruta aditivo_* (p. ej. "
+                                "zootecnico.estabilizadores_condiciones_fisiologicas; valores en "
+                                "src/nutria/data/schemas/oportunidad.schema.json)")
+            x.add_argument("--situacion", choices=_opciones_esquema("oportunidad", "situacion"))
+            x.add_argument("--motivo", required=True, help="resultado del triage que justifica la clasificación")
+            x.add_argument("--firma-humana", dest="firma_humana",
+                           help="persona que clasifica o que valida salir de una ruta fuera_de_alcance_* (solo personas)")
         s.set_defaults(func=func)
 
     s = sub.add_parser("puntuar", parents=[common], help="priorización con rúbrica y compuertas")

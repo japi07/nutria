@@ -105,12 +105,14 @@
       "description": "p. ej. descubrimiento basado en literatura (ABC), contradicción entre estudios, reposicionamiento."
     },
     "especie": {
-      "type": "string",
-      "minLength": 3
+      "$ref": "#/$defs/texto_especie",
+      "minLength": 3,
+      "description": "Especie diana concreta, nunca genérica ('animales', 'varias')."
     },
     "etapa": {
-      "type": "string",
-      "minLength": 3
+      "$ref": "#/$defs/texto_especifico",
+      "minLength": 3,
+      "description": "Etapa productiva o estado fisiológico concretos, nunca genéricos ('todas')."
     },
     "concentracion_activa_in_vitro": {
       "type": "string",
@@ -165,6 +167,22 @@
           ]
         }
       }
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "[^\\W_]",
+      "x-texto": "especifico",
+      "x-mensaje": "indica la etapa o el estado fisiológico concretos (p. ej. 'periodo de transición', 'cebo')",
+      "description": "Como texto_informado y, además (\"x-texto\": \"especifico\"), no formado solo por palabras genéricas (todas, varias, cualquier, especies, etapas, fases, animales, ganado, de producción, all, species...), tampoco escritas sin espacios o letra a letra: debe nombrar una especie, una etapa o un estado concretos."
+    },
+    "texto_especie": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "[^\\W_]",
+      "x-texto": "especie",
+      "x-mensaje": "indica la especie concreta (p. ej. 'vacuno lechero', 'ovino', 'Bos taurus')",
+      "description": "Como texto_especifico y, además (\"x-texto\": \"especie\"), debe nombrar la especie: no basta con describir a los animales ('animales adultos', 'hembras reproductoras')."
     }
   }
 }

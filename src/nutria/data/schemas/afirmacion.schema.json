@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Afirmación con etiqueta de evidencia",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "texto",
     "etiqueta"
@@ -48,11 +49,206 @@
       "type": "string"
     },
     "ubicacion": {
-      "type": "string"
+      "type": "string",
+      "description": "Dónde se comprueba: tabla, figura o página de la fuente en una afirmación [PUB]; en una [DER], la orden nutria o el script que la produce y el fichero de salida."
     },
     "entidad": {
       "type": "string",
       "pattern": "^[OH]-\\d{4}$"
+    },
+    "contexto": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Contexto biológico del dato (regla 3 de CLAUDE.md). En las afirmaciones [PUB] es obligatorio y completo: especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis con su base de expresión y forma del producto; 'no_consta' declara lo que la fuente no informa. En las demás etiquetas es opcional y puede ser parcial.",
+      "properties": {
+        "especie": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especie"
+            }
+          ],
+          "description": "Especie del estudio (o sistema in vitro: 'líquido ruminal bovino')"
+        },
+        "raza": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "sexo": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "edad": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "etapa": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "estado_fisiologico": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "dieta_basal": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "diseno": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "p. ej. ensayo paralelo aleatorizado, cuadrado latino 4 × 4, metaanálisis de 12 ensayos, in vitro"
+        },
+        "unidad_experimental": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Unidades experimentales por tratamiento (o total, indicándolo)"
+        },
+        "dosis": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "dosis_unidad": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "dosis_base": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Base de expresión: por animal y día, por kg de MS, % de la MS..."
+        },
+        "forma_producto": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Forma química, protección ruminal, vehículo..."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "dosis"
+            ],
+            "properties": {
+              "dosis": {
+                "type": "number"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "dosis_unidad"
+            ],
+            "properties": {
+              "dosis_unidad": {
+                "not": {
+                  "const": "no_consta"
+                },
+                "x-mensaje": "una dosis numérica exige su unidad (la fuente la da junto a la cifra; si no, escribe la dosis como texto o 'no_consta')"
+              },
+              "dosis_base": {
+                "not": {
+                  "const": "no_consta"
+                },
+                "x-mensaje": "una dosis numérica exige su base de expresión (por animal y día, por kg de MS, % de la MS...)"
+              }
+            },
+            "x-mensaje": "una dosis numérica exige su unidad y su base de expresión"
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -71,7 +267,9 @@
         "required": [
           "fuentes",
           "cita_textual",
-          "ubicacion"
+          "ubicacion",
+          "contexto",
+          "transferibilidad"
         ],
         "properties": {
           "fuentes": {
@@ -82,9 +280,91 @@
           },
           "ubicacion": {
             "minLength": 2
+          },
+          "contexto": {
+            "required": [
+              "especie",
+              "diseno",
+              "unidad_experimental",
+              "n",
+              "dosis",
+              "dosis_base",
+              "forma_producto"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "etapa"
+                ],
+                "x-mensaje": "falta la etapa o el estado fisiológico ('no_consta' si la fuente no lo informa)"
+              },
+              {
+                "required": [
+                  "estado_fisiologico"
+                ]
+              }
+            ],
+            "x-mensaje": "una afirmación [PUB] necesita el contexto biológico completo ('no_consta' para lo que la fuente no informe)"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "transferibilidad",
+          "contexto"
+        ],
+        "properties": {
+          "transferibilidad": {
+            "enum": [
+              "especie_diana",
+              "otra_especie"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "contexto": {
+            "properties": {
+              "especie": {
+                "not": {
+                  "const": "no_consta"
+                },
+                "x-mensaje": "con transferibilidad 'especie_diana' u 'otra_especie' hay que nombrar la especie del estudio (es la que se compara con la especie diana)"
+              }
+            }
           }
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "[^\\W_]|[%‰‱]",
+      "x-texto": "informado",
+      "x-mensaje": "escribe el dato del estudio o 'no_consta' si la fuente no lo informa",
+      "description": "Texto con contenido (\"x-texto\": \"informado\", lo comprueba nutria): no vacío, no solo signos (salvo '%' o '‰'), sin caracteres invisibles ni alfabetos mezclados en una palabra y sin valores de relleno ('n/a', 'nd', 's/d', 'xxx', 'desconocido', 'pendiente', 'sin datos', 'not reported'...), con independencia de mayúsculas, tildes y signos."
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "[^\\W_]",
+      "x-texto": "especifico",
+      "x-mensaje": "indica la raza, la etapa o el estado concretos, o 'no_consta' si la fuente no lo informa",
+      "description": "Como texto_informado y, además (\"x-texto\": \"especifico\"), no formado solo por palabras genéricas (todas, varias, cualquier, especies, etapas, fases, animales, ganado, de producción, all, species...), tampoco escritas sin espacios o letra a letra: debe nombrar una especie, una etapa o un estado concretos."
+    },
+    "texto_especie": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "[^\\W_]",
+      "x-texto": "especie",
+      "x-mensaje": "indica la especie del estudio (in vitro, el sistema con su especie de origen: 'líquido ruminal bovino') o 'no_consta' si la fuente no la informa",
+      "description": "Como texto_especifico y, además (\"x-texto\": \"especie\"), debe nombrar la especie: no basta con describir a los animales ('animales adultos', 'hembras reproductoras')."
+    }
+  },
+  "description": "Afirmación etiquetada (regla 1 de CLAUDE.md). No admite campos fuera del esquema: el contexto biológico va dentro de 'contexto' y la orden de una [DER], en 'ubicacion'."
 }
