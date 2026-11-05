@@ -495,7 +495,8 @@ def test_mision1_opportunities_phase_runs_until_ranking(project, capsys):  # D2-
         assert call(out, f"critica:{opp_id}")["agentType"] == "critico-red-team"
         assert ls.index(f"compuertas-registro:M1c:{opp_id}") < ls.index(f"puntuacion:evaluador-1:{opp_id}")
     econ = call(out, "triage:propiedad_intelectual:O-0001")["prompt"]
-    assert "nutria econ ganadero" in econ and "research/datos/O-0001/" in econ
+    assert ("nutria --agente economia-mercado-pi econ ganadero research/datos/O-0001/econ_ganadero.toml --exigir-fuentes"
+            in econ)
     puntuaciones = [c for c in out["llamadas"] if c["label"].startswith("puntuacion:")]
     assert {c["agentType"] for c in puntuaciones} == {"evaluador-independiente"}
     assert {c["label"]: c["model"] for c in puntuaciones if c["label"].endswith("O-0002")} == {
@@ -505,6 +506,15 @@ def test_mision1_opportunities_phase_runs_until_ranking(project, capsys):  # D2-
     for c in puntuaciones:
         assert "--sin-puntuaciones --json" in c["prompt"] and "No ejecutes nutria puntuar ranking" in c["prompt"]
     assert ls.index("ranking") < ls.index("verificacion:ranking")
+    # fase de coordinación (peticiones de P6 y P7 a P8): el ranking respeta los subgrupos de CONDICIONAL y transcribe los
+    # AVISOS; el triage regulatorio registra la clasificación y el workflow avisa si el registro sigue sin ruta
+    ranking = call(out, "ranking")["prompt"]
+    assert "solo pendientes de firma, sin resolver y CRÍTICAS sin resolver" in ranking and "bloque AVISOS" in ranking
+    regulatoria = call(out, "triage:regulatoria:O-0001")["prompt"]
+    assert "nutria --agente regulacion-seguridad oportunidad clasificar O-0001 --ruta <ruta>" in regulatoria
+    assert "nutria --agente regulacion-seguridad normativa eurlex <CELEX>" in regulatoria
+    for o in out["resultado"]["oportunidades"]:
+        assert o["ruta_regulatoria"] == "indeterminada" and "no registró la clasificación" in o["aviso_clasificacion"]
     verificacion = call(out, "verificacion:ranking")
     assert verificacion["agentType"] == "verificador-citas"
     assert "verificar research/revisiones/M1_ranking_2026-11-04.md" in verificacion["prompt"]
@@ -1823,8 +1833,12 @@ def test_p8_mision1_novedad_por_el_rol_que_fija_la_skill(project, capsys):  # D2
     out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 2}, reglas)
     literatura, mercado = call(out, "M1b:novedad-literatura:P1.1"), call(out, "M1b:novedad-mercado:P1.1")
     assert literatura["agentType"] == "investigador-bibliografico" and mercado["agentType"] == "economia-mercado-pi"
-    assert "PATENTES" in mercado["prompt"] and "nutria patentes" in mercado["prompt"] and "PRODUCTOS" in mercado["prompt"]
-    assert "nutria patentes" not in literatura["prompt"]
+    assert ("PATENTES" in mercado["prompt"] and "nutria --agente economia-mercado-pi patentes" in mercado["prompt"]
+            and "PRODUCTOS" in mercado["prompt"])
+    assert "patentes \"<consulta>\"" not in literatura["prompt"]
+    # las búsquedas de novedad revelan la combinación: confidenciales (solo la huella en la procedencia)
+    assert ("nutria --agente investigador-bibliografico buscar pubmed|europepmc|openalex \"<consulta>\" --sensibilidad confidencial"
+            in literatura["prompt"])
     assert set(mercado["schema"]["required"]) >= {"productos", "patentes"}
     assert {"titulo": "B", "motivo": "novedad sin comprobar en productos y patentes (fallo de agente)"} in out["resultado"]["no_registradas"]
     skill = _norm(_skill("mision-1"))
@@ -2235,14 +2249,17 @@ def _decision(n: int, texto: str, firma: str | None) -> dict:
     ([_decision(1, "no seleccionada M1 (se descarta)", "Ana")], False),
     ([_decision(1, "deseleccionada", "Ana")], False),
     ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana")], False),  # la última manda
-    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana"), _decision(3, "seleccionada de nuevo", "Luis")], True),
+    # fase de coordinación: solo la frase canónica confirma; otra decisión firmada sobre la selección la revoca
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana"), _decision(3, "seleccionada de nuevo", "Luis")], False),
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "selección retirada", "Ana"), _decision(3, "Seleccionada M1.", "Luis")], True),
     ([_decision(2, "selección retirada", "Ana"), _decision(1, "seleccionada M1", "Ana")], False),  # por orden de registro (id)
     ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "no seleccionada (propuesta)", None)], True),  # sin firma no anula
     ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "Retirada de la selección", "Ana")], False),  # negación en cualquier parte
-    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "revisada la dosis tras la selección", "Ana")], True),  # no es sobre la selección
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "revisada la dosis tras la selección", "Ana")], False),  # menciona la selección: revoca
+    ([_decision(1, "seleccionada M1", "Ana"), _decision(2, "revisada la dosis", "Ana")], True),  # no es sobre la selección
     ([_decision(1, "propuesta: seleccionar O-0001 para planes", "Ana")], False),  # ambigua: no empieza por "seleccionada"
-], ids=["sin-firma", "firmada", "negada", "deseleccionada", "retirada", "reseleccionada", "orden-por-id", "retirada-sin-firma",
-        "retirada-de-la-seleccion", "otra-decision", "ambigua"])
+], ids=["sin-firma", "firmada", "negada", "deseleccionada", "retirada", "reseleccionada-sin-frase", "reseleccionada", "orden-por-id",
+        "retirada-sin-firma", "retirada-de-la-seleccion", "menciona-la-seleccion", "otra-decision", "ambigua"])
 def test_p8_mision1_firma_de_la_seleccion_orden_y_negacion(decisiones, firmada, project, capsys):  # D3-3 (selección firmada)
     _registrar_oportunidades(project, capsys, 1)
     salida = _ver(capsys, "O-0001")
@@ -2394,3 +2411,90 @@ def test_coord_ejecucion_da_identidades_nuevas_a_los_extractores(project, capsys
     assert "nutria --agente extractor-datos-B-O-0003-r2 --json extraccion depositar" in call(
         out, "extraccion:B:doi:10.1000/e1")["prompt"]
     assert run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "ejecucion": 0})["resultado"]["error"]
+
+
+
+# ============================================================================ fase de coordinación: misión 1
+@requires_node
+@pytest.mark.parametrize("revocacion", ["Selección cancelada", "Selección denegada", "Selección aplazada", "Seleccionada: NO",
+                                        "Selección: no procede", "Selección suspendida hasta nuevo aviso",
+                                        "Selección invalidada por error", "deseleccionada", "Seleccionada M2"])
+def test_coord_mision1_cualquier_otra_decision_firmada_revoca_la_seleccion(revocacion, project, capsys):
+    # Revisión final de P8: la selección solo cuenta como firmada con la frase canónica que pide el workflow
+    # («seleccionada M1»); cualquier otra decisión firmada posterior sobre la selección la revoca (falla en cerrado)
+    _registrar_oportunidades(project, capsys, 1)
+    base = _ver(capsys, "O-0001")
+    vista = json.loads(base["salida"])
+    vista["decisiones"] = [_decision(1, "seleccionada M1", "Ana"), _decision(2, revocacion, "Ana")]
+    reglas = [_regla_paso0(project, capsys),
+              {"label": "compuertas-registro:planes:O-0001", "respuesta": {**base, "salida": json.dumps(vista)}}]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)
+    assert out["resultado"]["planes"][0]["seleccion_firmada"] is False, revocacion
+    assert "NO tiene firma humana" in call(out, "plan:O-0001")["prompt"]
+
+
+# ============================================================================ fase de coordinación: mutaciones de P8
+# Revisión final de P8: 9 mutaciones de la interpretación de salidas literales sobrevivían (R2, R4, R7, R8, R9, R18, R19,
+# R25, R36). R25 (la negación «deselecci») ya no existe: la selección solo se confirma con la frase canónica.
+@requires_node
+def test_coord_registro_de_puntuacion_exige_la_linea_ok_de_su_fichero_y_su_evaluador(project, capsys):  # R2, R4
+    registro = _regla_registro(project, capsys, "O-0003")
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")
+    literal = next(r["respuesta"] for r in reglas_p if r.get("label") == "registro-puntuacion:evaluador-1")
+    rel = "research/oportunidades/O-0003_puntuacion_evaluador-1.json"
+    # R2: la línea «OK» es de otro fichero: el registro consta, pero sin la comprobación literal del sha256 (alerta)
+    otra_linea = dict(literal, salida=literal["salida"].replace(f"{rel}: OK", "research/oportunidades/otro.json: OK"))
+    # R4: el JSON de puntuar registrar es de otro evaluador: no consta como registro de evaluador-2
+    lit2 = next(r["respuesta"] for r in reglas_p if r.get("label") == "registro-puntuacion:evaluador-2")
+    otro_ev = dict(lit2, salida=lit2["salida"].replace('"evaluador": "evaluador-2"', '"evaluador": "evaluador-9"'))
+    assert otro_ev["salida"] != lit2["salida"]
+    reglas = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"label": "registro-puntuacion:evaluador-1", "respuesta": otra_linea},
+              {"label": "registro-puntuacion:evaluador-2", "respuesta": otro_ev},
+              *reglas_p, {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    res = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)["resultado"]
+    por_id = {e["id"]: e for e in res["evaluadores"]}
+    assert por_id["evaluador-1"]["registrado"] is True
+    assert "sin la comprobación literal del sha256" in por_id["evaluador-1"]["alerta"]
+    assert por_id["evaluador-2"]["registrado"] is False and "no confirma el registro" in por_id["evaluador-2"]["fallo"]
+
+
+@requires_node
+@pytest.mark.parametrize("caso", ["linea-extrana", "vacia", "codigo"])
+def test_coord_procedencia_no_interpretable_no_es_sin_eventos(caso, project, capsys):  # R7, R8, R9
+    registro = _regla_registro(project, capsys, "O-0003")
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")
+    buena = _salida(capsys, *ORDEN_PROCEDENCIA)
+    mala = {"linea-extrana": dict(buena, salida=buena["salida"] + "Aviso: la cadena de la procedencia no es íntegra\n"),
+            "vacia": dict(buena, salida=""),
+            "codigo": dict(buena, codigo_salida=3)}[caso]
+    base = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)}, *reglas_p,
+            {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [*base, {"label": "procedencia:antes-de-puntuar", "respuesta": buena},
+                                                               {"label": "procedencia:tras-puntuar", "respuesta": mala}])
+    prematuros = out["resultado"]["registros_prematuros"]
+    assert prematuros["comprobado"] is False and "no se pudo comprobar en la procedencia" in prematuros["motivo"], caso
+
+
+@requires_node
+@pytest.mark.parametrize("caso", ["otro-estado", "codigo", "otra-oportunidad"])
+def test_coord_etica_repropuesta_solo_consta_con_su_salida_literal(caso, project, capsys):  # R18, R19, R36
+    _registrar_oportunidades(project, capsys, 2)
+    plan = {"archivo": "research/planes/O-0001.md", "resumen": "r"}
+    literal = _salida(capsys, "--agente", "sostenibilidad-bienestar", "--json", "puntuar", "compuerta", "O-0001", "etica",
+                      "no_resuelta", "--motivo", "m")
+    assert literal["codigo_salida"] == 0, literal
+    otra = _salida(capsys, "--agente", "sostenibilidad-bienestar", "--json", "puntuar", "compuerta", "O-0002", "etica",
+                   "no_resuelta", "--motivo", "m")
+    registro = {"otro-estado": literal, "codigo": dict(literal, codigo_salida=1), "otra-oportunidad": otra}[caso]
+    estado = "superada" if caso == "otro-estado" else "no_resuelta"
+    reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": _ver(capsys, "O-0001")},
+              {"label": "plan:O-0001", "respuesta": plan}, {"label": "revision-plan:O-0001", "respuesta": plan},
+              {"label": "etica-plan:O-0001", "respuesta": {"compuerta": "etica", "estado": estado, "motivo": "m", "resumen": "r",
+                                                            "registro": registro}}]
+    etica = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)["resultado"]["planes"][0]["etica"]
+    assert etica["registrada"] is False, caso
+    # control: la salida literal de su propia orden sí consta
+    reglas[-1]["respuesta"] = {"compuerta": "etica", "estado": "no_resuelta", "motivo": "m", "resumen": "r", "registro": literal}
+    ok = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001"]}, reglas)["resultado"]["planes"][0]["etica"]
+    assert ok["registrada"] is True

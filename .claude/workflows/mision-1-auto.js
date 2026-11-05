@@ -125,7 +125,7 @@ const CONSOLIDADO = S({
 const HIPOTESIS = S({ enunciado: STR, efecto_minimo_relevante: STR, criterio_falsacion: STR, variables: STRS },
   ['enunciado', 'efecto_minimo_relevante', 'criterio_falsacion'])
 const OPORTUNIDADES = S({ oportunidades: { type: 'array', maxItems: MAX_POR_GENERADOR, items: S({
-  titulo: STR, problema: STR, especie: STR, etapa: STR, mecanismo: STR, candidatos: STRS, tipo_producto: STR,
+  titulo: STR, problema: STR, especie: STR, etapa: STR, raza: STR, estado_fisiologico: STR, mecanismo: STR, candidatos: STRS, tipo_producto: STR,
   evidencia_resumen: STR, diferenciacion: STR, lagunas: STRS, hipotesis: { type: 'array', minItems: 1, items: HIPOTESIS }, tecnica: STR,
 }, ['titulo', 'problema', 'especie', 'etapa', 'mecanismo', 'candidatos', 'tipo_producto', 'evidencia_resumen', 'diferenciacion', 'lagunas', 'hipotesis']) } },
 ['oportunidades'])
@@ -176,11 +176,14 @@ const LENTES = [
 const GENERADORES = ['fisiologia-bioquimica', 'compuestos-toxicologia', 'nutricion-formulacion']
 // Cada especialista PROPONE la compuerta de la que es propietario (sin firma humana): solo una persona la firma.
 const TRIAGE = [
-  { agente: 'regulacion-seguridad', compuerta: 'regulatoria', tarea: 'clasificación y vía regulatoria con la skill triage-regulatorio (primero pienso dietético, después medicamento por alegación y por función, sustancias prohibidas o restringidas, incluidos los moduladores ruminales antimicrobianos, y alegaciones)' },
-  { agente: 'compuestos-toxicologia', compuerta: 'seguridad', tarea: 'seguridad para la especie diana, el consumidor, el usuario y el medio ambiente a la dosis prevista' },
-  { agente: 'fisiologia-bioquimica', compuerta: 'destino_digestivo', tarea: 'destino digestivo a la dosis prevista; en rumiantes, calcula con nutria destino ruminal (entradas con fuente o [SUP]) y ten en cuenta la adaptación de la microbiota ruminal' },
+  { agente: 'regulacion-seguridad', compuerta: 'regulatoria', tarea: 'clasificación y vía regulatoria con la skill triage-regulatorio (primero pienso dietético, después medicamento por alegación y por función, sustancias prohibidas o restringidas, incluidos los moduladores ruminales antimicrobianos, y alegaciones); ' +
+    'comprueba cada acto con nutria --agente regulacion-seguridad normativa eurlex <CELEX> (sin red, la base legal queda pendiente de verificación) y registra la clasificación con ' +
+    'nutria --agente regulacion-seguridad oportunidad clasificar <ID> --ruta <ruta> [--grupo-funcional <categoria.grupo>, obligatorio con una ruta aditivo_*] [--situacion <situación>] ' +
+    '--motivo "..." (sin --firma-humana; una ruta fuera_de_alcance_* bloquea la compuerta regulatoria)' },
+  { agente: 'compuestos-toxicologia', compuerta: 'seguridad', tarea: 'seguridad para la especie diana, el consumidor, el usuario y el medio ambiente a la dosis prevista (nutria --agente compuestos-toxicologia molecula pubchem "<nombre>" --peligros: «clasificado_sin_frases_H» no equivale a «sin peligro» y «sin_clasificacion» es que PubChem no tiene datos)' },
+  { agente: 'fisiologia-bioquimica', compuerta: 'destino_digestivo', tarea: 'destino digestivo a la dosis prevista; en rumiantes, calcula con nutria --agente fisiologia-bioquimica destino ruminal (entradas con fuente o [SUP]) y ten en cuenta la adaptación de la microbiota ruminal' },
   { agente: 'desarrollo-industrial', compuerta: 'analitica', tarea: 'viabilidad de fabricación y método analítico para el activo o un marcador' },
-  { agente: 'economia-mercado-pi', compuerta: 'propiedad_intelectual', tarea: 'antecedentes de patentes y libertad de operación preliminar; además, antes de la puntuación, ejecuta nutria econ ganadero (entradas con fuente o [SUP]) y deja el modelo y la salida en research/datos/<ID>/' },
+  { agente: 'economia-mercado-pi', compuerta: 'propiedad_intelectual', tarea: 'antecedentes de patentes y libertad de operación preliminar (nutria --agente economia-mercado-pi patentes, con la consulta guardada solo como huella salvo --registrar-consulta); además, antes de la puntuación, con la skill evaluacion-economica, ejecuta nutria --agente economia-mercado-pi econ ganadero research/datos/<ID>/econ_ganadero.toml --exigir-fuentes (entradas con fuente o [SUP]; coste por animal y día y por tonelada de pienso) y deja el modelo y la salida en research/datos/<ID>/' },
   { agente: 'sostenibilidad-bienestar', compuerta: 'etica', tarea: 'impacto ambiental, bienestar y ética de la validación futura' },
 ]
 // Tres evaluadores independientes con modelos distintos; identificadores estables por puesto (un reintento
@@ -386,22 +389,23 @@ const leerRegistro = async (id, etiqueta, fase) => {
   // no la declara un agente.
   const decisiones = Array.isArray(o.decisiones) ? o.decisiones.filter(esObjeto) : []
   return { ok: true, estado: o.status || null, titulo: typeof o.title === 'string' ? o.title : null, efectivas: ef, bloqueadas,
-    seleccion_firmada: seleccionFirmada(decisiones) }
+    ruta: typeof o.regulatory_route === 'string' ? o.regulatory_route : null, seleccion_firmada: seleccionFirmada(decisiones) }
 }
-// La selección está firmada si la ÚLTIMA decisión firmada por una persona sobre la selección la confirma: las
-// propuestas sin firma no cuentan; "no seleccionada", "deseleccionada" o una retirada posterior la anulan (una negación
-// cuenta en cualquier parte del texto), y solo confirma un texto que empieza por "seleccionada" o "selección".
+// La selección está firmada si la ÚLTIMA decisión firmada por una persona sobre la selección es exactamente la frase
+// canónica que pide este workflow («seleccionada M1», sin distinguir mayúsculas, espacios ni un punto final). Cualquier
+// otra decisión firmada posterior sobre la selección («Selección cancelada», «denegada», «aplazada», «deseleccionada»,
+// «Seleccionada: NO»...) la revoca: falla en cerrado, sin intentar adivinar qué negaciones existen. Las propuestas sin
+// firma no cuentan.
 const SOBRE_SELECCION_RE = /selecci/i
-const SELECCION_NEGADA_RE = /\b(no|sin)\s+(fue\s+|es\s+|queda\s+)?selecci|deselecci|\b(retir|anul|revoc|rechaz|descart|exclu|desestim)/i
-const SELECCION_CONFIRMADA_RE = /^\s*(seleccionad[ao]s?|selecci[oó]n)\b/i
+const SELECCION_CANONICA = 'seleccionada m1'
+const textoCanonico = (t) => String(t || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim().replace(/\.$/, '').trim()
 const seleccionFirmada = (decisiones) => {
   const ordenadas = decisiones.every((x) => Number.isInteger(x.id)) ? [...decisiones].sort((a, b) => a.id - b.id) : decisiones
   let firmada = false
   for (const x of ordenadas) {
     const texto = String(x.decision || '')
     if (!SOBRE_SELECCION_RE.test(texto) || String(x.human_signoff || '').trim() === '') continue
-    if (SELECCION_NEGADA_RE.test(texto)) firmada = false
-    else if (SELECCION_CONFIRMADA_RE.test(texto)) firmada = true
+    firmada = textoCanonico(texto) === SELECCION_CANONICA
   }
   return firmada
 }
@@ -571,7 +575,9 @@ if (FASE === 'oportunidades') {
       `Genera 2-${MAX_POR_GENERADOR} oportunidades originales (como máximo ${MAX_POR_GENERADOR}) siguiendo .claude/skills/hipotesis/SKILL.md (conexiones entre disciplinas, descubrimiento basado en literatura ABC, ` +
       'contradicciones entre estudios, reposicionamiento, combinaciones con mecanismos complementarios). Cada una debe superar o complementar de forma diferenciada ' +
       'las soluciones actuales (explícalo en "diferenciacion") y llevar hipótesis falsables completas: para cada una, su efecto mínimo relevante y su criterio de ' +
-      'falsación (los defines tú; nadie los completa después). No propongas dosis óptimas.' +
+      'falsación (los defines tú; nadie los completa después). No propongas dosis óptimas. Cada oportunidad lleva una especie y una etapa concretas ' +
+      '(p. ej. «vacuno lechero» y «periodo de transición»; nunca «rumiantes en general», «animales productores de alimentos» ni un grupo de especies) y, si se ' +
+      'conocen, raza y estado fisiológico (si no, «no_consta»): el registro rechaza los genéricos.' +
       (prioridadRumiantes ? `\nFaltan oportunidades en rumiantes (al menos ${OBJ_RUM} de ${N_OPS}): si el problema lo admite, propón oportunidades en rumiantes.` : '') +
       (conocidos.length ? `\nNo repitas estas oportunidades ya registradas o propuestas: ${conocidos.join(' | ')}` : ''),
       { label: `M1b:gen:${p.id}${ronda ? `:r${ronda}` : ''}`, phase: 'Oportunidades', agentType: generador, schema: OPORTUNIDADES },
@@ -579,14 +585,17 @@ if (FASE === 'oportunidades') {
   }
   const comprobarNovedad = (o, etiqueta) => parallel([
     () => lanzar(
-      `${REGLAS}\nComprueba la novedad en la LITERATURA científica de esta oportunidad (nutria buscar pubmed/europepmc/openalex; anota consultas exactas y fecha), ` +
+      `${REGLAS}\nComprueba la novedad en la LITERATURA científica de esta oportunidad (nutria --agente investigador-bibliografico buscar pubmed|europepmc|openalex "<consulta>" ` +
+      '--sensibilidad confidencial: la consulta revela la combinación y la procedencia guarda solo su huella; en WebSearch y WebFetch no escribas la combinación ' +
+      'inventiva completa; anota consultas exactas y fecha en tu respuesta), ' +
       'teniendo en cuenta las soluciones actuales del problema. Veredicto: nueva | diferenciada | existente. Si es existente, propón una reformulación diferenciada o ' +
       'explica por qué descartarla. Los productos comerciales y las patentes los comprueba economia-mercado-pi.\n' + JSON.stringify(o),
       { label: `M1b:novedad-literatura:${etiqueta}`, phase: 'Oportunidades', agentType: 'investigador-bibliografico', schema: NOVEDAD_LITERATURA },
     ),
     () => lanzar(
       `${REGLAS}\nComprueba la novedad de esta oportunidad frente a PRODUCTOS comerciales (WebSearch: qué alegan, con qué evidencia y a qué precio) y PATENTES ` +
-      '(nutria patentes), teniendo en cuenta las soluciones actuales del problema. Veredicto: nueva | diferenciada | existente. Si es existente, propón una ' +
+      '(nutria --agente economia-mercado-pi patentes "<consulta>": la consulta queda solo como huella salvo --registrar-consulta; en WebSearch no escribas la ' +
+      'combinación inventiva completa), teniendo en cuenta las soluciones actuales del problema. Veredicto: nueva | diferenciada | existente. Si es existente, propón una ' +
       'reformulación diferenciada o explica por qué descartarla. La literatura la comprueba investigador-bibliografico.\n' + JSON.stringify(o),
       { label: `M1b:novedad-mercado:${etiqueta}`, phase: 'Oportunidades', agentType: 'economia-mercado-pi', schema: NOVEDAD_MERCADO },
     ),
@@ -773,7 +782,12 @@ if (FASE === 'oportunidades') {
         return { ...o, sin_puntuar: `no se pudieron leer las compuertas del registro (${o.registro.motivo})` }
       }
       if (ESTADOS_DETENIDOS.includes(o.registro.estado)) return { ...o, sin_puntuar: `la oportunidad está en estado "${o.registro.estado}"` }
-      return parallel(EVALUADORES.map((ev) => () => puntuar(ev, o.id, promptEvaluador(ev, o)))).then((p) => ({ ...o, puntuaciones: p }))
+      // La clasificación del triage regulatorio la registra regulacion-seguridad con oportunidad clasificar: si el registro
+      // sigue sin ruta (o «indeterminada»), se avisa; la compuerta regulatoria no se resuelve sin ella.
+      const clasificacion = o.registro.ruta && o.registro.ruta !== 'indeterminada' ? null
+        : `${o.id}: la ruta regulatoria del registro sigue "${o.registro.ruta || 'sin ruta'}": regulacion-seguridad no registró la clasificación (oportunidad clasificar)`
+      if (clasificacion) log(clasificacion)
+      return parallel(EVALUADORES.map((ev) => () => puntuar(ev, o.id, promptEvaluador(ev, o)))).then((p) => ({ ...o, puntuaciones: p, aviso_clasificacion: clasificacion }))
     },
   )
   evaluadas.forEach((o, i) => {
@@ -789,8 +803,11 @@ if (FASE === 'oportunidades') {
     `${REGLAS}\nEjecuta nutria --agente director-cientifico puntuar ranking --perfil recomendado --sim 5000 --semilla 42 --min-evaluadores 3 --alfa 50 y también con --perfil original. ` +
     `Escribe ${rutaRanking} (es un fichero nuevo: si ya existiera, no lo sobrescribas; añade -2, -3... y devuelve la ruta real) con ambas salidas e interpretación: estado de cada oportunidad ` +
     '(APTA, CONDICIONAL, BLOQUEADA, INCOMPLETA, INSUFICIENTE), robustez frente a los pesos (rango con cada perfil), desacuerdos entre evaluadores y compuertas pendientes ' +
-    'de firma humana. Propón como candidatas a planes las 3 mejores NO bloqueadas (las APTA antes que las CONDICIONALES). Es una PROPUESTA: la selección la decide una ' +
-    'persona. Regístrala para cada una de las propuestas con nutria --agente director-cientifico decision registrar --entidad <ID> ' +
+    'de firma humana. Respeta los subgrupos de CONDICIONAL que da el ranking, en su orden: solo pendientes de firma, sin resolver y CRÍTICAS sin resolver (p_top es global: 0 si ' +
+    'hay k o más candidatas en grupos anteriores). Transcribe literalmente el bloque AVISOS de cada salida (críticas sin resolver en el top-k, orden o top-k que cambian entre ' +
+    'perfiles, top-k del Monte Carlo distinto del determinista). Propón como candidatas a planes las 3 mejores NO bloqueadas (las APTA antes que las CONDICIONALES, y dentro ' +
+    'de estas por subgrupo); no propongas una candidata con compuertas críticas sin resolver sin declarar esa incertidumbre en su motivo. Es una PROPUESTA: la selección la ' +
+    'decide una persona. Regístrala para cada una de las propuestas con nutria --agente director-cientifico decision registrar --entidad <ID> ' +
     '--decision "propuesta top-3 M1" --motivo "..." sin --firma-humana.' +
     (bloqueadas.length ? `\nNo se puntuaron por tener compuertas bloqueadas: ${bloqueadas.map((o) => `${o.id} (${o.bloqueos.map((b) => b.compuerta).join(', ')})`).join('; ')}.` : '') +
     (fallos.length ? `\nAgentes que fallaron (decláralo en el documento): ${fallos.map((f) => f.agente).join(', ')}` : ''),
@@ -815,6 +832,8 @@ if (FASE === 'oportunidades') {
       bloqueada: Boolean(o.bloqueada),
       bloqueos: o.bloqueos || [],
       sin_puntuar: o.sin_puntuar || (o.bloqueada ? 'compuertas bloqueadas: no se puntúa' : null),
+      ruta_regulatoria: o.registro && o.registro.ok ? o.registro.ruta : null,
+      aviso_clasificacion: o.aviso_clasificacion || null,
       evaluadores: (o.puntuaciones || []).filter(Boolean).map((p) => ({ id: p.evaluador, modelo: p.modelo, reintento: p.reintento, registrado: Boolean(p.registrado) })),
       evaluadores_registrados: (o.puntuaciones || []).filter((p) => p && p.registrado).length,
     })),
