@@ -219,37 +219,47 @@ _HEADER_UNIT_RE = re.compile(
     + r")(?![^\W\d_])(?![-‐][^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)"
     + r"|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
     re.IGNORECASE)
-_MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
-           r"january|february|march|april|may|june|july|august|september|october|november|december)")
-# Palabras con mayúscula que no son apellidos delante de un año: «(Agenda 2030)», «(Horizonte 2020)», «(PAC, 2023)».
-_NOT_NAMES = (r"(?:Agenda|Horizonte|Horizon|Estrategia|Strategy|Plan|Programa|Programme|Program|Reglamento|Regulation|"
-              r"Directiva|Directive|Decisi[oó]n|Decision|Ley|Decreto|Norma|Campa[nñ]a|Censo|Encuesta|Fase|Semana|Grupo|"
-              r"Lote|Tabla|Table|Figura|Figure|Fig|Anexo|Annex|Secci[oó]n|Section|Versi[oó]n|Version|A[nñ]o|Year|Mes|"
-              r"Cosecha|Temporada|Ejercicio|Edici[oó]n|Edition|Cap[ií]tulo|Chapter|Vol|Volumen|PAC|CAP|ODS|SDG|COVID|"
-              r"Ensayo|Tratamiento|Experimento|Estudio|Dieta|Raci[oó]n|Reba[nñ]o|Granja|Explotaci[oó]n|Parcela|Bloque|"
-              r"Per[ií]odo|Muestra|Animal|Vacas?|Raza|Modelo|Escenario|Caso)")
-# Palabras de función que empiezan una frase con mayúscula y no son apellidos («Se observó en 2019», «No mostró...»).
-_FUNCTION_WORDS = (r"(?:Se|No|Lo|Ya|Si|Sí|Ni|Que|Qué|Como|Cómo|Cuando|Donde|Esto|Este|Esta|Estos|Estas|Eso|Ese|"
-                   r"Esa|Esos|Esas|Aquello|Aquel|Aquella|Ello|Ellos|Ellas|Él|Ella|Nos|Les|Los|Las|Un|Una|Unos|"
-                   r"Unas|En|Con|Por|Para|Sin|Sobre|Tras|Ante|Bajo|Desde|Hasta|Hacia|Según|Durante|Mediante|"
-                   r"Entre|Cada|Todo|Toda|Todos|Todas|Otro|Otra|Otros|Otras|Ambos|Ambas|Nuestro|Nuestra|"
-                   r"Nuestros|Nuestras|Pero|Aunque|Mientras|Además|También|Así|Tal|Tales|Dicho|Dicha|Dichos|"
-                   r"Dichas|Es|Son|Fue|Fueron|Ha|Han|Hay|Era|Eran|The|This|These|That|Those|It|We|They|In|On|"
-                   r"At|For|With|From|By|As|Of|An|Our|Their|There|Here)")
+# Palabras con mayúscula que pueden no ser un apellido delante de un año: nombres de programas, normas o documentos
+# («(Agenda 2030)», «(Horizonte 2020)», «(Campaña 2019)»), preposiciones de tiempo («(Desde 2019)»), meses («(May
+# 2019)»), siglas de políticas («(PAC, 2023)») y palabras de función al principio de una frase («Se observó en
+# 2019», «Han observado en 2019»). No se excluyen al reconocer la cita (muchas son también apellidos: «Han», «Son»,
+# «Ley», «Plan», «Vaca», «May»...): la cita se clasifica después (`_citation_kind`). Solo queda exenta donde la
+# palabra no puede ser un apellido: delante de un verbo de cita sin iniciales ni coautores, o sola delante del año en
+# un paréntesis sin coma ni coautores (las siglas de políticas, también con coma). En cualquier otra posición
+# («(Han et al., 2020)», «(Bloque, 2016)», «Ley et al. (2006)», «(Kim y Han, 2020)») es una cita: error en revisado o
+# final (falla en cerrado) y aviso en borrador.
+_PROGRAMME_WORDS = frozenset("""
+agenda horizonte horizon estrategia strategy plan programa programme program reglamento regulation directiva
+directive decision ley decreto norma campana censo encuesta fase semana grupo lote tabla table figura figure fig anexo
+annex seccion section version ano year mes cosecha temporada ejercicio edicion edition capitulo chapter vol volumen
+ensayo tratamiento experimento estudio dieta racion rebano granja explotacion parcela bloque periodo muestra animal
+vaca vacas raza modelo escenario caso""".split())
+_POLICY_ACRONYMS = frozenset({"pac", "cap", "ods", "sdg", "covid"})
+_MONTH_WORDS = frozenset("""enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre
+diciembre january february march april may june july august september october november december""".split())
+# Preposiciones y adverbios que pueden ir delante de un año en un paréntesis: «(Desde 2019)», «(In 2019)».
+_TEMPORAL_WORDS = frozenset("""en in desde hasta durante tras antes despues hacia entre para por sobre since until
+from during before after by for circa""".split())
+_FUNCTION_WORD_SET = frozenset("""se no lo ya si ni que como cuando donde esto este esta estos estas eso ese esa esos esas
+aquello aquel aquella ello ellos ellas el ella nos les los las un una unos unas en con por para sin sobre tras ante bajo
+desde hasta hacia segun durante mediante entre cada todo toda todos todas otro otra otros otras ambos ambas nuestro
+nuestra nuestros nuestras pero aunque mientras ademas tambien asi tal tales dicho dicha dichos dichas es son fue fueron
+ha han hay era eran the this these that those it we they in on at for with from by as of an our their there
+here""".split())
 # Palabra de un apellido: mayúscula y al menos otra letra (con apóstrofos o guiones: «O'Neill», «García-López»,
-# «St. Pierre»); no un mes ni una palabra de las listas anteriores.
-_NAME_WORD = (rf"(?!(?i:{_MONTHS})\b)(?!{_NOT_NAMES}\b)(?!{_FUNCTION_WORDS}\b)(?:(?:St|Ste|Sta)\.\s?)?"
-              r"[A-ZÀ-ÖØ-Þ](?:['’][A-ZÀ-ÖØ-Þ])?[^\W\d_]+(?:['’\-][^\W\d_]+)*")
+# «St. Pierre»). Las mayúsculas fuera de Latin-1 («Şahin», «Čermák», «Łukaszewicz», «İbrahim») se reconocen porque
+# las citas se buscan en el texto con esas letras sustituidas por «A» o «a» (`_latin1_letters`).
+_NAME_WORD = r"(?:(?:St|Ste|Sta)\.\s?)?[A-ZÀ-ÖØ-Þ](?:['’][A-ZÀ-ÖØ-Þ])?[^\W\d_]+(?:['’\-][^\W\d_]+)*"
 # Partículas de un apellido, en minúscula o no («van Soest», «Van Soest», «de Vries», «da Silva», «de la Fuente»,
 # «van der Merwe», «Le Roux»; también «La EFSA» o «El Ministerio»).
-_PARTICLES = (r"(?i:van|von|der|den|de|del|della|delle|dei|degli|di|da|das|dos|do|du|la|le|lo|les|ten|ter|zu|zur|"
-              r"bin|ibn|al|el)")
+_PARTICLES = (r"(?i:van|von|der|den|de|del|della|delle|dei|degli|di|da|das|dos|do|du|la|las|le|lo|los|les|ten|"
+              r"ter|zu|zur|bin|ibn|al|el)")
 # Apellido de hasta tres palabras con sus partículas («García Pérez», «Van Soest», «Le Roux», «de la Fuente»).
 _NAME = rf"(?:{_PARTICLES}\s+){{0,3}}{_NAME_WORD}(?:\s+(?:{_PARTICLES}\s+){{0,2}}{_NAME_WORD}){{0,2}}"
 # Iniciales: con punto («J.», «J. M.», «J.-M.») o dos o tres mayúsculas («JM»); una mayúscula suelta sin punto no
 # cuenta («Grupo A (2019)» no es una cita).
-_INITIALS = r"(?:,?\s+(?:(?:[A-Z]\.\s?-?){1,3}|[A-Z]{2,3}\b\.?))?"
-_INITIALS_REQ = r"(?:,?\s+(?:(?:[A-Z]\.\s?-?){1,3}|[A-Z]{1,3}\b\.?))"
+_INITIALS = r"(?:,?\s+(?:(?:[A-ZÀ-ÖØ-Þ]\.\s?-?){1,3}|[A-ZÀ-ÖØ-Þ]{2,3}\b\.?))?"
+_INITIALS_REQ = r"(?:,?\s+(?:(?:[A-ZÀ-ÖØ-Þ]\.\s?-?){1,3}|[A-ZÀ-ÖØ-Þ]{1,3}\b\.?))"
 # Autores al estilo Vancouver, con las iniciales detrás de cada apellido («García J, Pérez M, López A»).
 _REF_AUTHORS = (rf"{_NAME}{_INITIALS_REQ}(?:\s*,\s*{_NAME}{_INITIALS_REQ}){{0,8}}"
                 r"(?:\s*,?\s+(?:et\s+al\.?|y\s+otr[oa]s|and\s+others|(?:y|e|and|&)\s+[A-ZÀ-ÖØ-Þ][^\W\d_]+"
@@ -283,6 +293,9 @@ _CITE_VERBS = (r"(?:demostr\w*|mostr\w*|observ\w*|encontr\w*|describ\w*|descri\w
                r"hall[oóa]\w*|señal\w*|senal\w*|indic\w*|conclu\w*|comprob\w*|report\w*|document\w*|estudi\w*|"
                r"evalu\w*|analiz\w*|midi\w*|confirm\w*|sugiri\w*|sugier\w*|showed|found|reported|observed|"
                r"demonstrated|described|proposed|concluded)")
+# El verbo entero, no en futuro ni en condicional («evaluará», «mostrarán», «indicaría», «evaluaremos»): un plan que
+# dice «En 2027, Ana Pérez evaluará la dosis» no atribuye un resultado a nadie.
+_CITE_VERB = rf"(?:{_CITE_VERBS})(?![^\W\d_])(?<!rá)(?<!rán)(?<!ría)(?<!rían)(?<!remos)"
 # Entre los autores de una referencia y su año: «, 2018», «. 2018», «(2018)» o el punto de las iniciales («J. 2018»).
 _REF_YEAR_SEP = r"(?:\s*[,.]\s*\(?|\s*\(|(?:(?<=\.)|(?<=\.\s))\s*)"
 AUTHOR_YEAR_RES = (
@@ -304,23 +317,38 @@ AUTHOR_YEAR_RES = (
     re.compile(rf"(?<![\w'’\-]){_FIRST}\s+(?:et\s+al\b|[ye]\s+cols?\.)"),
     # En 2018, García demostró...; García demostró en 2018...: el año y un verbo de cita junto al apellido
     re.compile(rf"(?i:\b(?:en|in)\s+(?:el\s+año\s+)?)(?:19|20)\d{{2}}\s*,?\s+{_FIRST}{_AUTHORS}\s+"
-               rf"(?i:{_CITE_VERBS})"),
-    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERBS})\s+(?i:(?:en|in)\s+(?:el\s+año\s+)?)"
+               rf"(?i:{_CITE_VERB})"),
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s+(?i:{_CITE_VERB})\s+(?i:(?:en|in)\s+(?:el\s+año\s+)?)"
                rf"(?:19|20)\d{{2}}(?![\w/\-–])"),
     # García en 2018 mostró...; un trabajo publicado (descrito, estudiado...) en 2018 por García (con un verbo de
     # cita: «adoptado en 2009 por el Parlamento Europeo» no es una cita)
-    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?i:en\s+)(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERBS})"),
-    re.compile(rf"(?i:\b{_CITE_VERBS}\s+en\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?i:en\s+)(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERB})"),
+    re.compile(rf"(?i:\b{_CITE_VERB}\s+en\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
     # Referencia bibliográfica fuera de la bibliografía: una línea que empieza por un autor con sus iniciales y el año
     # («García J. 2018. Título...», «- García J, Pérez M. 2018.») o una nota al pie con autor y año («[^1]: García,
     # 2018.», «[^2]: García J, Pérez M. 2018. Título»). Entre los autores y el año va un punto, una coma o un
     # paréntesis, como en una referencia («- Cooperativa A 2020: 50 vacas» no lo es).
-    re.compile(rf"^\s{{0,3}}(?:[-*+]\s+|\d+[.)]\s+)?(?:{_REF_AUTHORS}|{_NAME}{_INITIALS_REQ}{_AUTHORS})"
+    re.compile(rf"^\s{{0,3}}(?:[-*+]\s+|\d+[.)]\s+)?(?P<name>{_REF_AUTHORS}|{_NAME}{_INITIALS_REQ}{_AUTHORS})"
                rf"{_REF_YEAR_SEP}(?:19|20)\d{{2}}[a-z]?\)?\s*[.,:;]", re.MULTILINE),
-    re.compile(rf"^\s{{0,3}}\[\^[^\]\n]+\]:\s*(?:{_LEADIN})?(?:{_REF_AUTHORS}|{_FIRST}{_AUTHORS}){_REF_YEAR_SEP}"
+    re.compile(rf"^\s{{0,3}}\[\^[^\]\n]+\]:\s*(?:{_LEADIN})?(?P<name>{_REF_AUTHORS}|{_NAME}{_INITIALS}{_AUTHORS})"
+               rf"{_REF_YEAR_SEP}"
                rf"(?:(?:19|20)\d{{2}}|{_STATUS})", re.MULTILINE),
+    # el verbo de cita delante («Como demostraron García y Pérez en 2018») o el año sin «en» («García, 2018,
+    # demostró», «García 2018 demostró»)
+    re.compile(rf"(?i:\b{_CITE_VERB})\s+(?:(?i:por)\s+)?{_FIRST}{_AUTHORS}\s+(?i:en\s+)(?:19|20)\d{{2}}"
+               rf"(?![\w/\-–])"),
+    re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERB})"),
 )
 _IN_PARENS_ONLY = 1          # índice de AUTHOR_YEAR_RES que solo cuenta dentro de un paréntesis o corchete abierto
+_PAREN_PATTERNS = (0, 1)      # entre paréntesis: «(García, 2018)», «(...; Jones, 2017)»
+_FORMULA_PATTERN = 4          # tras una fórmula de cita: «según García 2018»
+_VERB_PATTERNS = (6, 7, 8, 12, 13)  # con un verbo de cita junto al nombre: «En 2018, García demostró», «García
+#                                      mostró en 2018», «demostraron García y Pérez en 2018», «García, 2018, demostró»
+_REF_LINE_PATTERNS = (10, 11)  # líneas con forma de referencia o de nota al pie
+# Patrones débiles (verbo de cita, «publicado en 2018 por», líneas con forma de referencia): en un borrador que no es
+# un informe (un plan, una crítica) solo dan aviso: «En 2026, Ana Pérez evaluó la oportunidad» o «- Pérez A., 2026:
+# coordinación» pueden ser notas del equipo.
+_WEAK_PATTERNS = (6, 7, 8, 9, 10, 11, 12, 13)
 # En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita si la
 # columna es de estudios o fuentes; en cualquier columna, si lleva coautores, coma o paréntesis.
 _CELL_CITATION_RE = re.compile(rf"^\s*{_FIRST}(?P<authors>{_AUTHORS})\s*(?P<comma>,?)\s*(?P<open>[(\[]?)\s*{_YEAR}"
@@ -331,7 +359,10 @@ _SOURCE_COLUMN_RE = re.compile(r"^(?:estudios?|referencias?|refs?\.?|fuentes?|au
 # Referencias escritas entre paréntesis o llaves en lugar de corchetes: «(R1)», «{R1}», «(R1, R2)», «(R1-R3)»; o sin
 # corchetes tras una fórmula de cita: «según R1», «véase R2». («R²» se lee «R^2»: no es una referencia.)
 PAREN_REF_RE = re.compile(r"[({]\s*R\d+(?:\s*(?:[,;&]|[-–—]|\by\b|\be\b|\band\b)\s*R?\d+)*\s*[)}]")
-BARE_REF_RE = re.compile(r"(?i:\b(?:seg[uú]n|v[eé]ase|cf\.?|see|referencia|ref\.)\s+)(R\d+)\b(?!\s*[=<>≈^])")
+BARE_REF_RE = re.compile(r"(?i:\b(?:seg[uú]n|v[eé]ase|ver|cf\.?|see|referencia|ref\.)\s+)(R\d+)\b(?!\s*[=<>≈^])")
+# Cita con clave de pandoc o de un gestor de referencias: «[@garcia2018]», «[véase @garcia2018, p. 3]»,
+# «[-@garcia2018]», «[@garcia2018; @perez2019]».
+PANDOC_CITATION_RE = re.compile(r"\[(?:[^\[\]\n@]{0,40}?\s)?-?@[\w][\w:.#$%&+?<>~/-]*[^\[\]\n]{0,80}\]")
 # Cita numérica: «[1]», «[3, 4]», «[1-3]», «[1; 2]», «[1,2]» (no es una referencia [Rn]); no «[^1]» (nota),
 # «[texto][1]», «[1]: url» ni «[1](url)» (enlaces), ni un índice pegado a una palabra («x[1]»). `_numeric_citations`
 # descarta además los intervalos («IC 95 % [1,2; 3,4]», «[1,2-3,4]», «[2, 4] kg/d», «escala [1-5]»).
@@ -1183,13 +1214,18 @@ _UNIT_AFTER_RE = re.compile(r"\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:"
                             re.IGNORECASE)
 
 
+_DECIMAL_INTERVAL_RE = re.compile(r"\s*\d+,\d+\s*[;\-–—]\s*\d+,\d+\s*")
+
+
 def _numeric_citations(text: str):
     """Citas numéricas del texto («[1]», «[3, 4]», «[1-3]»), sin los intervalos: con decimales y un separador de
     intervalo («[1,2; 3,4]», «[1,2-3,4]»), seguidos de una unidad («[2, 4] kg/d») o tras «IC», «rango», «escala»,
     «%» o «entre»."""
     for m in NUMERIC_CITATION_RE.finditer(text):
         content = m.group(1)
-        if re.search(r",\d", content) and re.search(r"[;\-–—]", content):
+        # dos cifras con decimales separadas por un intervalo («1,2; 3,4», «1,2-3,4»); una lista de enteros al estilo
+        # Vancouver («[1,2,5-7]», «[2,4-6]») es una cita
+        if _DECIMAL_INTERVAL_RE.fullmatch(content):
             continue
         listed = "," in content or ";" in content or re.search(r"[-–—]", content)
         if listed and (_UNIT_AFTER_RE.match(text, m.end()) or _INTERVAL_CONTEXT_RE.search(text, 0, m.start())):
@@ -1263,15 +1299,104 @@ def _body_identifier_issues(line: str, i: int, sev: str, known: dict[str, str] |
     return out
 
 
-def _citation_ends(text: str) -> list[int]:
-    """Final de cada cita autor-año del texto (la cita cuenta en la frase donde termina: «Smith J. (2019) halló...»)."""
-    ends = []
+def _latin1_letters(text: str) -> str:
+    """El texto con cada letra fuera de Latin-1 sustituida por «A» (mayúscula) o «a» (minúscula), carácter a carácter
+    (las posiciones no cambian): las expresiones de las citas reconocen así «Şahin», «Čermák», «Łukaszewicz»,
+    «İbrahim» u «Ōta» como apellidos sin enumerar todas las mayúsculas de Unicode."""
+    if text.isascii():
+        return text
+    return "".join(ch if ord(ch) <= 0xFF or not ch.isalpha() else ("A" if ch.isupper() else "a") for ch in text)
+
+
+def _fold(word: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", word.lower()) if not unicodedata.combining(c))
+
+
+def _head_word(name: str) -> str:
+    """Primera palabra de un apellido sin sus partículas («de la Fuente» → «Fuente», «La EFSA» → «EFSA»); una
+    partícula sola es el apellido («Lo» en «(Lo et al., 2019)»)."""
+    words = re.findall(r"[^\W\d_][\w'’\-.]*", name)
+    for k, word in enumerate(words):
+        if k < len(words) - 1 and re.fullmatch(_PARTICLES, word.rstrip(".")):
+            continue
+        return word.rstrip(".")
+    return ""
+
+
+def _word_class(word: str) -> str | None:
+    """Clase de una palabra que puede no ser un apellido (ver `_PROGRAMME_WORDS`), o None."""
+    folded = _fold(word)
+    if folded in _POLICY_ACRONYMS and word.isupper():
+        return "sigla"
+    if folded in _MONTH_WORDS:
+        return "mes"
+    if folded in _TEMPORAL_WORDS:
+        return "tiempo"
+    if folded in _PROGRAMME_WORDS:
+        return "programa"
+    if folded in _FUNCTION_WORD_SET:
+        return "funcion"
+    return None
+
+
+# Lo que sigue al primer apellido y lo hace inequívoco: iniciales, otro autor o coautores.
+_MORE_AUTHORS_RE = re.compile(r"\s*(?:,?\s+(?:[A-ZÀ-ÖØ-Þ]\.|[A-ZÀ-ÖØ-Þ]{2,3}\b)|,\s*(?:[^\W\d_]+\s+)?[A-ZÀ-ÖØ-Þ]"
+                              r"|,?\s+(?:et\s+al|et\s+alii|[ye]\s+cols?\b|y\s+colaboradores|and\s+colleagues|"
+                              r"y\s+otr[oa]s|and\s+others|(?:y|e|and|&)\s+[A-ZÀ-ÖØ-Þ]))")
+
+
+def _citation_kind(n: int, m: re.Match, text: str) -> str | None:
+    """Clase de una cita autor-año (`AUTHOR_YEAR_RES[n]`, encontrada en `text`): «normal», «debil» (patrones de
+    `_WEAK_PATTERNS`) o «ambigua» (el apellido coincide con una palabra común: «(Han et al., 2020)», «(Bloque, 2016)»,
+    «Ley et al. (2006)»); None si la palabra no puede ser un apellido en esa posición («Se observó en 2019», «(Agenda
+    2030)», «(Desde 2019)», «(May 2019)», «(PAC, 2023)»)."""
+    weak = n in _WEAK_PATTERNS
+    if "name" not in m.re.groupindex or m.group("name") is None:
+        return "debil" if weak else "normal"
+    cls = _word_class(_head_word(text[m.start("name"):m.end("name")]))
+    if cls is None:
+        return "debil" if weak else "normal"
+    single = len(m.group("name").split()) == 1 and not _MORE_AUTHORS_RE.match(text, m.end("name"))
+    if n in _VERB_PATTERNS:
+        # «Se observó en 2019», «Han observado en 2019», «Esto indica en 2020»: una palabra de función (o de las otras
+        # listas) sola delante del verbo no es un apellido; con iniciales o coautores sí («Han y Kim demostraron»).
+        return None if single else "ambigua"
+    if n in _PAREN_PATTERNS or n == _FORMULA_PATTERN:
+        groups = m.re.groupindex
+        status = "status" in groups and m.group("status") is not None
+        lead = n in _PAREN_PATTERNS and bool(re.search(r"[^\W\d_]", text[m.start():m.start("name")]))
+        year_at = m.start("year") if "year" in groups and m.group("year") is not None else m.end()
+        comma = "," in text[m.end("name"):year_at]
+        if single and not status and not lead:
+            if cls == "sigla":
+                return None
+            if not comma and cls in ("tiempo", "mes", "programa"):
+                return None
+    return "ambigua"
+
+
+def _citations(text: str) -> list[tuple[int, str]]:
+    """(final, clase) de cada cita autor-año del texto (la cita cuenta en la frase donde termina: «Smith J. (2019)
+    halló...»). La clase la da `_citation_kind`; las citas exentas no se devuelven."""
+    scan = _latin1_letters(text)
+    out: list[tuple[int, str]] = []
     for n, rx in enumerate(AUTHOR_YEAR_RES):
-        for m in rx.finditer(text):
+        pos = 0
+        while pos <= len(scan):
+            m = rx.search(scan, pos)
+            if m is None:
+                break
             if n == _IN_PARENS_ONLY and not _inside_brackets(text, m.start()):
+                pos = max(m.end(), m.start() + 1)
                 continue
-            ends.append(m.end() - 1)
-    return ends
+            kind = _citation_kind(n, m, text)
+            if kind is None:
+                # exenta: otra cita puede empezar dentro de este tramo
+                pos = m.start() + 1
+                continue
+            out.append((m.end() - 1, kind))
+            pos = max(m.end(), m.start() + 1)
+    return out
 
 
 def _cell_spans(text: str) -> list[tuple[int, int]]:
@@ -1321,7 +1446,8 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
     """Cifras con unidades y citas que solo se ven por la estructura de una tabla (GFM: cabecera y fila de
     separación): un número de una columna cuya cabecera lleva la unidad («Leche (kg/d)»), o de una fila con una celda
     de unidades («Leche (kg/d) | 30,1» o «2,5 | kg/d»), y una celda «Autor Año» en una columna de estudios o fuentes
-    («García 2018»; en cualquier columna, si lleva coautores, coma o paréntesis). {línea: [(posición, tipo)]}."""
+    («García 2018»; en cualquier columna, si lleva coautores, coma o paréntesis). {línea: [(posición, tipo)]}; el tipo
+    de una cita es «cite:<clase>» (`_citation_kind`)."""
     out: dict[int, list[tuple[int, str]]] = {}
     n = len(doc.lines)
     i = 0
@@ -1364,9 +1490,13 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
             for k, ((a, b), cell) in enumerate(zip(spans, cells)):
                 if row not in no_numbers and (k in unit_cols or row_unit) and _has_figure(cell):
                     events.append((a, "unit"))
-                m = _CELL_CITATION_RE.match(cell)
+                m = _CELL_CITATION_RE.match(_latin1_letters(cell))
                 if m and (k in source_cols or m.group("authors") or m.group("comma") or m.group("open")):
-                    events.append((max(a, b - 1), "cite"))
+                    cls = _word_class(_head_word(cell[m.start("name"):m.end("name")]))
+                    bare = not (m.group("authors") or m.group("comma") or m.group("open"))
+                    if cls is not None and bare and cls in ("tiempo", "mes", "programa", "sigla"):
+                        continue        # «Ensayo 2019», «Campaña 2020» en una columna de estudios
+                    events.append((max(a, b - 1), "cite:normal" if cls is None else "cite:ambigua"))
     return out
 
 
@@ -2259,6 +2389,16 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     sev_unverified = "error" if strict or is_report else "aviso"
     gate_ids = list(gate_ids) if gate_ids else gate_ids_for(path)
 
+    def cite_severity(kind: str) -> str:
+        """Una cita autor-año sin [Rn] es error en revisado o final (falla en cerrado, también si el apellido
+        coincide con una palabra común). En borrador: aviso si es ambigua («(Han et al., 2020)») o, fuera de los
+        informes, si es de un patrón débil (verbo de cita, línea con forma de referencia); error en lo demás."""
+        if strict:
+            return "error"
+        if kind == "ambigua" or (kind == "debil" and not is_report):
+            return "aviso"
+        return "error"
+
     # ---- secciones numeradas
     numbered = _numbered_sections(doc)
     if require_sections:
@@ -2359,11 +2499,20 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("aviso", "[DER] sin indicar el cálculo u orden usada (una referencia [Rn] no lo "
                                          "indica)", i + 1))
         if not doc.fence[i]:
-            numeric = next(_numeric_citations(scan.text), None) or next(
-                (m.group(0) for m in REF_WORD_CITATION_RE.finditer(scan.text)), None)
-            if numeric:
-                issues.append(Issue("error", f"Cita numérica «{numeric}»: no se puede verificar; cita con [Rn] y su "
-                                             "entrada en la bibliografía (sección 20)", i + 1))
+            numeric = next(_numeric_citations(scan.text), None)
+            word_numeric = next((m.group(0) for m in REF_WORD_CITATION_RE.finditer(scan.text)), None)
+            if numeric or word_numeric:
+                # Una lista o un intervalo entre corchetes («[1-5]», «[2, 4]») puede ser una escala o un rango en un
+                # plan o una crítica: fuera de los informes, en borrador, aviso (como los identificadores); un número
+                # suelto («[1]») y «(ref. 3)», error.
+                listed = numeric is not None and not word_numeric and bool(re.search(r"[,;\-–—]", numeric))
+                issues.append(Issue(sev_unverified if listed else "error",
+                                    f"Cita numérica «{word_numeric or numeric}»: no se puede verificar; cita con [Rn] "
+                                    "y su entrada en la bibliografía (sección 20)", i + 1))
+            pandoc = PANDOC_CITATION_RE.search(scan.text)
+            if pandoc:
+                issues.append(Issue(sev_unverified, f"Cita con clave «{pandoc.group(0)[:60]}»: no se puede verificar; "
+                                                    "cita con [Rn] y su entrada en la bibliografía (sección 20)", i + 1))
             paren = next(_paren_numeric_citations(scan.text), None)
             if paren and i not in tables and not doc.heading_at(i):
                 # Con otros números entre paréntesis en la línea («leve (1), moderada (2) o grave (3).») puede ser una
@@ -2385,7 +2534,14 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue(sev_unverified, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no "
                                                 "se verifica; muévela a la sección 20", i + 1))
             stray_entries.add(i)
-        elif i not in record_lines and i not in bib_lines:
+        elif i in record_lines:
+            # Anexos B y C (decisiones y procedencia): sus cifras no necesitan etiqueta, pero un DOI, un PMID o un
+            # enlace a un artículo escrito ahí no se verifica: aviso, que cuenta en el sello.
+            for issue in _body_identifier_issues(line, i, "aviso", known_ids):
+                issue.severity = "aviso"
+                issue.message = issue.message.replace("en el cuerpo", "en el Anexo B o C", 1)
+                issues.append(issue)
+        elif i not in bib_lines:
             issues += _body_identifier_issues(line, i, "aviso" if doc.fence[i] else sev_unverified, known_ids)
     # Cifras con unidades, citas autor-año y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?»)
     # puede ocupar varias líneas de un párrafo, y una línea puede tener varias frases. Las cifras y las citas se buscan
@@ -2431,9 +2587,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             j, pos = _locate(m.start(), starts, plines)
             if j not in no_numbers:
                 events.append((j, pos, "unit"))
-        for end in _citation_ends(joined):
+        for end, cite_kind in _citations(joined):
             j, pos = _locate(end, starts, plines)
-            events.append((j, pos, "cite"))
+            events.append((j, pos, f"cite:{cite_kind}"))
         events.sort(key=lambda e: (e[0], e[1]))
         sentence: list[tuple[int, int, str]] = []
         for ev in events + [(-1, -1, "stop")]:
@@ -2447,13 +2603,22 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 refs_at = [j for j, _p, kind in sentence if kind == "ref"]
                 if refs_at and not all(j in record_lines or j in stray_entries for j in refs_at):
                     unlabeled_refs.append(refs_at[0] + 1)
-            if "cite" in kinds and "ref" not in kinds:
-                uncited.append(next(j for j, _p, kind in sentence if kind == "cite") + 1)
+            cites = [(j, kind[5:]) for j, _p, kind in sentence if kind.startswith("cite:")]
+            if cites and "ref" not in kinds:
+                sev = max((cite_severity(kind) for _j, kind in cites), key=("aviso", "error").index)
+                uncited.append((cites[0][0] + 1, sev, all(kind == "ambigua" for _j, kind in cites)))
             sentence = []
     cited_lines = [(j, list(dict.fromkeys(refs))) for j, refs in sorted(cited_by_line.items()) if refs]
-    for line_no in dict.fromkeys(uncited):
-        issues.append(Issue("error", "Cita autor-año sin referencia [Rn] verificable en la misma frase: añade su [Rn] "
-                                     "(y su entrada en la bibliografía) o reescribe la frase sin la cita", line_no))
+    worst: dict[int, tuple[str, bool]] = {}
+    for line_no, sev, ambiguous in uncited:
+        prev = worst.get(line_no)
+        if prev is None or (sev == "error" and prev[0] != "error"):
+            worst[line_no] = (sev, ambiguous)
+    for line_no, (sev, ambiguous) in worst.items():
+        note = (" (el nombre coincide con una palabra común; en revisado o final es error)"
+                if ambiguous and sev == "aviso" else "")
+        issues.append(Issue(sev, "Cita autor-año sin referencia [Rn] verificable en la misma frase: añade su [Rn] "
+                                 "(y su entrada en la bibliografía) o reescribe la frase sin la cita" + note, line_no))
     for n, line_no in enumerate(unlabeled):
         if n < 10:
             issues.append(Issue(sev_strict, "Cifra con unidades sin etiqueta de evidencia ni referencia", line_no))
@@ -3059,6 +3224,10 @@ def stamp_status(report: Path | str, conn=None) -> tuple[bool, str]:
             "(existencia, correspondencia con la cita y retractación)")
     if links:
         refs += f"; {links} enlace(s) del cuerpo sin verificar (no son referencias de la bibliografía)"
+    annex_ids = sum(1 for i in data.get("incidencias") or [] if isinstance(i, dict)
+                    and str(i.get("message", "")).startswith("Identificador de una fuente en el Anexo B o C"))
+    if annex_ids:
+        refs += f"; {annex_ids} identificador(es) en los anexos B o C sin verificar (no son referencias de la bibliografía)"
     parts = [f"estado '{info.value or 'sin estado'}'", refs,
              "estructura de informe comprobada" if structure else "documento sin estructura de informe"]
     if info.strict:

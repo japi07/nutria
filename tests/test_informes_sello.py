@@ -1581,14 +1581,38 @@ def test_review_documents_keep_their_verdict_tables(project):
     ("La colina reduce la cetosis subclínica (R1-R3).", "escribe [R1] [R3]"),
     ("Según R1, la colina reduce la cetosis subclínica.", "sin corchetes"),
 ])
-def test_round2_citation_forms_are_errors_even_in_draft(body, what):
-    # D3-4 (ronda 2): formas naturales que pasaban también en la base y en la ronda 1
+def test_round2_citation_forms_are_errors_even_in_draft(body, what, tmp_path):
+    # D3-4 (ronda 2): formas naturales que pasaban también en la base y en la ronda 1. Son error en final y, en los
+    # informes, también en borrador.
     assert any(what in e for e in _body_errors(body)), body
-    errors = [str(i) for i in _body_issues(body, status="borrador") if i.severity == "error"]
-    # en un borrador, los identificadores y «según R1» solo son error en los informes (aquí, un documento sin ruta:
-    # aviso; test_round3b_bare_references_are_errors_in_reports_and_warnings_in_other_drafts)
-    if what not in ("Identificador de una fuente", "sin corchetes"):
+    report = tmp_path / "research" / "informes" / "nota.md"
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, ANNEX).replace("estado: final", "estado: borrador")
+    report_errors = [str(i) for i in chk.check_report(text, require_sections=False, path=report)
+                     if i.severity == "error" and i.code != chk.REVIEW_CODE]
+    assert any(what in e for e in report_errors), body
+    # En otros borradores (un plan, una crítica: aquí, un documento sin ruta) los identificadores, «según R1», las
+    # listas o intervalos entre corchetes y los patrones débiles (verbo de cita, líneas con forma de referencia) son
+    # aviso: pueden ser notas del equipo, escalas o rangos (fase de coordinación; el hook no bloquea esos borradores).
+    issues = _body_issues(body, status="borrador")
+    errors = [str(i) for i in issues if i.severity == "error"]
+    if what in ("Identificador de una fuente", "sin corchetes") or body in _WEAK_IN_OTHER_DRAFTS:
+        assert not any(what in e for e in errors), body
+        assert any(what in str(i) and i.severity == "aviso" for i in issues), body
+    else:
         assert any(what in e for e in errors), body
+
+
+_WEAK_IN_OTHER_DRAFTS = {
+    "En 2018, García demostró que la colina reduce la cetosis subclínica.",
+    "García demostró en 2018 que la colina reduce la cetosis subclínica.",
+    "Un ensayo publicado en 2018 por García mostró que la colina reduce la cetosis.",
+    "La EFSA publicó en 2020 que la colina es segura en vacas lecheras.",
+    "Otros trabajos:\n\n- Pérez M, López A. 2019. Betaína en vacas. Animal 13:5-9.",
+    "La colina reduce la cetosis[^1] [SUP].\n\n[^1]: García J, Pérez M. 2018. Colina. J Dairy Sci 101:1-10.",
+    "La colina reduce la cetosis subclínica [3, 4].",
+    "La colina reduce la cetosis subclínica [1-3].",
+    "La colina reduce la cetosis subclínica [1,2].",
+}
 
 
 @pytest.mark.parametrize("body, what", [
@@ -1919,3 +1943,196 @@ def test_round3b_negative_note_in_the_annex_is_a_warning_when_the_table_has_the_
     assert not any("escrita como texto" in str(i) and i.severity == "error" for i in issues)
     # sin la fila negativa en la tabla, la valoración escrita como texto es un error (no puede sustituir a la fila)
     assert any("Valoración de respaldo negativa escrita como texto" in e for e in _body_errors("", ANNEX + note))
+
+
+# ============================================================================ fase de coordinación: D3-4 en cerrado
+# Bloqueante de la revisión final de P2 (ronda 3): las listas de palabras que no son apellidos se aplicaban a todos los
+# patrones de cita, también entre paréntesis y delante de «et al.», y citas con apellidos reales que coinciden con una
+# palabra común pasaban. Ahora la cita se reconoce siempre y se clasifica después (`check._citation_kind`).
+_COMMON_WORD_SURNAMES = [
+    "La colina protegida reduce la cetosis subclínica (Han et al., 2020).",
+    "La colina protegida reduce la cetosis subclínica (Han, 2020).",
+    "La colina protegida reduce la cetosis subclínica (Han y Kim, 2020).",
+    "Han et al. (2020) demostraron que la colina protegida reduce la cetosis subclínica.",
+    "Han et al. demostraron que la colina protegida reduce la cetosis subclínica.",
+    "Ley et al. (2006) demostraron que la microbiota determina la eficiencia energética.",
+    "La microbiota ruminal determina la eficiencia energética de las vacas (Ley et al., 2006).",
+    "La colina protegida reduce la cetosis subclínica (Son et al., 2018).",
+    "La colina protegida reduce la cetosis subclínica (Raza et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Raza, 2019).",
+    "La colina protegida reduce la cetosis subclínica (Toda et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Ha et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Tal et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Ni et al., 2020).",
+    "La colina protegida reduce la cetosis subclínica (An et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Lo et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Hay et al., 2016).",
+    "La colina protegida reduce la cetosis subclínica (Vaca et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Caso et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Campaña et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Granja et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Bajo et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Plan et al., 2016).",
+    "La colina protegida reduce la cetosis subclínica (Bloque, 2016).",
+    "La colina protegida reduce la cetosis subclínica (May et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Mayo et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (March y Pérez, 2017).",
+    "La colina protegida reduce la cetosis subclínica (Abril et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (August et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Como, 2019).",
+    "| Estudio | Especie | Efecto en leche |\n|---|---|---|\n| Han et al. 2020 | vacuno lechero | positivo |",
+    "Otros trabajos:\n\n- Han X, Li Y. 2020. Choline in dairy cows. J Dairy Sci 103:1-10.",
+]
+
+
+@pytest.mark.parametrize("body", _COMMON_WORD_SURNAMES)
+def test_coord_common_word_surnames_are_errors_in_final_and_warnings_in_draft(body, tmp_path):
+    assert any("Cita autor-año" in e for e in _body_errors(body)), body
+    assert any("Cita autor-año" in e for e in _body_errors(body, status="revisado")), body
+    # en borrador (también en un informe), aviso que dice que en revisado o final será error
+    report = tmp_path / "research" / "informes" / "nota.md"
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, ANNEX).replace("estado: final", "estado: borrador")
+    issues = [i for i in chk.check_report(text, require_sections=False, path=report) if "Cita autor-año" in str(i)]
+    assert issues and all(i.severity == "aviso" for i in issues), body
+    assert any("en revisado o final es error" in str(i) for i in issues), body
+
+
+@pytest.mark.parametrize("body", [
+    "La colina protegida reduce la cetosis subclínica (Şahin et al., 2019).",
+    "La colina protegida reduce la cetosis subclínica (Čermák, 2018).",
+    "Łukaszewicz et al. (2020) demostraron que la colina protegida reduce la cetosis subclínica.",
+    "La colina protegida reduce la cetosis subclínica (Šustala y Novák, 2017).",
+    "La colina protegida reduce la cetosis subclínica (İbrahim, 2019).",
+    "La colina protegida reduce la cetosis subclínica (Đorđević et al., 2016).",
+    "La colina protegida reduce la cetosis subclínica (Ōta, 2018).",
+    "La colina protegida reduce la cetosis subclínica (Śliwiński et al., 2002).",
+    "La colina protegida reduce la cetosis subclínica (Kim y Han, 2020).",
+    "La colina protegida reduce la cetosis subclínica (de los Santos, 2019).",
+    "La colina protegida reduce la cetosis subclínica (De las Heras et al., 2019).",
+    "Como demostraron García y Pérez en 2018, la colina protegida reduce la cetosis subclínica.",
+    "García, 2018, demostró que la colina protegida reduce la cetosis subclínica.",
+    "García 2018 demostró que la colina protegida reduce la cetosis subclínica.",
+])
+def test_coord_unicode_initials_particles_and_verb_order_are_citations(body, tmp_path):
+    # iniciales fuera de Latin-1, «de los»/«de las» y el verbo de cita delante o el año sin «en»: error en final y,
+    # en los informes, también en borrador
+    assert any("Cita autor-año" in e for e in _body_errors(body)), body
+    report = tmp_path / "research" / "informes" / "nota.md"
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, ANNEX).replace("estado: final", "estado: borrador")
+    assert any("Cita autor-año" in str(i) and i.severity == "error"
+               for i in chk.check_report(text, require_sections=False, path=report)), body
+
+
+@pytest.mark.parametrize("body, what", [
+    ("La colina protegida reduce la cetosis subclínica en vacas en transición [1,2,5-7].", "Cita numérica «[1,2,5-7]»"),
+    ("La colina protegida reduce la cetosis subclínica en vacas en transición [2,4-6].", "Cita numérica «[2,4-6]»"),
+    ("La colina protegida reduce la cetosis subclínica en vacas en transición (ver R1).", "«ver R1» sin corchetes"),
+    ("La colina protegida reduce la cetosis subclínica en vacas en transición [@garcia2018].",
+     "Cita con clave «[@garcia2018]»"),
+    ("La colina protegida reduce la cetosis subclínica [véase @garcia2018, p. 3].", "Cita con clave"),
+])
+def test_coord_vancouver_lists_bare_ver_and_pandoc_keys_are_errors(body, what, tmp_path):
+    assert any(what in e for e in _body_errors(body)), body
+    report = tmp_path / "research" / "informes" / "nota.md"
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, ANNEX).replace("estado: final", "estado: borrador")
+    assert any(what in str(i) and i.severity == "error"
+               for i in chk.check_report(text, require_sections=False, path=report)), body
+
+
+@pytest.mark.parametrize("body", [
+    # una palabra que no puede ser un apellido en esa posición
+    "El proyecto se alinea con los objetivos de sostenibilidad (Agenda 2030) [SUP].",
+    "El proyecto se financia con el programa europeo (Horizonte 2020) [SUP].",
+    "El proyecto se alinea con la política agraria común (PAC, 2023) [SUP].",
+    "Los precios de la leche son los de la campaña anterior (Desde 2019) [SUP].",
+    "El precio de referencia es el del último informe de mercado (May 2019) [SUP].",
+    "Se observó en 2019 un aumento de los costes de la ración [SUP].",
+    "Han observado en 2019 un aumento de los costes de la ración [SUP].",
+    "Esto indica en 2020 un cambio de tendencia en los costes de la ración [SUP].",
+    # el futuro no atribuye un resultado a nadie
+    "En 2027, Ana Pérez evaluará la dosis con el equipo de campo [SUP].",
+    # intervalos con decimales
+    "El IC 95 % fue [1,2; 3,4] kg/d [DER] (cálculo: nutria meta analizar).",
+    "El intervalo fue [1,2-3,4] kg/d [DER] (cálculo: nutria meta analizar).",
+    # una dirección de correo entre corchetes no es una clave de pandoc
+    "Contacto del equipo [ana@example.org] [SUP].",
+])
+def test_coord_words_that_cannot_be_surnames_are_not_flagged(body):
+    assert not [e for e in _body_errors(body) if "Cita" in e or "Referencia" in e], body
+
+
+@pytest.mark.parametrize("kind", ["planes", "revisiones"])
+def test_coord_hook_warns_but_does_not_block_legitimate_drafts(project, kind):
+    # Revisión final de P2 (no bloqueante): las reglas nuevas de «error siempre» bloqueaban borradores legítimos de
+    # research/planes y research/revisiones. En borrador, aviso; en final, error.
+    body = ("La condición corporal [1-5] se medirá cada semana en todas las vacas [SUP].\n\n"
+            "Se tomarán muestras de sangre en las semanas [2, 4] tras el parto [SUP].\n\n"
+            "El precio seguirá una distribución triangular [1, 2, 3] en la simulación [SUP].\n\n"
+            "En 2026, Ana Pérez evaluó la oportunidad y propuso descartarla [SUP].\n\n"
+            "En 2022, la Comisión propuso revisar el Reglamento (CE) 1831/2003 [SUP].\n\n"
+            "Equipo [SUP]:\n\n- Pérez A., 2026: coordinación [SUP].\n- López M., 2026: estadística [SUP].\n\n"
+            "La colina protegida reduce la cetosis subclínica (Han et al., 2020).")
+    hooks = _hook_project(project)
+    target = project / "research" / kind / "borrador.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_draft(body), "utf-8")
+    assert _run_hook(hooks, _payload(target)) is None
+    issues = chk.check_report(target.read_text("utf-8"), require_sections=False, path=target)
+    assert not [i for i in issues if i.severity == "error"]
+    assert sum("Cita numérica" in str(i) for i in issues) == 3
+    assert sum("Cita autor-año" in str(i) for i in issues) >= 4
+    final = _draft(body).replace("estado: borrador", "estado: final")
+    errors = _errors(final, require_sections=False, path=target)
+    assert sum("Cita numérica" in e for e in errors) == 3
+    assert sum("Cita autor-año" in e for e in errors) >= 4
+
+
+def test_coord_the_same_draft_in_a_report_is_still_blocked(project):
+    hooks = _hook_project(project)
+    target = project / "research" / "informes" / "nota.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_draft("En 2018, García demostró que la colina reduce la cetosis subclínica."), "utf-8")
+    decision = _run_hook(hooks, _payload(target))
+    assert decision and decision["decision"] == "block" and "Cita autor-año" in decision["reason"]
+
+
+def test_coord_review_and_stamp_refuse_common_word_surnames_and_unicode_initials(project, online, capsys):
+    # De punta a punta (p_e2e_r3.py del revisor): con estas citas sin [Rn], `informe revisar` se niega y el sello no
+    # vale (antes: revisar=0, comprobar=0 y «Sello válido ... 2 de 2»).
+    path = _filled_report(project)
+    base = path.read_text("utf-8")
+    for extra in ("La colina reduce la cetosis subclínica (Han et al., 2020).",
+                  "Ley et al. (2006) demostraron que la microbiota determina la eficiencia energética.",
+                  "La colina reduce la cetosis subclínica (Son et al., 2018).",
+                  "La colina reduce la cetosis subclínica (Raza et al., 2019).",
+                  "La colina reduce la cetosis subclínica (Şahin et al., 2019).",
+                  "La colina reduce la cetosis subclínica [1,2,5-7]."):
+        path.write_text(base.replace(CLAIM_B, CLAIM_B + "\n\n" + extra, 1), "utf-8")
+        with pytest.raises(SystemExit, match="No se registra la revisión"):
+            main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"])
+        assert db.report_reviews(_conn()) == []
+        path.write_text(path.read_text("utf-8").replace("estado: borrador", "estado: final"), "utf-8")
+        capsys.readouterr()
+        main(["informe", "comprobar", str(path), "--online", "--sellar"])
+        assert "Sello válido" not in _out(capsys), extra
+        assert not chk.stamp_status(path)[0], extra
+
+
+def test_coord_identifiers_in_annexes_b_and_c_are_warnings_counted_in_the_stamp(project, online, capsys):
+    # p_annexb_doi.py del revisor: un DOI o un enlace de PubMed inventados en los anexos B o C daban «Sello válido
+    # ... 2 de 2 referencia(s) verificadas ... 0 aviso(s)». Ahora son aviso y el sello los cuenta.
+    path = _filled_report(project)
+    text = path.read_text("utf-8")
+    text = text.replace("## Anexo B. Registro de decisiones", "## Anexo B. Registro de decisiones\n\nSe decidió seguir "
+                        "porque un ensayo posterior lo confirmó (doi:10.9999/doi.inventado.2021.001).", 1)
+    text = text.replace("## Anexo C. Procedencia y versiones", "## Anexo C. Procedencia y versiones\n\nConfirmado en "
+                        "https://pubmed.ncbi.nlm.nih.gov/39999999/.", 1)
+    path.write_text(text, "utf-8")
+    issues = chk.check_report(text, require_sections=True, path=path)
+    annex = [i for i in issues if "en el Anexo B o C" in str(i)]
+    assert len(annex) == 2 and all(i.severity == "aviso" for i in annex)
+    assert main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"]) == 0
+    assert main(["informe", "comprobar", str(path), "--online", "--sellar"]) == 0
+    valid, message = chk.stamp_status(path)
+    assert valid and "2 identificador(es) en los anexos B o C sin verificar" in message
+    assert "0 aviso(s)" not in message
