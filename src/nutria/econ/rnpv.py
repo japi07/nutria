@@ -49,7 +49,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .dist import CENTRAL_TEXT, Dist, check_central, parse_dist, source_has_label
+from .dist import (CENTRAL_TEXT, Dist, check_central, parse_dist, source_has_label, sources_summary,
+                   sources_summary_line)
 
 _SECTIONS = {"proyecto", "fase", "mercado", "supuestos"}
 _PROYECTO_KEYS = {"nombre", "tasa_descuento", "umbral_perdida_eur", "nota"}
@@ -214,6 +215,13 @@ def input_table(project: Project) -> list[dict]:
 def declared_sources(project: Project) -> list[tuple[str, str]]:
     """(dónde, fuente) de cada fuente declarada (para comprobarlas en el registro)."""
     return [(r["entrada"], r["fuente"]) for r in input_table(project) if r["fuente"]]
+
+
+def sources_overview(project: Project) -> dict:
+    """Recuento de fuentes por etiqueta y entradas sin datos ([SUP], [DESC], sin fuente o por defecto) entre las que
+    más mueven el rNPV en el tornado. El modelo no trae valores de referencia de plazo ni de coste de la autorización:
+    si son [SUP], aparecen aquí cuando pesan en el resultado."""
+    return sources_summary(input_table(project), sensitivity(project))
 
 
 def missing_sources(project: Project) -> list[str]:
@@ -563,6 +571,9 @@ def _sources_lines(project: Project) -> list[str]:
     if missing:
         lines.append(f"AVISO: {len(missing)} entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o con valor "
                      "por defecto no neutro sin declarar: " + ", ".join(missing) + ". `--exigir-fuentes` las rechaza.")
+    lines.append(sources_summary_line(sources_overview(project), "el rNPV"))
+    lines.append("El modelo no trae valores de referencia de coste ni de plazo de las fases (incluida la autorización): "
+                 "cada uno va con su fuente o como [SUP].")
     return lines
 
 

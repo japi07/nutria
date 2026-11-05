@@ -1157,3 +1157,24 @@ def test_der_exige_la_orden_o_el_fichero_del_script(tmp_path, project, capsys, s
     path = _farm_with_sources(tmp_path, "[SUP] prueba", source)
     assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == (0 if traceable else 2)
     assert ("[DER] sin la orden nutria o el script" in capsys.readouterr().err) is not traceable
+
+
+# ============================================================================ D8-13 y D8-14: supuestos que dominan
+def test_resumen_de_fuentes_senala_los_supuestos_que_dominan_el_resultado(tmp_path, project, capsys):
+    from nutria.econ.dist import source_label
+    assert source_label("[SUP] basado en [PUB] doi:10.1/x") == "[SUP]" and source_label(None) == "sin fuente"
+    assert source_label(None, declared=False) == "valor por defecto" and source_label("catálogo") == "sin etiqueta"
+    example = farm.sources_overview(farm.load_farm_model(FARM_EXAMPLE))
+    assert example["recuento"] == {"[SUP]": 13} and example["principales"][0] == "beneficio[1].respuesta"
+    assert "beneficio[1].respuesta ([SUP])" in example["principales_sin_datos"]
+    # Con la respuesta en leche (la que más pesa) respaldada por un cálculo [DER], deja de señalarse.
+    der = _farm_with_sources(tmp_path, "[SUP] prueba", "[DER] nutria meta analizar research/datos/O-0001/leche.csv")
+    overview = farm.sources_overview(farm.load_farm_model(der))
+    assert overview["recuento"]["[DER]"] == 1
+    assert not any(x.startswith("beneficio[1].respuesta") for x in overview["principales_sin_datos"])
+    company = rnpv.sources_overview(rnpv.load_project(COMPANY_EXAMPLE))
+    assert company["recuento"] == {"[SUP]": 26, "valor por defecto": 1} and len(company["principales_sin_datos"]) == 5
+    text = rnpv.report(rnpv.load_project(COMPANY_EXAMPLE), 500, 1)
+    assert "no se apoyan en datos" in text and "no trae valores de referencia de coste ni de plazo" in text
+    assert main(["--json", "econ", "ganadero", str(FARM_EXAMPLE), "--sim", "200"]) == 0
+    assert json.loads(capsys.readouterr().out)["resumen_fuentes"]["entradas"] == 13

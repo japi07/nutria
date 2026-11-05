@@ -58,7 +58,7 @@ import numpy as np
 
 from .. import dosis
 from .dist import (CENTRAL_TEXT, Dist, check_central, copula_uniforms, gaussian_copula, parse_dist,
-                   source_has_label)
+                   source_has_label, sources_summary, sources_summary_line)
 
 # Escenario -> percentil del beneficio neto simulado.
 SCENARIO_PERCENTILES = (("conservador", 10), ("intermedio", 50), ("optimista", 90))
@@ -464,6 +464,12 @@ def declared_sources(model: FarmModel) -> list[tuple[str, str]]:
     return out
 
 
+def sources_overview(model: FarmModel) -> dict:
+    """Recuento de fuentes por etiqueta y entradas sin datos ([SUP], [DESC], sin fuente) entre las que más mueven el
+    neto en el tornado."""
+    return sources_summary(input_table(model), sensitivity(model))
+
+
 def missing_sources(model: FarmModel) -> list[str]:
     """Entradas declaradas en el TOML sin fuente etiquetada ([PUB], [DER], [SUP], [DESC] o [HIP]), correlaciones sin
     fuente y [escenario].dias si se usa su valor por defecto (1 día) sin declararlo."""
@@ -814,6 +820,7 @@ def _sources_lines(model: FarmModel) -> list[str]:
     if missing:
         lines.append(f"AVISO: {len(missing)} entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o con valor "
                      "por defecto no neutro sin declarar: " + ", ".join(missing) + ". `--exigir-fuentes` las rechaza.")
+    lines.append(sources_summary_line(sources_overview(model), "el neto"))
     return lines
 
 

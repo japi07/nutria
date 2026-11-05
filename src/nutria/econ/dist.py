@@ -186,6 +186,48 @@ def source_has_label(source: str | None) -> bool:
     return bool(source) and any(tag in source for tag in ETIQUETAS_FUENTE)
 
 
+def source_label(source: str | None, declared: bool = True) -> str:
+    """Etiqueta principal de una fuente (la primera que aparece en el texto), "sin etiqueta", "sin fuente" o, para
+    una entrada que no se declaró, "valor por defecto"."""
+    if not source:
+        return "sin fuente" if declared else "valor por defecto"
+    found = [(source.find(tag), tag) for tag in ETIQUETAS_FUENTE if tag in source]
+    return min(found)[1] if found else "sin etiqueta"
+
+
+# Etiquetas que no apoyan un valor en datos: supuestos, desconocidos, hipótesis o sin fuente.
+_WEAK_LABELS = ("[SUP]", "[DESC]", "[HIP]", "sin fuente", "sin etiqueta", "valor por defecto")
+
+
+def sources_summary(inputs: list[dict], tornado: list[dict], top: int = 5) -> dict:
+    """Resumen de las fuentes de un modelo: recuento por etiqueta y, de las `top` entradas que más mueven el
+    resultado en el tornado, las que son supuestos ([SUP], [DESC], [HIP]), no tienen fuente o usan un valor por
+    defecto. `inputs`: filas de input_table (entrada, fuente, declarada); `tornado`: filas de sensitivity (entrada,
+    amplitud), ya ordenadas."""
+    labels = {r["entrada"]: source_label(r["fuente"], r["declarada"]) for r in inputs}
+    counts: dict[str, int] = {}
+    for label in labels.values():
+        counts[label] = counts.get(label, 0) + 1
+    drivers = [r["entrada"] for r in tornado if r.get("amplitud")][:top]
+    weak = [f"{name} ({labels.get(name, 'sin fuente')})" for name in drivers
+            if labels.get(name, "sin fuente") in _WEAK_LABELS]
+    return {"recuento": counts, "entradas": len(labels), "principales": drivers, "principales_sin_datos": weak}
+
+
+def sources_summary_line(summary: dict, what: str) -> str:
+    order = [*ETIQUETAS_FUENTE, "sin etiqueta", "sin fuente", "valor por defecto"]
+    counts = "; ".join(f"{label} {summary['recuento'][label]}" for label in order if label in summary["recuento"])
+    line = f"Resumen de fuentes ({summary['entradas']} entradas): {counts}."
+    if summary["principales_sin_datos"]:
+        line += (f" De las {len(summary['principales'])} entradas que más mueven {what} (tornado), "
+                 f"{len(summary['principales_sin_datos'])} no se apoyan en datos: "
+                 + ", ".join(summary["principales_sin_datos"])
+                 + ". El resultado depende sobre todo de supuestos: acótalos con fuentes antes de puntuar.")
+    elif summary["principales"]:
+        line += f" Las {len(summary['principales'])} entradas que más mueven {what} (tornado) tienen fuente."
+    return line
+
+
 # Identificadores del registro que una fuente [PUB] puede citar: fuentes (doi:, pmid:, openalex:) y afirmaciones (A-).
 _ID_RE = re.compile(r"(?i)(?<![\w/.-])(doi:\s*10\.\d{4,9}/\S+|pmid:\s*\d+|openalex:\s*W\d+|A-\d{4,})")
 

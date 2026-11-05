@@ -959,14 +959,16 @@ def cmd_econ(args, cfg) -> int:
                 "monte_carlo": farm.monte_carlo(model, args.sim, args.semilla),
                 "dosis": farm.dose_summary(model), "sensibilidad": farm.sensitivity(model),
                 "entradas": farm.input_table(model), "entradas_sin_fuente": missing,
-                "fuentes_sin_rastrear": untraceable, "estadistico_central": central}
+                "fuentes_sin_rastrear": untraceable, "resumen_fuentes": farm.sources_overview(model),
+                "estadistico_central": central}
         text = farm.report(model, args.sim, args.semilla) + sources_warning
         summary = {k: data[k] for k in ("monte_carlo", "dosis", "entradas_sin_fuente", "fuentes_sin_rastrear",
-                                        "estadistico_central")}
+                                        "resumen_fuentes", "estadistico_central")}
     else:
         data = rnpv.evaluate(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida)
         data.update({"sensibilidad": rnpv.sensitivity(project), "entradas": rnpv.input_table(project),
-                     "entradas_sin_fuente": missing, "fuentes_sin_rastrear": untraceable})
+                     "entradas_sin_fuente": missing, "fuentes_sin_rastrear": untraceable,
+                     "resumen_fuentes": rnpv.sources_overview(project)})
         text = rnpv.report(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida) + sources_warning
         if args.ganadero:
             data["coherencia"] = rnpv.coherence(farm.load_farm_model(Path(args.ganadero), central), project)
