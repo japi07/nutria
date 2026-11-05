@@ -763,25 +763,32 @@ def test_comparar_sistemas_counts_and_reports_failed_agents():
 #   D1-3, D2-2  evaluar_evaluadores_ciegos_antes_del_informe, evaluador_no_ve_las_decisiones_propuestas,
 #               evaluar|mision1_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas,
 #               evaluar_critica_y_verificacion_eligen_las_afirmaciones, red_team_ningun_paso_lo_hace_el_autor,
-#               red_team_sin_autor_deducible_no_empieza
+#               red_team_sin_autor_deducible_no_empieza, evaluar_detecta_registros_prematuros (ronda 2: decision
+#               listar rechazada a evaluadores en evaluador_no_ve_las_decisiones_propuestas)
 #   D1-7, D2-8  evaluar_se_detiene_si_el_registro_ya_tiene_una_compuerta_bloqueada, evaluar_ruta_fuera_de_alcance_*,
 #               evaluar_falla_en_cerrado_*, evaluar_el_registro_manda_tras_el_descarte_rapido,
-#               evaluar_se_detiene_antes_de_puntuar_*, evaluar_relee_el_registro_antes_de_puntuar
+#               evaluar_se_detiene_antes_de_puntuar_*, evaluar_relee_el_registro_antes_de_puntuar,
+#               estado_detenido_sin_compuertas_bloqueadas
 #   D4-3        mision1_no_puntua_las_oportunidades_bloqueadas, mision1_sin_compuertas_legibles_no_puntua
 #   D3-3        evaluar_sin_sello_valido_no_registra_puntuaciones, evaluar_interpreta_la_salida_real_de_informe_sello,
 #               evaluar_no_registra_un_fichero_de_puntuacion_modificado, evaluar_modo_registrar_*,
-#               mision1_firma_de_la_seleccion_segun_el_registro
-#   D1-12       mision1_planes_critica_con_la_lista_y_etica_repropuesta
+#               evaluar_registro_sin_comprobacion_literal_del_sha256, evaluar_detecta_registros_prematuros,
+#               mision1_firma_de_la_seleccion_segun_el_registro, mision1_firma_de_la_seleccion_orden_y_negacion
+#   D1-12       mision1_planes_critica_con_la_lista_y_etica_repropuesta, mision1_etica_repropuesta_rechazada_por_la_cli,
+#               lista_de_validacion_igual_en_director_critico_y_workflow
 #   D2-10       red_team_regla_de_fuentes_en_todas_las_combinaciones, red_team_regla_de_fuentes_documentada_*
 #   D2-15       mision1_paso0_en_cada_fase, mision1_deduplica_contra_el_registro, mision1_nombres_de_fichero_*,
 #               mision1_repetir_la_fase_no_duplica_ni_sobrescribe, mision1_planes_conserva_la_version_anterior,
-#               mision1_minimo_de_rumiantes, mision1_id_de_otra_oportunidad_no_se_puntua
+#               mision1_minimo_de_rumiantes, mision1_id_de_otra_oportunidad_no_se_puntua,
+#               mision1_paso0_acepta_los_dos_formatos_de_doctor, mision1_paso0_estado_compacto_y_comprobado,
+#               mision1_ls_falla_en_cerrado, mision1_ls_reconoce_cabeceras_absolutas_por_directorio
 #   D2-16       red_team_salida_incluye_el_directorio_de_origen, red_team_revisar_plan_e_informe_no_se_pisan,
 #               red_team_no_sobrescribe_una_revision_anterior
 #   D2-17       version_de_claude_code_documentada
 #   D2-18       mision1_novedad_por_el_rol_que_fija_la_skill, evaluar_pregunta_obligatoria_aunque_el_plan_traiga_la_suya
 #   D10-3       evaluar_tope_de_preguntas_*, red_team_tope_*, mision1_n_oportunidades_es_un_tope, *_topes_no_validos_*,
-#               mision1_estimacion_de_las_fases_mapa_y_planes, mision1_entradas_no_validas_no_se_descartan_en_silencio
+#               mision1_estimacion_de_las_fases_mapa_y_planes, mision1_entradas_no_validas_no_se_descartan_en_silencio,
+#               readme_cifras_de_agentes_coinciden_con_los_workflows
 #   D10-9       ningun_mensaje_presenta_un_workflow_como_orden_con_barra, siguiente_de_evaluar_lanza_red_team_*
 #   D4-4        adaptacion_de_la_microbiota_ruminal
 #   D5-4        antibioticos_y_moduladores_ruminales_antimicrobianos
@@ -1253,6 +1260,11 @@ def test_p8_evaluar_detecta_registros_prematuros(sello_valido, project, capsys):
     code, out = _cli(capsys, "--agente", "evaluador-2", "--json", "puntuar", "registrar", "--datos",
                      str(project / "research" / "oportunidades" / "O-0003_puntuacion_evaluador-2.json"))
     assert code == 0, out
+    # entretanto, otra evaluación registra una puntuación de OTRA oportunidad: no es un registro prematuro de esta
+    otra = project / "otra.json"
+    otra.write_text(json.dumps({**_ejemplo("puntuacion_ejemplo"), "oportunidad": "O-0002", "evaluador": "evaluador-1"}), "utf-8")
+    code, out = _cli(capsys, "--agente", "evaluador-1", "--json", "puntuar", "registrar", "--datos", str(otra))
+    assert code == 0, out
     despues = _salida(capsys, *ORDEN_PROCEDENCIA)
     sello = SELLO_VALIDO if sello_valido else SELLOS_NO_VALIDOS["sello-no-valido"]
     base = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)}, *reglas_p, {"label": "sello:O-0003", "respuesta": sello}]
@@ -1294,6 +1306,14 @@ def test_p8_evaluar_registro_sin_comprobacion_literal_del_sha256(project, capsys
     res = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)["resultado"]
     por_id = {e["id"]: e for e in res["evaluadores"]}
     assert por_id["evaluador-1"]["registrado"] is True and por_id["evaluador-1"]["alerta"] is None
+    # la salida completa pero con un código distinto de 0 no confirma el registro (queda pendiente)
+    con_error = {**reglas_p[1]["respuesta"], "codigo_salida": 1}
+    res_error = run_workflow("evaluar-oportunidad-auto", "O-0003", [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+                                                                     {"label": "registro-puntuacion:evaluador-1", "respuesta": con_error},
+                                                                     *reglas_p, {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}])["resultado"]
+    ev1 = next(e for e in res_error["evaluadores"] if e["id"] == "evaluador-1")
+    assert ev1["registrado"] is False and "no confirma el registro (código 1)" in ev1["fallo"]
+    assert [p["evaluador"] for p in res_error["puntuaciones_pendientes"]] == ["evaluador-1"]
     # registró sin la comprobación literal: consta como registrada (lo está), con alerta para revisarlo
     assert por_id["evaluador-2"]["registrado"] is True and "sin la comprobación literal del sha256" in por_id["evaluador-2"]["alerta"]
     # declarar que coincide no basta: sin "<fichero>: OK" ni registro confirmado, no consta registrada
