@@ -991,7 +991,8 @@ def _apply_citation(result: Verification, rec: Record | None, citation_text: str
 
 def _pubmed_by_doi(client, doi: str) -> Record | None:
     """Registro de PubMed con ese DOI (búsqueda `<doi>[doi]` y resumen), o None si no se sabe. Se descarta si
-    PubMed le asocia otro DOI: el PMID sería de otro trabajo."""
+    PubMed le asocia otro DOI: el PMID sería de otro trabajo. Si PubMed no declara el DOI, quien llama comprueba
+    que el título sea el del trabajo (`_consistent`)."""
     finder = getattr(pubmed, "pmid_for_doi", None)
     if finder is None:
         return None
@@ -1005,6 +1006,17 @@ def _pubmed_by_doi(client, doi: str) -> Record | None:
     if not records or (records[0].doi and records[0].doi != normalize_doi(doi)):
         return None
     return records[0]
+
+
+def _consistent(rec: Record, other: Record, doi: str) -> bool:
+    """¿Es `other` (otra fuente consultada por el mismo DOI) el mismo trabajo que `rec`? Si declara otro DOI, no;
+    si su título no es el del trabajo, solo cuando declara ese mismo DOI (PubMed traduce los títulos)."""
+    norm = normalize_doi(doi)
+    if other.doi and other.doi != norm:
+        return False
+    if not rec.title or not other.title or titles_same_work(rec.title, other.title):
+        return True
+    return other.doi == norm and other.source == "pubmed"
 
 
 def _copy(rec: Record) -> Record:
@@ -1046,7 +1058,7 @@ def _existence_fallback(client, doi: str, notes: list[str]) -> tuple[Record | No
                 f"El DOI existe (agencia DataCite), pero no se pudo consultar DataCite: {exc}", cfg))
     # Un DOI de otra agencia (mEDRA, JaLC, OP...) puede estar en PubMed: sus metadatos sí son comparables.
     record = _pubmed_by_doi(client, doi)
-    if record is not None:
+    if record is not None and record.doi == normalize_doi(doi):    # sin otra fuente, PubMed debe declarar el DOI
         record.extra = dict(record.extra or {}, registration_agency=agency)
         notes.append(f"metadatos de PubMed (PMID {record.pmid}); agencia de registro: {agency or 'desconocida'}")
         return record, None
@@ -1095,11 +1107,24 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
             oa_rec = openalex.work_by_doi(client, doi)
         except NetworkError:
             oa_rec = None
+        if oa_rec is not None and not _consistent(rec, oa_rec, doi):
+            # OpenAlex puede mezclar obras: no se toman su PMID, sus identificadores ni su "no retractado"; un
+            # "retractado" sí cuenta (prudencia).
+            notes.append(f"OpenAlex da para este DOI otro título («{(oa_rec.title or '')[:80]}»): no se toman su "
+                         "PMID ni sus identificadores")
+            if oa_rec.retracted:
+                checked.append("openalex")
+                retracted = True
+            oa_rec = None
         if oa_rec is not None and oa_rec.retracted is not None:
             checked.append("openalex")
             retracted = bool(oa_rec.retracted)
     if retracted is not True and pm_rec is None:
         pm_rec = _pubmed_by_doi(client, doi)
+        if pm_rec is not None and not _consistent(rec, pm_rec, doi):
+            notes.append(f"PubMed asocia el DOI al PMID {pm_rec.pmid}, de un trabajo con otro título y sin ese DOI: "
+                         "no se usa")
+            pm_rec = None
         if pm_rec is not None and pm_rec.retracted is not None:
             checked.append("pubmed")
             retracted = bool(pm_rec.retracted)
