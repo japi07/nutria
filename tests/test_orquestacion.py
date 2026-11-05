@@ -909,9 +909,29 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _sha256sum_c(project, sha: str, rel: str) -> tuple[int, str]:
+    """`echo '<sha>  <fichero>' | sha256sum -c -` en el proyecto de prueba (como lo ejecuta el agente de registro)."""
+    if shutil.which("sha256sum"):
+        proc = subprocess.run(["sha256sum", "-c", "-"], input=f"{sha}  {rel}\n", cwd=project, capture_output=True, text=True,
+                              check=False)
+        return proc.returncode, proc.stdout
+    ok = _sha256(project / rel) == sha
+    return (0, f"{rel}: OK\n") if ok else (1, f"{rel}: FAILED\n")
+
+
+def _registro_literal(project, capsys, ev: str, rel: str, sha: str) -> dict:
+    """Salida literal de la orden de registro diferido: sha256sum -c y, solo si da OK, `nutria puntuar registrar`."""
+    code, out = _sha256sum_c(project, sha, rel)
+    orden = f"echo '{sha}  {rel}' | sha256sum -c - && nutria --agente {ev} --json puntuar registrar --datos {rel}"
+    if code != 0:
+        return {"orden": orden, "codigo_salida": code, "salida": out}
+    registro = _salida(capsys, "--agente", ev, "--json", "puntuar", "registrar", "--datos", str(project / rel))
+    return {"orden": orden, "codigo_salida": registro["codigo_salida"], "salida": out + registro["salida"]}
+
+
 def _reglas_puntuacion_emitida(project, capsys, opp_id: str, evaluadores=(1, 2, 3)) -> list[dict]:
     """Reglas del arnés para la puntuación diferida: cada evaluador deja su JSON (del ejemplo) y devuelve su sha256;
-    el registro posterior devuelve la salida real de `puntuar registrar`."""
+    el registro posterior devuelve la salida literal real de sha256sum -c y de `puntuar registrar`."""
     reglas = []
     for n in evaluadores:
         ev = f"evaluador-{n}"
@@ -920,10 +940,10 @@ def _reglas_puntuacion_emitida(project, capsys, opp_id: str, evaluadores=(1, 2, 
         ruta.write_text(json.dumps(datos, ensure_ascii=False), "utf-8")
         sha = _sha256(ruta)
         rel = f"research/oportunidades/{ruta.name}"
-        registro = _salida(capsys, "--agente", ev, "--json", "puntuar", "registrar", "--datos", str(ruta))
+        registro = _registro_literal(project, capsys, ev, rel, sha)
         assert registro["codigo_salida"] == 0, registro
         reglas += [{"labelRegex": f"^puntuacion:{ev}(:reintento)?$", "respuesta": {"archivo": rel, "sha256": sha, "resumen": "r"}},
-                   {"label": f"registro-puntuacion:{ev}", "respuesta": {"sha256": sha, "coincide": True, **registro}}]
+                   {"label": f"registro-puntuacion:{ev}", "respuesta": registro}]
     return reglas
 
 
@@ -1057,7 +1077,7 @@ def test_p8_evaluar_relee_el_registro_antes_de_puntuar(project, capsys):  # D2-8
               {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)}]
     out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
     ls = labels(out)
-    assert ls[-1] == "compuertas-registro:antes-de-puntuar"
+    assert set(ls[-2:]) == {"compuertas-registro:antes-de-puntuar", "procedencia:antes-de-puntuar"}  # en paralelo
     assert not any(l.startswith(("puntuacion:", "informe:", "sello:")) for l in ls)
     assert out["resultado"]["detenida_en"] == "Especialistas"
     assert [b["compuerta"] for b in out["resultado"]["bloqueos"]] == ["etica"]
@@ -1085,7 +1105,8 @@ def test_p8_evaluar_evaluadores_ciegos_antes_del_informe(project, capsys):  # D1
         assert "decision_propuesta" not in c["prompt"]
         otros = [f"_puntuacion_evaluador-{n}" for n in (1, 2, 3) if f"evaluador-{n}" != ev]
         assert not any(o in c["prompt"] for o in otros)
-        assert "NO la registres" in c["prompt"]
+        assert "NO ejecutes nutria puntuar registrar" in c["prompt"]
+        assert "nutria decision listar" in c["prompt"] and "prevalecen sobre la skill puntuacion" in c["prompt"]
     assert ls.index("informe:O-0003") < ls.index("verificacion-informe:O-0003") < ls.index("sello:O-0003")
     # el director redacta después incorporando las puntuaciones; él no puntúa
     prompt_informe = call(out, "informe:O-0003")["prompt"]
@@ -1094,7 +1115,9 @@ def test_p8_evaluar_evaluadores_ciegos_antes_del_informe(project, capsys):  # D1
     assert len(registros) == 3 and all(ls.index(c["label"]) > ls.index("sello:O-0003") for c in registros)
     for c in registros:
         ev = c["label"].split(":")[1]
-        assert f"nutria --agente {ev} --json puntuar registrar --datos research/oportunidades/O-0003_puntuacion_{ev}.json" in c["prompt"]
+        sha = _sha256(project / "research" / "oportunidades" / f"O-0003_puntuacion_{ev}.json")
+        assert (f"echo '{sha}  research/oportunidades/O-0003_puntuacion_{ev}.json' | sha256sum -c - && "
+                f"nutria --agente {ev} --json puntuar registrar --datos research/oportunidades/O-0003_puntuacion_{ev}.json") in c["prompt"]
     assert not any(c.get("agentType") == "director-cientifico" for c in evaluadores + registros)
     res = out["resultado"]
     assert res["evaluadores_registrados"] == 3 and res["informe"]["sello_valido"] is True
@@ -1166,15 +1189,84 @@ def test_p8_evaluar_interpreta_la_salida_real_de_informe_sello(project, capsys):
 
 @requires_node
 def test_p8_evaluar_no_registra_un_fichero_de_puntuacion_modificado(project, capsys):  # D1-3, D3-3
-    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
-              {"label": "registro-puntuacion:evaluador-1", "respuesta": {"sha256": "0" * 64, "coincide": False, "codigo_salida": 0, "salida": ""}},
-              *_reglas_puntuacion_emitida(project, capsys, "O-0003"), {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    registro = _regla_registro(project, capsys, "O-0003")
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")
+    # evaluador-1 modifica su fichero después de emitir la puntuación: sha256sum -c da FAILED y no se registra
+    rel = "research/oportunidades/O-0003_puntuacion_evaluador-1.json"
+    sha_emitido = reglas_p[0]["respuesta"]["sha256"]
+    datos = json.loads((project / rel).read_text("utf-8"))
+    datos["puntuaciones"][0]["valor"] = 1.0 if datos["puntuaciones"][0]["valor"] != 1.0 else 0.0
+    (project / rel).write_text(json.dumps(datos), "utf-8")
+    fallido = _registro_literal(project, capsys, "evaluador-1", rel, sha_emitido)
+    assert fallido["codigo_salida"] != 0 and "FAILED" in fallido["salida"]
+    reglas = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"label": "registro-puntuacion:evaluador-1", "respuesta": fallido},
+              *reglas_p, {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
     out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
     res = out["resultado"]
     ev1 = next(e for e in res["evaluadores"] if e["id"] == "evaluador-1")
-    assert ev1["registrado"] is False and "sha256" in ev1["fallo"]
+    assert ev1["registrado"] is False and "sha256sum -c no confirma" in ev1["fallo"]
     assert res["evaluadores_registrados"] == 2
     assert [p["evaluador"] for p in res["puntuaciones_pendientes"]] == ["evaluador-1"]
+
+
+ORDEN_PROCEDENCIA = ("--agente", "orquestador", "--json", "procedencia", "--accion", "puntuacion", "--ultimas", "50")
+
+
+@requires_node
+@pytest.mark.parametrize("sello_valido", [False, True], ids=["sin-sello", "con-sello"])
+def test_p8_evaluar_detecta_registros_prematuros(sello_valido, project, capsys):  # D3-3, D1-3 (skill puntuacion de P6)
+    registro = _regla_registro(project, capsys, "O-0003")
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")  # deja eventos "puntuacion" anteriores en la procedencia
+    antes = _salida(capsys, *ORDEN_PROCEDENCIA)
+    # evaluador-2 sigue el paso 5 de la skill en vez del prompt: registra su puntuación mientras puntúa (antes del sello)
+    code, out = _cli(capsys, "--agente", "evaluador-2", "--json", "puntuar", "registrar", "--datos",
+                     str(project / "research" / "oportunidades" / "O-0003_puntuacion_evaluador-2.json"))
+    assert code == 0, out
+    despues = _salida(capsys, *ORDEN_PROCEDENCIA)
+    sello = SELLO_VALIDO if sello_valido else SELLOS_NO_VALIDOS["sello-no-valido"]
+    base = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)}, *reglas_p, {"label": "sello:O-0003", "respuesta": sello}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [*base, {"label": "procedencia:antes-de-puntuar", "respuesta": antes},
+                                                               {"label": "procedencia:tras-puntuar", "respuesta": despues}])
+    ls = labels(out)
+    assert ls.index("procedencia:antes-de-puntuar") < min(ls.index(f"puntuacion:evaluador-{n}") for n in (1, 2, 3))
+    assert ls.index("procedencia:tras-puntuar") > ls.index("verificacion-informe:O-0003")
+    assert "nutria --agente orquestador --json procedencia --accion puntuacion --ultimas 50" in call(out, "procedencia:tras-puntuar")["prompt"]
+    assert call(out, "procedencia:tras-puntuar").get("agentType") is None  # agente mecánico, no un evaluador ni el director
+    res = out["resultado"]
+    assert res["registros_prematuros"]["comprobado"] is True and res["registros_prematuros"]["evaluadores"] == ["evaluador-2"]
+    por_id = {e["id"]: e for e in res["evaluadores"]}
+    assert "antes de comprobar el sello" in por_id["evaluador-2"]["alerta"] and por_id["evaluador-1"]["alerta"] is None
+    assert ("una persona decide si se mantiene" in por_id["evaluador-2"]["alerta"]) is not sello_valido
+    assert "evaluador-2 registró(aron) su puntuación antes de comprobar el sello" in res["siguiente"]
+    assert any("registro diferido incumplido" in m for m in out["logs"])
+    # sin registros nuevos no hay alerta; sin lecturas interpretables, consta que no se pudo comprobar
+    limpio = run_workflow("evaluar-oportunidad-auto", "O-0003", [*base, {"labelPrefix": "procedencia:", "respuesta": despues}])
+    assert limpio["resultado"]["registros_prematuros"] == {"comprobado": True, "evaluadores": [], "eventos": []}
+    assert "antes de comprobar el sello" not in limpio["resultado"]["siguiente"]
+    sin = run_workflow("evaluar-oportunidad-auto", "O-0003", base)
+    assert sin["resultado"]["registros_prematuros"]["comprobado"] is False
+    assert "no se pudo comprobar en la procedencia" in sin["resultado"]["registros_prematuros"]["motivo"]
+
+
+@requires_node
+def test_p8_evaluar_registro_sin_comprobacion_literal_del_sha256(project, capsys):  # D3-3: el agente no declara si coincide
+    registro = _regla_registro(project, capsys, "O-0003")
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")
+    solo_registro = _salida(capsys, "--agente", "evaluador-2", "--json", "puntuar", "registrar", "--datos",
+                            str(project / "research" / "oportunidades" / "O-0003_puntuacion_evaluador-2.json"))
+    declarado = {"orden": "sha256sum ...", "codigo_salida": 0, "salida": "coincide: true\n"}  # declaración, no la salida de sha256sum -c
+    reglas = [registro, {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"label": "registro-puntuacion:evaluador-2", "respuesta": solo_registro},
+              {"label": "registro-puntuacion:evaluador-3", "respuesta": declarado},
+              *reglas_p, {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    res = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)["resultado"]
+    por_id = {e["id"]: e for e in res["evaluadores"]}
+    assert por_id["evaluador-1"]["registrado"] is True and por_id["evaluador-1"]["alerta"] is None
+    # registró sin la comprobación literal: consta como registrada (lo está), con alerta para revisarlo
+    assert por_id["evaluador-2"]["registrado"] is True and "sin la comprobación literal del sha256" in por_id["evaluador-2"]["alerta"]
+    # declarar que coincide no basta: sin "<fichero>: OK" ni registro confirmado, no consta registrada
+    assert por_id["evaluador-3"]["registrado"] is False and "sha256sum -c no confirma" in por_id["evaluador-3"]["fallo"]
 
 
 @requires_node
@@ -1777,9 +1869,19 @@ def test_p8_evaluador_no_ve_las_decisiones_propuestas(project, capsys):  # D1-3:
         assert "decisiones" not in vista and "puntuaciones" not in vista
         assert "CONCLUSION-ESPERADA" not in out
         assert set(vista["compuertas_efectivas"]) == set(PROPIETARIO)  # las compuertas sí son evidencia
+    # tampoco por `decision listar` (con o sin --entidad): la orden se rechaza para un evaluador
+    for extra in (("--entidad", "O-0001"), ()):
+        code, out = _cli(capsys, "--agente", "evaluador-3", "--json", "decision", "listar", *extra)
+        assert code != 0 and "CONCLUSION-ESPERADA" not in out
     # el resto de roles (director, orquestador) sigue viendo las decisiones
     code, out = _cli(capsys, "--agente", "director-cientifico", "--json", "oportunidad", "ver", "O-0001", "--sin-puntuaciones")
     assert code == 0 and "CONCLUSION-ESPERADA" in out
+    code, out = _cli(capsys, "--agente", "orquestador", "--json", "decision", "listar", "--entidad", "O-0001")
+    assert code == 0 and "CONCLUSION-ESPERADA" in out
+    # y los prompts de los evaluadores y su agente lo prohíben de forma explícita
+    for texto in (_text(WORKFLOWS_DIR / "evaluar-oportunidad-auto.js"), _text(WORKFLOWS_DIR / "mision-1-auto.js"),
+                  _agent("evaluador-independiente")[1]):
+        assert "nutria decision listar" in texto
 
 
 @requires_node

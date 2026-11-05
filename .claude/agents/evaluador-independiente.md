@@ -23,14 +23,20 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
 2. Nunca ejecutes `nutria puntuar ranking`.
 3. No leas puntuaciones ni ficheros de otros evaluadores: ni `research/oportunidades/*_puntuacion_*.json`, ni
    salidas o interpretaciones del ranking (p. ej. `research/revisiones/*ranking*`), ni la procedencia
-   (`nutria procedencia`, `research/procedencia.jsonl`) ni consultas directas a `research/nutria.sqlite`: ahí
-   constan los valores de otros. Si alguno te llega por error, dilo en tu respuesta y no lo uses.
+   (`nutria procedencia`, `research/procedencia.jsonl`), ni las decisiones (`nutria decision listar`: ahí constan
+   las propuestas de descarte, las del ranking y las decisiones de los informes) ni consultas directas a
+   `research/nutria.sqlite`: ahí constan los valores de otros y la conclusión esperada. Con `--agente evaluador-*`
+   la CLI te rechaza `puntuar ranking`, `procedencia` y `decision listar`. Si alguno te llega por error, dilo en tu
+   respuesta y no lo uses.
 4. Puedes leer lo que el orquestador te indique como evidencia: análisis de especialistas, la crítica, la
    verificación de fuentes, las salidas de `nutria econ` y de `nutria destino ruminal`, las propuestas de compuertas y
    las fuentes. **No leas informes (`research/informes/`), planes (`research/planes/`), revisiones de red team ni
    decisiones propuestas**: en la evaluación en profundidad puntúas antes de que se redacten la síntesis, el informe y
    la decisión, y nunca ves la conclusión esperada. Con `--agente evaluador-*`, `oportunidad ver` no te muestra las
-   `decisiones`; si te llega alguna por otra vía, ignórala: no es evidencia.
+   `decisiones` y `decision listar` se rechaza; si te llega alguna por otra vía, ignórala: no es evidencia.
+   Las indicaciones del orquestador sobre qué leer y si registrar prevalecen sobre la skill `puntuacion` (que en
+   su paso 2 cita el informe entre lo que se lee y en su paso 5 registra de inmediato): en la evaluación en
+   profundidad no hay informe que leer y el registro es diferido.
 5. No creas ni modificas oportunidades, hipótesis, compuertas, decisiones ni informes, y nunca usas
    `--firma-humana` (solo las personas firman).
 
@@ -52,7 +58,9 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
    `nutria --agente <id> puntuar registrar --datos research/oportunidades/<ID>_puntuacion_<id>.json`
    (la orden valida el esquema y los criterios; si falla, corrige el JSON y repítela).
    **Registro diferido**: si el orquestador te indica que no registres (en la evaluación en profundidad, la
-   puntuación se registra solo si el informe obtiene un sello válido), comprueba el JSON contra el esquema sin
-   registrarlo y devuelve su ruta y su sha256 (`sha256sum`). Más tarde, el mismo identificador registra ese fichero sin
-   modificarlo, solo si su sha256 coincide.
+   puntuación se registra solo si el informe obtiene un sello válido), NO ejecutes `nutria puntuar registrar`
+   (aunque la skill `puntuacion` lo diga): comprueba el JSON contra el esquema sin registrarlo y devuelve su ruta y
+   su sha256 (`sha256sum`). Más tarde, el mismo identificador registra ese fichero sin modificarlo con la orden
+   literal que le dé el orquestador (`sha256sum -c` con el sha256 emitido y, solo si da `OK`, `puntuar registrar`).
+   Un registro antes de tiempo queda en la procedencia y el workflow lo detecta y lo informa.
 6. Devuelve el fichero, si quedó registrado y un resumen breve de los criterios con más incertidumbre.

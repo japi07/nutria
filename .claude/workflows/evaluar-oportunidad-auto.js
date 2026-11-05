@@ -3,7 +3,7 @@ export const meta = {
   description: 'Evaluación en profundidad de una oportunidad: compuertas efectivas leídas del registro, descarte rápido en paralelo (regulación, toxicología, destino digestivo y modelo del ganadero), evidencia con doble extracción y metaanálisis si hay al menos 3 estudios comparables, especialistas con crítica y verificación, puntuación ciega por 3 evaluadores independientes antes de la síntesis, informe con Anexo A y comprobación literal del sello; las puntuaciones solo se registran con sello válido',
   whenToUse: 'Cuando una oportunidad registrada (O-xxxx) necesita una evaluación completa. Argumento: el ID, p. ej. "O-0003", o {"id": "O-0003", "max_estudios": 10, "max_preguntas": 10}. Se detiene antes de gastar más si alguna compuerta está bloqueada en el registro o alguien la propone "bloqueada". Con {"id": "O-0003", "registrar_puntuaciones": [...]} solo comprueba el sello y registra las puntuaciones que quedaron pendientes. El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución. Consume muchos tokens.',
   phases: [
-    { title: 'Compuertas del registro', detail: 'compuertas efectivas (salida literal de nutria oportunidad ver) al empezar, tras el descarte rápido y antes de puntuar' },
+    { title: 'Compuertas del registro', detail: 'compuertas efectivas (salida literal de nutria oportunidad ver) al empezar, tras el descarte rápido y antes de puntuar, y eventos de puntuación de la procedencia antes de puntuar' },
     { title: 'Descarte rápido', detail: 'regulación, toxicología, destino digestivo y modelo del ganadero en paralelo' },
     { title: 'Plan', detail: 'pregunta PECO, variables y preguntas para cada especialista (con tope)' },
     { title: 'Evidencia', detail: 'revisión bibliográfica, doble extracción y metaanálisis' },
@@ -11,7 +11,7 @@ export const meta = {
     { title: 'Verificación', detail: 'crítica y verificación de fuentes de cada aportación' },
     { title: 'Puntuación', detail: '3 evaluadores independientes y ciegos con modelos distintos, antes de la síntesis y del informe' },
     { title: 'Síntesis e informe', detail: 'informe de 20 secciones con las puntuaciones emitidas, decisión propuesta y Anexo A de respaldo' },
-    { title: 'Sello y registro', detail: 'comprobación literal del sello; las puntuaciones se registran solo si es válido' },
+    { title: 'Sello y registro', detail: 'comprobación literal del sello y de los registros prematuros en la procedencia; las puntuaciones se registran solo si el sello es válido, tras sha256sum -c' },
   ],
 }
 
@@ -175,8 +175,7 @@ const VERIF_INFORME = S({
   problemas: { type: 'array', items: S({ ref: STR, estado: STR, motivo: STR }, ['ref', 'estado', 'motivo']) },
 }, ['problemas'])
 const SELLO = S({ comprobar: SALIDA_ORDEN, sello: SALIDA_ORDEN }, ['comprobar', 'sello'])
-const REGISTRO_PUNTUACION = S({ sha256: STR, coincide: BOOL, orden: STR, codigo_salida: INT, salida: STR },
-  ['sha256', 'coincide', 'codigo_salida', 'salida'])
+const REGISTRO_Y_PROCEDENCIA = S({ registro: SALIDA_ORDEN, procedencia: SALIDA_ORDEN }, ['registro', 'procedencia'])
 
 // ---------------------------------------------------------------- utilidades de interpretación
 const parsear = (texto) => {
@@ -231,6 +230,13 @@ const leerRegistro = async (momento) => interpretarRegistro(await lanzar(
   'No modifiques ningún fichero ni el registro.',
   { label: `compuertas-registro:${momento}`, phase: 'Compuertas del registro', schema: SALIDA_ORDEN, effort: 'low' },
 ))
+// Eventos "puntuacion" de la procedencia (para detectar registros prematuros; ver registrosPrematuros).
+const leerProcedencia = async (momento, fase) => eventosPuntuacion(await lanzar(
+  `Lectura de la procedencia (${momento}). Ejecuta exactamente esta orden y ninguna otra: ${ordenProcedencia}\n` +
+  'Devuelve la orden ejecutada, su código de salida y su salida estándar literal y completa (sin resumir, corregir ni reformatear). ' +
+  'No modifiques ningún fichero ni el registro.',
+  { label: `procedencia:${momento}`, phase: fase, schema: SALIDA_ORDEN, effort: 'low' },
+))
 
 // Sello del informe: el workflow interpreta la salida literal de nutria informe comprobar e informe sello.
 const interpretarSello = (r) => {
@@ -255,20 +261,58 @@ const interpretarSello = (r) => {
   return { valido: true, motivo: ps.valor.mensaje || 'sello válido', referencias: resumen.total }
 }
 
-// Registro de una puntuación: lo que confirma la salida literal de nutria puntuar registrar.
+// Registro de una puntuación: una sola orden literal que comprueba el sha256 del fichero con sha256sum -c y solo si da
+// "OK" lo registra. El workflow lee la salida literal: la línea "<fichero>: OK" y el JSON de nutria puntuar registrar
+// (el agente no declara si coincide).
+const ordenRegistroPuntuacion = (p) =>
+  `echo '${p.sha256}  ${p.archivo}' | sha256sum -c - && nutria --agente ${p.evaluador} --json puntuar registrar --datos ${p.archivo}`
 const interpretarRegistroPuntuacion = (r, p) => {
   if (!r) return { registrado: false, motivo: 'el agente de registro no devolvió resultado (fallo de agente)' }
-  const integra = r.coincide === true && normSha(r.sha256) === p.sha256
-  const q = parsear(r.salida)
+  const lineas = String(r.salida === undefined || r.salida === null ? '' : r.salida).split('\n')
+  const ok = lineas.findIndex((l) => l.trim() === `${p.archivo}: OK`)
+  const inicioJson = lineas.findIndex((l, i) => i > ok && l.trim().startsWith('{'))
+  const q = inicioJson >= 0 ? parsear(lineas.slice(inicioJson).join('\n')) : { ok: false }
   const confirmado = r.codigo_salida === 0 && q.ok && esObjeto(q.valor) && q.valor.oportunidad === ID && q.valor.evaluador === p.evaluador
-  if (confirmado && !integra) {
-    return { registrado: true, criterios: q.valor.criterios, alerta: 'registrada aunque el sha256 del fichero no coincide con el de la puntuación emitida: revísalo' }
+  if (confirmado && ok < 0) {
+    return { registrado: true, criterios: q.valor.criterios,
+      alerta: 'registrada sin la comprobación literal del sha256 (sha256sum -c): no consta que el fichero sea el emitido; revísalo' }
   }
-  if (!integra) return { registrado: false, motivo: 'el fichero de puntuación cambió después de puntuar (sha256 distinto): no se registra' }
+  if (ok < 0) return { registrado: false, motivo: 'sha256sum -c no confirma que el fichero sea el emitido (cambió después de puntuar o no se comprobó): no se registra' }
   if (!confirmado) return { registrado: false, motivo: `nutria puntuar registrar no confirma el registro (código ${r.codigo_salida}): ${recorte(r.salida)}` }
   const r2 = { registrado: true, criterios: q.valor.criterios }
   if (q.valor.criterios !== N_CRITERIOS) r2.alerta = `registrados ${q.valor.criterios} criterios de ${N_CRITERIOS}`
   return r2
+}
+
+// Registros prematuros: con el registro diferido nadie registra puntuaciones de esta oportunidad mientras puntúan
+// los evaluadores. Se comparan los eventos "puntuacion" de la procedencia (solo metadatos: evaluador, oportunidad y
+// sha256, sin valores) antes y después de la puntuación, con la misma ventana de 50. La procedencia es de solo añadir:
+// al desplazarse la ventana un evento antiguo puede salir, nunca entrar, así que si un evento aparece más veces en la
+// segunda lectura que en la primera, es nuevo (no hay falsos positivos; se escaparía solo si se añadieran más de 50
+// eventos de puntuación entre las dos lecturas).
+const ordenProcedencia = 'nutria --agente orquestador --json procedencia --accion puntuacion --ultimas 50'
+const eventosPuntuacion = (r) => {
+  if (!r) return { ok: false, motivo: 'el agente no devolvió la salida de la procedencia (fallo de agente)' }
+  if (r.codigo_salida !== 0) return { ok: false, motivo: `la orden terminó con código ${r.codigo_salida}: ${recorte(r.salida)}` }
+  const p = parsear(r.salida)
+  if (!p.ok || !Array.isArray(p.valor)) return { ok: false, motivo: 'la salida no es el JSON de nutria procedencia' }
+  const eventos = p.valor.filter((e) => esObjeto(e) && e.action === 'puntuacion' && esObjeto(e.inputs) && e.inputs.oportunidad === ID)
+    .map((e) => ({ clave: JSON.stringify([e.ts, e.actor, e.inputs.evaluador, esObjeto(e.outputs) ? e.outputs.sha256_puntuaciones : null,
+      e.hash || null]), evaluador: String(e.inputs.evaluador || e.actor || '?'), ts: e.ts || null }))
+  return { ok: true, eventos }
+}
+const registrosPrematuros = (antes, despues) => {
+  if (!antes.ok || !despues.ok) {
+    return { comprobado: false, motivo: `no se pudo comprobar en la procedencia: ${(!antes.ok ? antes : despues).motivo}`, evaluadores: [] }
+  }
+  const previas = new Map()
+  antes.eventos.forEach((e) => previas.set(e.clave, (previas.get(e.clave) || 0) + 1))
+  const nuevos = despues.eventos.filter((e) => {
+    const n = previas.get(e.clave) || 0
+    if (n > 0) { previas.set(e.clave, n - 1); return false }
+    return true
+  })
+  return { comprobado: true, evaluadores: [...new Set(nuevos.map((e) => e.evaluador))], eventos: nuevos.map((e) => ({ evaluador: e.evaluador, ts: e.ts })) }
 }
 
 // ---------------------------------------------------------------- pasos comunes: sello y registro de puntuaciones
@@ -281,12 +325,12 @@ const comprobarSello = () => lanzar(
   { label: `sello:${ID}`, phase: 'Sello y registro', agentType: 'verificador-citas', schema: SELLO, effort: 'low' },
 )
 const registrarPuntuacion = (p) => lanzar(
-  `Eres el evaluador independiente "${p.evaluador}". Tu puntuación de ${ID} ya está en ${p.archivo} y el informe de ${ID} tiene un sello válido: ahora se registra. ` +
-  `1) Calcula el sha256 de ${p.archivo} (sha256sum o shasum -a 256); debe ser ${p.sha256}. Si no coincide, no registres nada: devuelve "coincide": false. ` +
-  `2) Si coincide, ejecuta sin modificar el fichero: nutria --agente ${p.evaluador} --json puntuar registrar --datos ${p.archivo} ` +
-  'y devuelve la orden, su código de salida y su salida estándar literal y completa. No leas otros ficheros ni ejecutes otras órdenes.',
+  `Eres el evaluador independiente "${p.evaluador}". Tu puntuación de ${ID} ya está en ${p.archivo} y el informe de ${ID} tiene un sello válido: ahora se registra, ` +
+  `sin modificar el fichero. Ejecuta exactamente esta orden y ninguna otra (comprueba el sha256 del fichero y solo si coincide lo registra): ${ordenRegistroPuntuacion(p)} ` +
+  '(si no existe sha256sum, usa en su lugar shasum -a 256 -c -, que da la misma salida). Devuelve la orden, su código de salida y su salida estándar literal y ' +
+  'completa (sin resumir, corregir ni reformatear). No leas otros ficheros.',
   { label: `registro-puntuacion:${p.evaluador}`, phase: 'Sello y registro', agentType: 'evaluador-independiente', model: p.modelo,
-    schema: REGISTRO_PUNTUACION, effort: 'low' },
+    schema: SALIDA_ORDEN, effort: 'low' },
 ).then((r) => ({ ...p, ...interpretarRegistroPuntuacion(r, p) }))
 
 const pendientesDe = (lista) => lista.filter((p) => !p.registrado).map((p) => ({ evaluador: p.evaluador, sha256: p.sha256, modelo: p.modelo }))
@@ -344,14 +388,18 @@ if (PENDIENTES) {
 }
 
 // ================================================================ evaluación completa
+// Agentes fijos si la evaluación no se detiene antes: 3 lecturas de compuertas del registro y 2 de la procedencia,
+// 4 de descarte rápido, plan, revisión bibliográfica, los evaluadores, informe, su verificación y sello. Los registros de
+// puntuación solo se lanzan con un sello válido (sin red, nunca).
 const N_LECTURAS = 3
-const FIJOS = N_LECTURAS + 4 + 1 + 1 + EVALUADORES.length + 2 + 1 + EVALUADORES.length
-const MAXIMO = FIJOS + EVALUADORES.length + 3 * MAX_ESTUDIOS + 1 + 3 * MAX_PREGUNTAS
-log(`Evaluación de ${ID}. Estimación: como máximo ${MAXIMO} agentes; si no se detiene antes, al menos ${FIJOS} fijos (${N_LECTURAS} lecturas de ` +
-  `compuertas del registro, 4 de descarte rápido, plan, revisión bibliográfica, ${EVALUADORES.length} evaluadores, informe y su verificación, ` +
-  `sello y ${EVALUADORES.length} registros de puntuación), más 3 por estudio con doble extracción (máximo ${MAX_ESTUDIOS}), 1 de metaanálisis ` +
-  `si hay al menos ${MIN_COMPARABLES} estudios comparables, hasta 3 por pregunta de especialista (máximo ${MAX_PREGUNTAS} preguntas) y hasta ` +
-  `${EVALUADORES.length} reintentos de evaluadores` +
+const N_PROCEDENCIA = 2
+const FIJOS = N_LECTURAS + N_PROCEDENCIA + 4 + 1 + 1 + EVALUADORES.length + 2 + 1
+const MAXIMO = FIJOS + EVALUADORES.length + EVALUADORES.length + 3 * MAX_ESTUDIOS + 1 + 3 * MAX_PREGUNTAS
+log(`Evaluación de ${ID}. Estimación: como máximo ${MAXIMO} agentes; si no se detiene antes, ${FIJOS} fijos (${N_LECTURAS} lecturas de ` +
+  `compuertas del registro, ${N_PROCEDENCIA} de la procedencia, 4 de descarte rápido, plan, revisión bibliográfica, ${EVALUADORES.length} evaluadores, ` +
+  `informe, su verificación y sello), más ${EVALUADORES.length} registros de puntuación solo si el sello es válido, 3 por estudio con doble ` +
+  `extracción (máximo ${MAX_ESTUDIOS}), 1 de metaanálisis si hay al menos ${MIN_COMPARABLES} estudios comparables, hasta 3 por pregunta de ` +
+  `especialista (máximo ${MAX_PREGUNTAS} preguntas) y hasta ${EVALUADORES.length} reintentos de evaluadores; solo 1 si el registro ya tiene una compuerta bloqueada y hasta 6 si la bloquea el descarte rápido` +
   (typeof budget !== 'undefined' && budget && budget.total ? `. Presupuesto restante: ${Math.round(budget.remaining())} tokens` : ''))
 
 const detener = (fase, extra, siguiente) => ({ id: ID, detenida_en: fase, ...extra, fallos: resumenFallos(), siguiente: siguiente || SIGUIENTE_BLOQUEO })
@@ -528,7 +576,8 @@ if (sinLanzar.length) {
   log(`Límite de ${MAX_PREGUNTAS} preguntas de especialista: quedan sin lanzar ${sinLanzar.length} (${sinLanzar.map((q) => q.agente).join(', ')}); súbelo con args.max_preguntas (máximo 15)`)
 }
 log(`Especialistas: ${preguntas.length} preguntas (hasta ${preguntas.length * 3} agentes con crítica y verificación); después, 1 lectura del registro, ` +
-  `${EVALUADORES.length} evaluadores, informe, su verificación, sello y ${EVALUADORES.length} registros de puntuación`)
+  `${N_PROCEDENCIA} de la procedencia, ${EVALUADORES.length} evaluadores, informe, su verificación, sello y, solo con sello válido, ` +
+  `${EVALUADORES.length} registros de puntuación`)
 const contextoEvidencia = `Evidencia disponible: revisión ${resumenEvidencia.revision || 'no disponible (fallo de agente)'}; ${comparables} estudio(s) con doble extracción registrada en ${DIR}/; ` +
   `metaanálisis: ${metaanalisis ? archivoMeta || `${DIR}/` : 'no realizado'}; análisis del descarte rápido: ${resumenDescarte.map((d) => `${d.analisis}=${d.archivo}`).join(', ')}.`
 const promptEspecialista = (q, i) => {
@@ -588,7 +637,12 @@ if (bloqueosEspecialistas.length) {
     bloqueos: bloqueosEspecialistas, descarte_rapido: resumenDescarte, evidencia: resumenEvidencia,
     aportaciones: resumenAportaciones() })
 }
-const registroPrevio = await leerRegistro('antes-de-puntuar')
+// La lectura de la procedencia antes de puntuar es la referencia para detectar registros prematuros (registro diferido).
+const [registroLeido, procedenciaPrevia] = await parallel([
+  () => leerRegistro('antes-de-puntuar'),
+  () => leerProcedencia('antes-de-puntuar', 'Compuertas del registro'),
+])
+const registroPrevio = registroLeido || { ok: false, motivo: 'error inesperado en la lectura del registro' }
 const bloqueoPrevio = bloqueoDeRegistro(registroPrevio)
 if (bloqueoPrevio) {
   log(`Evaluación detenida antes de puntuar: ${bloqueoPrevio.motivo}`)
@@ -618,9 +672,12 @@ const promptEvaluador = (ev) =>
   `y solo esta evidencia: ${archivosEvidencia.join(', ')}; las salidas de ${DIR}/ (extracciones, metaanálisis, nutria econ y nutria destino ruminal); ` +
   'y las críticas y la verificación de fuentes de abajo. No leas nada más de research/: ni research/informes/ (ningún informe ni decisión propuesta, tampoco ' +
   'de evaluaciones anteriores), ni research/planes/, ni revisiones de red team (*redteam*), ni rankings, ni puntuaciones o ficheros *_puntuacion_* de otros ' +
-  'evaluadores. No ejecutes nutria puntuar ranking ni nutria procedencia. ' +
+  'evaluadores. No ejecutes nutria puntuar ranking, nutria procedencia ni nutria decision listar (las decisiones registradas son la conclusión esperada; ' +
+  'la CLI te las rechaza). Estas indicaciones prevalecen sobre la skill puntuacion: aunque su paso 2 cite el informe y su paso 5 diga que registres, aquí no ' +
+  'hay informe que leer y el registro es diferido. ' +
   `Guarda tu puntuación en ${rutaPuntuacion(ev.id)} con "evaluador": "${ev.id}" y "oportunidad": "${ID}", conforme a src/nutria/data/schemas/puntuacion.schema.json ` +
-  '(compruébalo, p. ej. con python3 y jsonschema). NO la registres: se registra después, solo si el informe obtiene un sello válido. ' +
+  '(compruébalo, p. ej. con python3 y jsonschema). NO ejecutes nutria puntuar registrar: se registra después, solo si el informe obtiene un sello válido ' +
+  '(un registro antes de tiempo queda en la procedencia y se informa como incumplimiento). ' +
   'Devuelve la ruta, el sha256 del fichero (sha256sum o shasum -a 256) y un resumen breve de los criterios con más incertidumbre.\n' +
   'Críticas y verificación de fuentes de cada aportación: ' + JSON.stringify(criticasYVerificacion)
 const emitir = async (ev) => {
@@ -676,7 +733,21 @@ const verificacionInforme = informe
 
 // ================================================================ sello y registro de las puntuaciones
 phase('Sello y registro')
-const sello = informe ? interpretarSello(await comprobarSello()) : { valido: false, motivo: 'no hay informe (fallo de agente)' }
+// El sello y la procedencia se leen a la vez: nadie debía registrar puntuaciones de esta oportunidad desde antes de puntuar.
+const [selloLeido, procedenciaTras] = await parallel([
+  () => (informe ? comprobarSello() : Promise.resolve(null)),
+  () => leerProcedencia('tras-puntuar', 'Sello y registro'),
+])
+const sello = informe ? interpretarSello(selloLeido) : { valido: false, motivo: 'no hay informe (fallo de agente)' }
+const prematuros = registrosPrematuros(procedenciaPrevia || { ok: false, motivo: 'sin lectura previa' },
+  procedenciaTras || { ok: false, motivo: 'sin lectura posterior' })
+if (!prematuros.comprobado) log(`Registros prematuros: ${prematuros.motivo}`)
+else if (prematuros.evaluadores.length) {
+  log(`Alerta: puntuaciones de ${ID} registradas antes de comprobar el sello (registro diferido incumplido): ${prematuros.evaluadores.join(', ')}`)
+}
+const alertaPrematuro = (ev) => (prematuros.evaluadores.includes(ev)
+  ? `registró su puntuación antes de comprobar el sello (incumple el registro diferido)${sello.valido ? '' : ': está en el registro sin un sello válido y una persona decide si se mantiene'}`
+  : null)
 let resultadoPuntuaciones = puntuaciones.map((p) => ({ ...p, registrado: false,
   motivo: p.emitida ? `sin registrar: el informe no tiene un sello válido (${sello.motivo})` : undefined }))
 if (sello.valido && emitidas.length) {
@@ -689,10 +760,18 @@ if (sello.valido && emitidas.length) {
 } else if (!sello.valido) {
   log(`Sello no válido (${sello.motivo}): las ${emitidas.length} puntuaciones emitidas no se registran`)
 }
+resultadoPuntuaciones = resultadoPuntuaciones.map((p) => {
+  const a = alertaPrematuro(p.evaluador)
+  return a ? { ...p, alerta: [p.alerta, a].filter(Boolean).join('; ') } : p
+})
 const registrados = resultadoPuntuaciones.filter((p) => p.registrado).length
 const pendientes = pendientesDe(resultadoPuntuaciones.filter((p) => p.emitida))
 const alertas = resultadoPuntuaciones.filter((p) => p.alerta).map((p) => `${p.evaluador}: ${p.alerta}`)
 alertas.forEach((a) => log(`Alerta: ${a}`))
+const extraPrematuros = prematuros.comprobado && prematuros.evaluadores.length
+  ? ` Atención: ${prematuros.evaluadores.join(', ')} registró(aron) su puntuación antes de comprobar el sello (consta en la procedencia): ` +
+    'una persona revisa ese incumplimiento antes de usar el ranking.'
+  : ''
 
 return {
   id: ID,
@@ -709,11 +788,12 @@ return {
     registrado: Boolean(p.registrado), fallo: p.fallo || p.motivo || null, alerta: p.alerta || null })),
   evaluadores_registrados: registrados,
   puntuaciones_pendientes: pendientes,
+  registros_prematuros: prematuros,
   fallos: resumenFallos(),
-  siguiente: sello.valido
+  siguiente: (sello.valido
     ? `nutria puntuar ranking (con menos de 3 evaluadores registrados ${ID} queda INSUFICIENTE). Antes de pasar el informe a revisado, lanza el workflow ` +
       `red-team-auto por su nombre con la herramienta Workflow y los argumentos {"archivo": "${RUTA_INFORME}"}. La decisión sobre ${ID}, las compuertas ` +
       '"superada" y el paso del informe a "revisado" requieren firma o revisión humana.' +
       (pendientes.length ? ` Puntuaciones sin registrar: vuelve a lanzar este workflow con ${JSON.stringify({ id: ID, registrar_puntuaciones: pendientes })}.` : '')
-    : siguienteSinSello(sello.motivo, pendientes),
+    : siguienteSinSello(sello.motivo, pendientes)) + extraPrematuros,
 }

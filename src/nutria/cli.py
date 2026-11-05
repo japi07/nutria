@@ -623,6 +623,7 @@ def cmd_decision(args, cfg) -> int:
         _emit(args, {"entidad": args.entidad, "decision": args.decision, "firmada": bool(args.firma_humana)},
               "Decisión registrada" + ("" if args.firma_humana else " (sin firma humana: es una propuesta)"))
         return 0
+    _no_para_evaluadores(args, "consultar las decisiones")  # regla 9: las propuestas son la conclusión esperada
     rows = registry.list_decisions(conn, args.entidad)
     _emit(args, rows, "\n".join(f"{r['ts']} {r['entity_id'] or '-':<8} {r['decision']} | {r['rationale']} | "
                                 f"{r['decided_by']}{' | firma: ' + r['human_signoff'] if r['human_signoff'] else ''}"

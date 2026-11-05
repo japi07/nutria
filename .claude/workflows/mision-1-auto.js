@@ -709,7 +709,8 @@ if (FASE === 'oportunidades') {
   const promptEvaluador = (ev, o) =>
     `Eres el evaluador independiente "${ev.id}". Puntúa la oportunidad ${o.id} con los 9 criterios de docs/RUBRICA.md siguiendo .claude/skills/puntuacion/SKILL.md. ` +
     `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${o.id} --sin-puntuaciones --json (si incluye un campo "decisiones", ignóralo: no es evidencia) y la ` +
-    `evidencia de abajo (análisis de triage, modelo del ganadero en research/datos/${o.id}/ y crítica). No ejecutes nutria puntuar ranking ni leas puntuaciones o ` +
+    `evidencia de abajo (análisis de triage, modelo del ganadero en research/datos/${o.id}/ y crítica). No ejecutes nutria puntuar ranking, nutria procedencia ni ` +
+    'nutria decision listar (las decisiones registradas, como la propuesta top-3, son la conclusión esperada; la CLI te las rechaza) ni leas puntuaciones o ' +
     'ficheros de otros evaluadores, rankings, informes (research/informes/) ni planes (research/planes/). ' +
     `Guarda research/oportunidades/${o.id}_puntuacion_${ev.id}.json con "evaluador": "${ev.id}" y regístralo con nutria --agente ${ev.id} puntuar registrar --datos <fichero>.\n` +
     'Análisis de triage: ' + JSON.stringify((o.compuertas || []).filter(Boolean).map((c) => ({
