@@ -8,7 +8,8 @@ disable-model-invocation: true
 # Evaluación en profundidad de $ARGUMENTS
 
 El workflow `evaluar-oportunidad-auto` (`{"id": "O-xxxx"}`; no es una orden con `/`: se lanza por su nombre con la
-herramienta Workflow, que requiere Claude Code 2.1.318 o una versión que la incluya) ejecuta este mismo procedimiento.
+herramienta Workflow, que está en Claude Code 2.1.318 pero no en el paquete npm 2.1.42) ejecuta este mismo
+procedimiento.
 Quien genera no evalúa: los evaluadores puntúan antes de que el director redacte la síntesis, el informe y la
 decisión, y nunca los leen.
 
