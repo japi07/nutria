@@ -1491,3 +1491,280 @@ def test_many_claims_in_one_paragraph_are_checked_quickly():
     errors = _errors(_strict_doc(body, rows), require_sections=False)
     assert time.perf_counter() - started < 20
     assert not [e for e in errors if "respaldo" in e or "Anexo A" in e]
+
+
+# ============================================================================ ronda 3: revisión de la ronda 2
+REDTEAM = """# Revisión adversarial de research/informes/O-0001.md
+
+Fecha: 2026-11-05. Refutadores: fuentes, biología y viabilidad [SUP].
+
+| Afirmación | Resultado | Motivos por enfoque | Acción |
+|---|---|---|---|
+| La colina protegida aumentó la producción de leche [PUB] [R1] | sostenida | fuentes: el resumen lo dice | ninguna |
+| La misma dosis redujo el BHB plasmático [PUB] [R2] | no_verificable | fuentes: el resumen no da el BHB | pedir el texto |
+
+## Bibliografía
+
+""" + BIB + "\n"
+VERIFICATION_NOTE = """# Verificación de citas de research/informes/O-0001.md
+
+| Ref | Afirmación | Respaldo | Motivo |
+|---|---|---|---|
+| R1 | La colina protegida aumentó la producción de leche en vacas en transición 1,2 kg/d | respalda | Tabla 2 |
+
+## Bibliografía
+
+""" + BIB + "\n"
+
+
+def test_review_documents_keep_their_verdict_tables(project):
+    # Regresión de la ronda 2: la crítica de red-team-auto (veredictos «no_verificable» con [Rn]) y una nota de
+    # verificación con la columna Respaldo son documentos legítimos de research/revisiones; en ellos esas tablas no
+    # son «tablas de respaldo fuera del Anexo A». Esa crítica es la que exige `revision_critica`.
+    hooks = _hook_project(project)
+    for name, text in (("O-0001_redteam.md", REDTEAM), ("O-0001_verificacion.md", VERIFICATION_NOTE)):
+        path = project / "research" / "revisiones" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, "utf-8")
+        assert _errors(text, require_sections=False, conn=_conn(), path=path) == [], name
+        assert _run_hook(hooks, _payload(path)) is None, name
+    # en un informe, y en cualquier documento con un Anexo A, siguen siendo un error
+    with_annex = REDTEAM + "\n## Anexo A. Respaldo\n\n" + ANNEX_HEADER
+    assert any("valoración de respaldo negativa fuera del Anexo A" in e
+               for e in _errors(with_annex, require_sections=False))
+    report = project / "research" / "informes" / "nota.md"
+    assert any("Tabla de respaldo (columna Respaldo) fuera del Anexo A" in e
+               for e in _errors("---\nestado: borrador\n---\n" + VERIFICATION_NOTE, require_sections=False,
+                                path=report))
+
+
+@pytest.mark.parametrize("body, what", [
+    # citas autor-año con apellidos compuestos, partículas, entradillas y formas que la ronda 2 no veía
+    ("La colina reduce la cetosis subclínica (García Pérez, 2018).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (Fernández García y López Sánchez, 2015).", "Cita autor-año"),
+    ("La fibra no cambia con la colina (van Soest, 1994).", "Cita autor-año"),
+    ("La fibra no cambia con la colina (Van Soest, 1994).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (de Vries, 2018).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (da Silva, 2017).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (Le Roux, 2016).", "Cita autor-año"),
+    ("El modelo mixto es el método de referencia (St. Pierre, 2001).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (revisado por García, 2018).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (citado en García, 2018).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (tomado de la revisión de García, 2018).", "Cita autor-año"),
+    ("García y otros (2018) demostraron que la colina reduce la cetosis subclínica.", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (Smith, Jones, & Brown, 2019).", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (García, en prensa).", "Cita autor-año"),
+    ("García (com. pers.) observó que la colina reduce la cetosis subclínica.", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (García, 2018: 23).", "Cita autor-año"),
+    ("En 2018, García demostró que la colina reduce la cetosis subclínica.", "Cita autor-año"),
+    ("García demostró en 2018 que la colina reduce la cetosis subclínica.", "Cita autor-año"),
+    ("Un ensayo publicado en 2018 por García mostró que la colina reduce la cetosis.", "Cita autor-año"),
+    ("La EFSA publicó en 2020 que la colina es segura en vacas lecheras.", "Cita autor-año"),
+    ("García y col. demostraron que la colina reduce la cetosis subclínica.", "Cita autor-año"),
+    ("Otros trabajos:\n\n- Pérez M, López A. 2019. Betaína en vacas. Animal 13:5-9.", "Cita autor-año"),
+    ("La colina reduce la cetosis[^1] [SUP].\n\n[^1]: García J, Pérez M. 2018. Colina. J Dairy Sci 101:1-10.",
+     "Cita autor-año"),
+    # identificadores y enlaces de una fuente en el cuerpo
+    ("La colina reduce la cetosis subclínica (doi:10.9999/doi.inventado.2021.001).", "Identificador de una fuente"),
+    ("La colina reduce la cetosis según [un ensayo](https://doi.org/10.9999/doi.inventado.2021.001).",
+     "Identificador de una fuente"),
+    ("La colina reduce la cetosis subclínica (PMID: 31234567).", "Identificador de una fuente"),
+    ("La colina reduce la cetosis (https://pubmed.ncbi.nlm.nih.gov/31234567/).", "Identificador de una fuente"),
+    ("La colina reduce la cetosis (https://www.revista.org/article/S0022-0302(20)30001-1/fulltext).",
+     "Identificador de una fuente"),
+    # citas numéricas y referencias mal escritas
+    ("La colina reduce la cetosis subclínica [3, 4].", "Cita numérica «[3, 4]»"),
+    ("La colina reduce la cetosis subclínica [1-3].", "Cita numérica «[1-3]»"),
+    ("La colina reduce la cetosis subclínica [1,2].", "Cita numérica «[1,2]»"),
+    ("La colina reduce la cetosis subclínica (ref. 3).", "Cita numérica «(ref. 3)»"),
+    ("La colina reduce la cetosis subclínica (R1, R2).", "escribe [R1] [R2]"),
+    ("La colina reduce la cetosis subclínica (R1-R3).", "escribe [R1] [R3]"),
+    ("Según R1, la colina reduce la cetosis subclínica.", "sin corchetes"),
+])
+def test_round2_citation_forms_are_errors_even_in_draft(body, what):
+    # D3-4 (ronda 2): formas naturales que pasaban también en la base y en la ronda 1
+    assert any(what in e for e in _body_errors(body)), body
+    errors = [str(i) for i in _body_issues(body, status="borrador") if i.severity == "error"]
+    # en un borrador, los identificadores solo son error en los informes (aquí, un documento sin ruta: aviso)
+    if what != "Identificador de una fuente":
+        assert any(what in e for e in errors), body
+
+
+@pytest.mark.parametrize("body, what", [
+    ("La colina reduce la cetosis subclínica (1).", "Posible cita numérica «(1)»"),
+    ("La colina reduce la cetosis subclínica (1, 2).", "Posible cita numérica «(1, 2)»"),
+    ("La colina reduce la cetosis subclínica¹.", "Número volado «^1»"),
+    ("La colina reduce la cetosis subclínica.²", "Número volado «^2»"),
+    ("La colina reduce la cetosis subclínica<sup>1</sup>.", "Número volado «^1»"),
+    # cifras: tablas, HTML, entidades, notación científica y unidades nuevas
+    ("| Variable | Control | Colina |\n|---|---|---|\n| Leche, semana 4 (kg/d) | 30,1 | 32,4 |", "Cifra"),
+    ("| Variable | Control | Colina |\n|---|---|---|\n| Leche (kg/d), semana 8 | 30,1 | 32,4 |", "Cifra"),
+    ("| Variable | Efecto |\n|---|---|\n| Leche | +2,5 (kg/d) |", "Cifra"),
+    ("| Variable | Efecto |\n|---|---|\n| Leche (por vaca y día, kg) | 2,5 |", "Cifra"),
+    ("| Leche | +2,5 (kg/d) |", "Cifra"),
+    ("<table><tr><td>Leche</td><td>2,5 kg/d</td></tr></table>", "Cifra"),
+    ("La producción de leche aumentó:<br>2,5 kg/d en multíparas.", "Cifra"),
+    ("La producción de leche aumentó 2,5&#8203;kg/d en multíparas.", "Cifra"),
+    ("El producto aporta 1,2e6 UFC/g de levadura viva.", "Cifra"),
+    ("El producto aporta 10⁶ UFC/g de levadura viva.", "Cifra"),
+    ("Cada vaca necesita 2,5 m² de cama.", "Cifra"),
+    ("La dosis fue de 50 µL por vaca.", "Cifra"),
+    ("La leche aumentó 5,5 lb/d con la colina.", "Cifra"),
+    ("El margen subió EUR 20 por vaca y año.", "Cifra"),
+    ("El riesgo de cetosis bajó con la colina (OR = 0,45).", "Cifra"),
+    ("El modelo explicó la respuesta a la colina (R² = 0,91).", "Cifra"),
+])
+def test_round2_figure_and_numeric_forms_are_errors_in_final(body, what):
+    assert any(what in e for e in _body_errors(body)), body
+    assert any(what in str(i) and i.severity == "aviso" for i in _body_issues(body)), body
+
+
+@pytest.mark.parametrize("body", [
+    "Los animales del Grupo A (2019) recibieron la dieta basal [SUP].",
+    "El proyecto se alinea con los objetivos de sostenibilidad (Agenda 2030) [SUP].",
+    "El proyecto se alinea con la política agraria común (PAC, 2023) [SUP].",
+    "El censo se tomó de la estadística oficial (en España, 2019) [SUP].",
+    "Se observó en 2019 un aumento de los costes de la ración [SUP].",
+    "El IC 95 % fue [1,2; 3,4] kg/d [DER] (cálculo: nutria meta analizar).",
+    "El intervalo fue [1,2-3,4] kg/d [DER] (cálculo: nutria meta analizar).",
+    "Cada criterio se puntúa en una escala [1, 5] [SUP].",
+    "La dosis exploratoria está en [2, 4] g/d [HIP].",
+    "La degradabilidad efectiva se calcula con la ecuación (3).",
+    "Se compararon la dieta (1) y la dieta (2).",
+    "El número de ensayos incluidos fue doce (12).",
+    "## Hallazgos confirmados (40)\n\nTexto de la sección [SUP].",
+    "Se informa tau², I² y el intervalo de predicción [SUP].",
+    "El coeficiente de determinación (R²) se calculó con el modelo mixto [DER] (cálculo: nutria meta stpierre).",
+    "El calcio iónico (Ca²⁺) es un mensajero intracelular [SUP].",
+    "La consulta usa `www.ebi.ac.uk` [SUP].",
+    "La alegación sigue el [Reglamento (CE) 767/2009](https://eur-lex.europa.eu/eli/reg/2009/767/oj) [SUP].",
+    "La colina es un nutriente esencial[^2] [SUP].\n\n[^2]: Datos de la campaña 2019 [SUP].",
+    "Regiones del estudio [SUP]:\n\n- Galicia 2019: 120 explotaciones [SUP].\n- Asturias 2020: 80 explotaciones [SUP].",
+    "Ensayos [SUP]:\n\n- Ensayo A 2019: dieta basal [SUP].\n- Tratamiento B 2020: colina [SUP].",
+])
+def test_round3_legitimate_forms_are_not_flagged(body):
+    assert _body_errors(body) == [], body
+
+
+def test_body_identifiers_are_errors_in_reports_and_other_links_warnings(tmp_path):
+    report = tmp_path / "research" / "informes" / "nota.md"
+    plan = tmp_path / "research" / "planes" / "plan.md"
+    doi = "La colina reduce la cetosis (doi:10.9999/doi.inventado.2021.001) [SUP]."
+    text = _draft(doi)
+    assert any("Identificador de una fuente" in e for e in _errors(text, require_sections=False, path=report))
+    plan_issues = chk.check_report(text, require_sections=False, path=plan)
+    assert any("Identificador de una fuente" in str(i) and i.severity == "aviso" for i in plan_issues)
+    in_code = _draft("```\nnutria fuente agregar --doi 10.1234/abc\n```")
+    assert not any("Identificador" in e for e in _errors(in_code, require_sections=False, path=report))
+    link = _draft("Los datos del censo están en https://www.ine.es/censo [SUP].")
+    issues = chk.check_report(link, require_sections=False, path=report)
+    assert any("Enlace en el cuerpo" in str(i) and i.severity == "aviso" for i in issues)
+    assert not any("Enlace" in str(i) and i.severity == "error" for i in issues)
+
+
+def test_round2_evasions_block_review_and_stamp(project, online, capsys):
+    # D3-4 de punta a punta: con estas formas, `informe revisar` se niega y el sello no vale (antes, «Sello válido»
+    # con «2 de 2 referencias verificadas» aunque el cuerpo citara un DOI inventado).
+    path = _filled_report(project)
+    base = path.read_text("utf-8")
+    variants = {
+        "(García Pérez, 2018)": "La colina reduce la cetosis subclínica (García Pérez, 2018).",
+        "Identificador de una fuente": "Un ensayo posterior confirmó que la colina reduce a la mitad la cetosis "
+                                       "(doi:10.9999/doi.inventado.2021.001).",
+        "Cifra": "| Variable | Control | Colina |\n|---|---|---|\n| Leche, semana 4 (kg/d) | 30,1 | 32,4 |",
+        "Cita numérica": "La colina elimina la cetosis subclínica [3, 4].",
+        "mal escrita": "La colina elimina la cetosis subclínica (R1, R2).",
+    }
+    for what, extra in variants.items():
+        what = "Cita autor-año" if what.startswith("(") else what
+        path.write_text(base.replace(CLAIM_B, CLAIM_B + "\n\n" + extra, 1), "utf-8")
+        with pytest.raises(SystemExit, match=f"No se registra la revisión(.|\n)*{re.escape(what)}"):
+            main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"])
+        assert db.report_reviews(_conn()) == []
+        path.write_text(path.read_text("utf-8").replace("estado: borrador", "estado: final"), "utf-8")
+        capsys.readouterr()
+        main(["informe", "comprobar", str(path), "--online", "--sellar"])
+        assert "Sello válido" not in _out(capsys), what
+        assert not chk.stamp_status(path)[0], what
+
+
+def test_claims_citing_a_source_need_their_annex_row_whatever_the_label(project):
+    # D3-3 (residuo de la ronda 2): «... [SUP] [R1]» no elude el Anexo A ni el registro de fuentes
+    body = "La colina aumenta la leche 2,5 kg/d en vacas lecheras multíparas [SUP] [R1]."
+    assert any("Sin comprobación de respaldo de R1 para la afirmación [SUP]" in e for e in _body_errors(body))
+    row = "\n| R1 | La colina aumenta la leche 2,5 kg/d en vacas lecheras multíparas | parcial | x |"
+    assert not [e for e in _body_errors(body, ANNEX + row) if "respaldo" in e or "Anexo A" in e]
+    negative = row.replace("| parcial |", "| no_respalda |")
+    assert any("R1 NO respalda la afirmación [SUP]" in e for e in _body_errors(body, ANNEX + negative))
+    path = _filled_report(project)
+    conn = _conn()
+    conn.execute("DELETE FROM sources WHERE doi = ?", (GOOD2,))
+    text = path.read_text("utf-8").replace("estado: borrador", "estado: final").replace(
+        CLAIM_B, "La fracción absorbible calculada con los datos del ensayo es 0,48 [DER] (cálculo: nutria destino "
+                 "ruminal) [R2].", 1)
+    assert any("R2" in e and "no está registrada como fuente" in e for e in _errors(text, conn=conn, path=path))
+
+
+def test_annex_prose_with_a_pipe_is_checked_as_text():
+    # D3-3 (regresión de la ronda 2): la prosa con una «|» en medio, separada de la tabla del Anexo A, no es una
+    # fila: sus cifras y citas se comprueban; pegada a la tabla es una fila sin referencia (error en final)
+    prose = "La colina duplicó la leche: +2,5 kg/d en vacas multíparas (García, 2018; de Vries, 2019) | nota."
+    separated = _body_errors("", ANNEX + "\n\n" + prose)
+    assert any("Cifra con unidades" in e for e in separated) and any("Cita autor-año" in e for e in separated)
+    glued = _body_errors("", ANNEX + "\n" + prose)
+    assert any("Fila del Anexo A sin referencia" in e for e in glued)
+    assert any("Fila del Anexo A sin referencia" in str(i) and i.severity == "aviso"
+               for i in _body_issues("", ANNEX + "\n" + prose))
+    assert any("Valoración de respaldo negativa escrita como texto" in e
+               for e in _body_errors("", ANNEX + "\n\nR1 no respalda la cetosis | pero sí la leche."))
+
+
+@pytest.mark.parametrize("opening", ["Así,", "Por ello,", "Dicho esto,", "Tal como se esperaba,", "Esto es,",
+                                     "Según el ensayo,", "Tal como indica el ensayo,", "Por ello"])
+def test_anaphora_connectors_are_not_remissions(opening):
+    # D3-3 (falsos positivos de la ronda 2): un conector inicial seguido de la afirmación completa no remite
+    claim = f"{opening} la colina protegida aumentó la producción de leche en vacas en transición"
+    body = f"Se revisaron doce ensayos controlados publicados entre 2010 y 2023. {claim} [PUB] [R1]."
+    assert not any("remite a la frase anterior" in e
+                   for e in _body_errors(body, ANNEX + f"\n| R1 | {claim} | respalda | x |")), opening
+
+
+@pytest.mark.parametrize("body, row", [
+    ("La colina aumenta la leche. Un ensayo con 60 vacas Holstein así lo indica [PUB] [R1].",
+     "Un ensayo con 60 vacas Holstein así lo indica"),
+    ("Se suplementó colina a 60 vacas. Esto, según el ensayo, aumentó la leche en multíparas [PUB] [R1].",
+     "Esto, según el ensayo, aumentó la leche en multíparas"),
+    ("La colina aumenta la leche. Así, así lo indica el ensayo [PUB] [R1].", "así lo indica el ensayo"),
+    ("La colina aumenta la leche. Así lo indica el ensayo [SUP] [R1].", "Así lo indica el ensayo"),
+])
+def test_remissions_with_a_source_subject_or_any_cited_label(body, row):
+    assert any("remite a la frase anterior" in e for e in _body_errors(body, ANNEX + f"\n| R1 | {row} | respalda | x |"))
+
+
+def test_section_14_single_tilde_and_hidden_text_do_not_count(project):
+    # D5-11 (ronda 2): el tachado de una tilde (GFM) y los span tachados u ocultos no declaran nada
+    path = _filled_report(project, ruta_regulatoria_preliminar="aditivo_zootecnico")
+    final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    assert not [e for e in _errors(final, conn=_conn(), path=path) if "ruta" in e or "compuerta" in e]
+    for hidden in ("~no_resuelta~ superada", '<span style="text-decoration: line-through">no_resuelta</span> superada',
+                   "<span hidden>no_resuelta</span> superada", '<span style="color:white">no_resuelta</span> superada',
+                   '<span style="display: none">no_resuelta</span> superada'):
+        text = final.replace("| seguridad | no_resuelta |", f"| seguridad | {hidden} |")
+        assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path)), \
+            hidden
+    route_line = re.search(r"(?m)^Ruta regulatoria preliminar del registro: .*$", final).group(0)
+    struck = final.replace(route_line, "Ruta regulatoria preliminar: ~`aditivo_zootecnico`~ `materia_prima` [SUP].")
+    assert any("declara la ruta regulatoria «materia_prima»" in e for e in _errors(struck, conn=_conn(), path=path))
+    approx = final.replace("| seguridad | no_resuelta |", "| seguridad | no_resuelta (~2 semanas y ~3 días) |")
+    assert not [e for e in _errors(approx, conn=_conn(), path=path) if "compuerta" in e]
+
+
+def test_new_patterns_are_fast_on_pathological_input():
+    import time
+    cases = ["García J, " * 3000 + "2018.", "\n".join(f"[^{i}]: García J, Pérez M. 2018. T." for i in range(2000)),
+             "- " + "de la " * 3000 + "García J. 2018.", "(" + " ".join(["García"] * 3000) + ", 2018).",
+             "la cetosis (1). " * 3000, "transición¹ " * 3000, ", ".join(["Así"] * 3000) + ", la colina [PUB] [R1]."]
+    for body in cases:
+        started = time.perf_counter()
+        chk.check_report(_draft(body), require_sections=False)
+        assert time.perf_counter() - started < 10, body[:40]
