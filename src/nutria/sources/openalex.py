@@ -33,7 +33,7 @@ def _params(cfg, extra: dict | None = None) -> dict:
     if key:
         params["api_key"] = key
     elif not getattr(cfg, "offline", False):
-        raise NetworkError(KEY_REQUIRED_MESSAGE)
+        raise NetworkError(KEY_REQUIRED_MESSAGE, motivo="credenciales")
     return params
 
 

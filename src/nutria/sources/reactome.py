@@ -7,18 +7,31 @@ comprobado contra el servicio real.
 
 from __future__ import annotations
 
-from .base import clean_text
+from .base import checked_version, clean_text
 
 CONTENT = "https://reactome.org/ContentService"
 ANALYSIS = "https://reactome.org/AnalysisService"
+VERSION_RE = r"\d{1,4}(?:\.\d{1,3})?"   # número de versión de la base de datos, p. ej. «94»
+
+
+def parse_version(text) -> dict:
+    """{"version": "94"} si la respuesta es un número de versión; {"version_no_reconocida": ...} si es otra cosa
+    (p. ej. «{}» o una página de error), que no se registra como versión."""
+    return checked_version(text, VERSION_RE)
+
+
+def _version_problem(text) -> str | None:
+    """Problema de una respuesta que trae algo que no es una versión (no se guarda en la caché); una respuesta
+    vacía no es un problema: solo dice que no hay versión."""
+    return "no es un número de versión de Reactome" if "version_no_reconocida" in parse_version(text) else None
 
 
 def version(client) -> dict:
-    """Versión de la base de datos de Reactome: {"version": "..."} (vacío si la respuesta no la trae)."""
+    """Versión de la base de datos de Reactome: {"version": "..."}. Una respuesta que no es un número de versión
+    no se guarda en la caché (`validate`) ni se registra como versión."""
     text = client.get_text(f"{CONTENT}/data/database/version", ttl_days=1,
-                           headers={"Accept": "text/plain, */*"})
-    value = str(text or "").strip()
-    return {"version": value} if value and len(value) < 40 else {}
+                           headers={"Accept": "text/plain, */*"}, validate=_version_problem)
+    return parse_version(text)
 
 
 def search(client, query: str, species: str = "Bos taurus", types: str = "Pathway") -> list[dict]:

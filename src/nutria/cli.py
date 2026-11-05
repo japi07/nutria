@@ -168,21 +168,23 @@ def _doctor_estado(res: dict) -> str:
 
 
 def _doctor_versiones(res: dict) -> dict:
-    """Versión de la base de datos que respondió a la comprobación de doctor (si la expone)."""
+    """Versión de la base de datos que respondió a la comprobación de doctor, si la expone, comprobada con el mismo
+    criterio que las órdenes ({"version": ...} o {"version_no_reconocida": ...}; {} si no la expone)."""
+    from .sources import chembl, reactome, stringdb, uniprot
     nombre, texto = res.get("nombre"), res.get("texto") or ""
+    if res.get("estado") != "ok":
+        return {}
     try:
         if nombre == "STRING":
-            data = json.loads(texto)
-            item = data[0] if isinstance(data, list) and data else {}
-            return {"STRING": item.get("string_version")}
+            return stringdb.parse_version(json.loads(texto))
         if nombre == "ChEMBL":
-            return {"ChEMBL": json.loads(texto).get("chembl_db_version")}
+            return chembl.parse_release(json.loads(texto))
         if nombre == "Reactome":
-            return {"Reactome": texto.strip()[:40] or None}
+            return reactome.parse_version(texto)
         if nombre == "UniProt":
-            return {"UniProt": (res.get("cabeceras") or {}).get("x-uniprot-release")}
-    except (ValueError, AttributeError):
-        return {}
+            return uniprot.parse_release(res.get("cabeceras"))
+    except ValueError:
+        return {"version_no_reconocida": texto.strip()[:60]} if texto.strip() else {}
     return {}
 
 
@@ -360,7 +362,11 @@ def cmd_doctor(args, cfg) -> int:
             params = {"api_key": cfg.secret("OPENALEX_API_KEY")}
         res = client.probe(url, params=params, headers={"Accept": "*/*"}, record=record)
         res.update(nombre=nombre, url=url, esencial=esencial)
-        report["versiones"].update({k: v for k, v in _doctor_versiones(res).items() if v})
+        found = _doctor_versiones(res)
+        if found.get("version"):
+            report["versiones"][nombre] = found["version"]
+        elif found.get("version_no_reconocida"):
+            report.setdefault("versiones_no_reconocidas", {})[nombre] = found["version_no_reconocida"]
         res.pop("texto", None)
         res.pop("nombre", None)
         report["red"][nombre] = res
@@ -397,6 +403,7 @@ def cmd_doctor(args, cfg) -> int:
     if record:
         log_event(cfg, "doctor", inputs={"offline": cfg.offline},
                   outputs={"red": {n: r["estado"] for n, r in report["red"].items()}, "versiones": report["versiones"],
+                           "versiones_no_reconocidas": report.get("versiones_no_reconocidas") or {},
                            "webfetch": {d: r["estado"] for d, r in report["webfetch"].items()},
                            "hook": report["hook"]["estado"], "r": report["r"]["estado"], "fallos_esenciales": fallos},
                   actor=args.agente)
@@ -416,6 +423,8 @@ def cmd_doctor(args, cfg) -> int:
         lines += [f"  {'*' if r.get('esencial') else ' '} {n:<28} {_doctor_estado(r)}" for n, r in report["red"].items()]
         if report["versiones"]:
             lines.append("  versiones: " + " | ".join(f"{k} {v}" for k, v in report["versiones"].items()))
+        for name, raw in (report.get("versiones_no_reconocidas") or {}).items():
+            lines.append(f"  AVISO: {name} respondió sin una versión reconocible («{raw}»): no se registra como versión")
         lines.append(f"  dominios de WebFetch (agentes de Claude Code; lista de {origen_dominios}), accesibilidad desde "
                      "esta máquina:")
         for domain, res in report["webfetch"].items():
@@ -496,15 +505,58 @@ def _red_procedencia(client) -> list[dict]:
     return [{"fecha": h["fecha"], "sha256": h["sha256"], "origen": h.get("origen")} for h in client.cache_hits]
 
 
+# Las versiones se piden aparte y se guardan en la caché un día (ttl_days=1): si un resultado sale de una copia de la
+# caché con una fecha que se aleja más que eso de la de la versión, la versión puede no ser la de ese resultado.
+VERSION_TOLERANCIA_DIAS = 1.0
+
+
+def _version_valida(info: dict, nombre: str, avisos: list[str]) -> dict:
+    """Deja en `info` solo una versión reconocible; avisa si no la hay o si la respuesta traía otra cosa."""
+    info = dict(info or {})
+    raw = info.pop("version_no_reconocida", None)
+    if not info.get("version"):
+        info = {}
+        if raw:
+            avisos.append(f"{nombre} respondió sin una versión reconocible («{raw}»): el resultado no queda ligado a "
+                          "una versión concreta")
+        else:
+            avisos.append(f"{nombre} no informó de su versión: el resultado no queda ligado a una versión concreta")
+    return info
+
+
 def _version_fuente(func, client, nombre: str, avisos: list[str]) -> dict:
-    """Versión de la base de datos consultada (`func(client)`), o {} con un aviso si no se pudo saber."""
+    """Versión de la base de datos consultada (`func(client)`, que se llama DESPUÉS de pedir los resultados), o {}
+    con un aviso si no se pudo saber. Añade `version_consultada` (fecha de la respuesta que dio la versión: la de su
+    copia en la caché o la actual) y avisa si algún resultado sale de una copia de la caché de otra fecha, porque
+    entonces la versión puede no ser la suya."""
+    import time
+
+    from .http import _iso, _parse_ts
+    previous = len(getattr(client, "cache_hits", None) or [])
     try:
         info = func(client) or {}
     except NetworkError as exc:
-        avisos.append(f"No se pudo consultar la versión de {nombre}: {exc}")
+        if exc.motivo == "respuesta":
+            avisos.append(f"{nombre} respondió sin una versión reconocible ({exc}): el resultado no queda ligado a una "
+                          "versión concreta")
+        else:
+            avisos.append(f"No se pudo consultar la versión de {nombre}: {exc}")
         return {}
-    if not info.get("version"):
-        avisos.append(f"{nombre} no informó de su versión: el resultado no queda ligado a una versión concreta")
+    info = _version_valida(info, nombre, avisos)
+    if not info:
+        return info
+    hits = list(getattr(client, "cache_hits", None) or [])
+    own = hits[previous:]
+    moment = (_parse_ts(own[-1].get("fecha")) if own else None) or time.time()
+    info["version_consultada"] = _iso(moment)
+    stale = [h for h in hits[:previous]
+             if abs((_parse_ts(h.get("fecha")) or moment) - moment) > VERSION_TOLERANCIA_DIAS * 86400]
+    if stale:
+        oldest = min(stale, key=lambda h: _parse_ts(h.get("fecha")) or moment)
+        avisos.append(f"La versión de {nombre} ({info['version']}) es la de una respuesta del {info['version_consultada']}, "
+                      f"pero {len(stale)} respuesta(s) de los resultados salen de copias de la caché de otra fecha (la "
+                      f"más alejada, del {oldest.get('fecha')}): esos resultados pueden ser de otra versión de "
+                      f"{nombre}")
     return info
 
 
@@ -813,10 +865,9 @@ def cmd_proteina(args, cfg) -> int:
     avisos: list[str] = []
     rows = uniprot.search(client, args.consulta, taxon=taxon_id(args.especie) if args.especie else None,
                           size=args.max, reviewed_only=args.revisadas)
-    fuente = {"nombre": "UniProtKB", **uniprot.release(client)}
-    if not fuente.get("version"):
-        avisos.append("UniProt no informó de su versión (cabecera X-UniProt-Release): el resultado no queda ligado a "
-                      "una versión concreta")
+    # La versión sale de las cabeceras de la última respuesta (de la red o de su copia en la caché): es la suya.
+    fuente = {"nombre": "UniProtKB", **_version_valida(uniprot.release(client), "UniProt (cabecera X-UniProt-Release)",
+                                                       avisos)}
     log_event(cfg, "proteina", inputs={"consulta": args.consulta, "especie": args.especie},
               outputs={"n": len(rows), "identificadores": [r["accesion"] for r in rows], "fuente": fuente,
                        "cache": _red_procedencia(client)}, actor=args.agente)
@@ -1893,7 +1944,8 @@ SALIDA_RED = 4
 SALIDA_CALCULO = 5
 SALIDA_NO_ENCONTRADO = 6
 SALIDA_INTERNO = 70
-SALIDA_INTERRUMPIDA = 130
+SALIDA_INTERRUMPIDA = 130   # 128 + SIGINT, como las demás herramientas de Unix
+SALIDA_TUBERIA = 141        # 128 + SIGPIPE
 CODIGOS_SALIDA = {
     SALIDA_OK: ("ok", "la orden terminó y el resultado es el esperado"),
     SALIDA_RESULTADO: ("resultado", "la orden terminó, pero el resultado es negativo o incompleto: discrepancias en "
@@ -1912,6 +1964,8 @@ CODIGOS_SALIDA = {
     SALIDA_NO_ENCONTRADO: ("no_encontrado", "el recurso pedido no existe en la fuente externa (HTTP 404)"),
     SALIDA_INTERNO: ("interno", "error interno inesperado (fallo del programa; NUTRIA_DEPURAR=1 muestra la traza)"),
     SALIDA_INTERRUMPIDA: ("interrumpida", "orden interrumpida (Ctrl+C)"),
+    SALIDA_TUBERIA: ("tuberia", "quien leía la salida la cerró antes de que terminara (p. ej. `| head`): la salida "
+                                "no llegó entera; no se imprime ningún error"),
 }
 
 
@@ -1927,10 +1981,12 @@ def _es_no_existe(mensaje) -> bool:
     return text.startswith(_NO_EXISTE) and not text.startswith(_NO_EXISTE + "la base de datos")
 
 
-# Prefijo del mensaje de un NetworkError según su motivo (el código es siempre SALIDA_RED): una credencial o una
-# respuesta inesperada no son «errores de red».
+# Prefijo del mensaje de un NetworkError según su motivo (el código es siempre SALIDA_RED): una credencial, una
+# petición rechazada, un error del servicio o una respuesta inesperada no son «errores de red». Los motivos red,
+# bloqueado y conexion sí lo son («Error de red»).
 _PREFIJOS_RED = {"credenciales": "Error de credenciales", "respuesta": "Respuesta no válida del servicio",
-                 "limite": "Límite de uso del servicio"}
+                 "limite": "Límite de uso del servicio", "peticion": "Petición rechazada por el servicio",
+                 "servicio": "Error del servicio", "http": "Error del servicio"}
 
 
 class SalidaOrden(SystemExit):
@@ -2062,7 +2118,7 @@ def main(argv: list[str] | None = None) -> int:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except (OSError, ValueError):
             pass
-        return SALIDA_RESULTADO
+        return SALIDA_TUBERIA
     except (requests.RequestException, ConnectionError, TimeoutError) as exc:
         return _error(args, f"{type(exc).__name__}: {exc}", SALIDA_RED, "Error de red", cfg)
     except OSError as exc:  # IsADirectoryError, PermissionError, NotADirectoryError, FileNotFoundError...

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from ..http import NetworkError
+from .base import checked_version
 
 BASE = "https://www.ebi.ac.uk/chembl/api/data"
 # Formato de un número de acceso de UniProtKB.
@@ -119,13 +120,32 @@ def target_search(client, query: str, organism: str | None = None, limit: int = 
     return ordered[:limit]
 
 
-def release(client) -> dict:
-    """Versión de ChEMBL que responde (`status.json`): {"version", "fecha_publicacion"} (vacío si no consta)."""
-    data = client.get_json(f"{BASE}/status.json", ttl_days=1)
+VERSION_RE = r"(?i)chembl_\d{1,3}(?:\.\d{1,2})?"   # p. ej. «ChEMBL_35»
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ][0-9:.]+Z?)?")
+
+
+def parse_release(data) -> dict:
+    """Versión de una respuesta de `status.json`: {"version", "fecha_publicacion"}; lo que no tiene la forma
+    esperada no se registra como versión ({"version_no_reconocida": ...})."""
     if not isinstance(data, dict):
-        return {}
-    out = {"version": data.get("chembl_db_version"), "fecha_publicacion": data.get("chembl_release_date")}
-    return {k: v for k, v in out.items() if v}
+        return checked_version(data, VERSION_RE)
+    out = checked_version(data.get("chembl_db_version"), VERSION_RE)
+    date = data.get("chembl_release_date")
+    if out.get("version") and isinstance(date, str) and _DATE_RE.fullmatch(date.strip()):
+        out["fecha_publicacion"] = date.strip()
+    return out
+
+
+def _release_problem(data) -> str | None:
+    """Problema de una respuesta que trae algo que no es una versión (no se guarda en la caché); una respuesta
+    vacía no es un problema: solo dice que no hay versión."""
+    return "no trae una versión de ChEMBL reconocible" if "version_no_reconocida" in parse_release(data) else None
+
+
+def release(client) -> dict:
+    """Versión de ChEMBL que responde (`status.json`): {"version", "fecha_publicacion"}. Una respuesta sin versión
+    reconocible no se guarda en la caché (`validate`) ni se registra como versión."""
+    return parse_release(client.get_json(f"{BASE}/status.json", ttl_days=1, validate=_release_problem))
 
 
 def activities(client, molecule_chembl_id: str | None = None, target_chembl_id: str | None = None,

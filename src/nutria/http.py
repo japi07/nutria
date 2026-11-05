@@ -157,8 +157,11 @@ class NetworkError(RuntimeError):
     """Fallo de red, host bloqueado por la política de red o respuesta de error del servicio.
 
     El mensaje se redacta al crear la excepción (`redact`): nunca lleva claves, tokens ni el correo.
-    `motivo` clasifica el fallo (red, bloqueado, conexion, http, respuesta, limite, credenciales, offline,
-    no_encontrado) y `status` guarda el código HTTP si lo hubo.
+    `motivo` clasifica el fallo: red (sin más detalle), bloqueado (proxy o política de red), conexion (sin
+    respuesta), servicio (error del servicio, HTTP 5xx, tras los reintentos), peticion (el servicio rechaza la
+    petición, HTTP 4xx), credenciales (clave ausente o rechazada, HTTP 401/403), limite (límite de uso: HTTP 429 o
+    sin turno libre), respuesta (respuesta no válida), offline o no_encontrado (HTTP 404). `status` guarda el código
+    HTTP si lo hubo.
     """
 
     motivo = "red"
@@ -796,7 +799,7 @@ class HttpClient:
             if status >= 400:
                 # Se redacta el cuerpo completo antes de recortarlo: un recorte nunca deja medio secreto.
                 detail = redact(resp.text[:5000], self.cfg)[:300]
-                motivo = "credenciales" if status in (401, 403) else "http"
+                motivo = "credenciales" if status in (401, 403) else ("peticion" if status < 500 else "servicio")
                 raise self._failure(NetworkError, f"HTTP {status} en {self._shown_url(str(resp.url))}: {detail}",
                                     trace, status=status, attempts=attempt, motivo=motivo)
             body = resp.text
@@ -827,7 +830,7 @@ class HttpClient:
             return value
         raise self._failure(NetworkError, f"Sin respuesta válida de {host} tras {attempts} intento(s): "
                                           f"{last_error}", trace, status=last_status, attempts=attempts,
-                            motivo="http" if last_status else "conexion")
+                            motivo=("limite" if last_status == 429 else "servicio") if last_status else "conexion")
 
     def get_json(self, url: str, **kw):
         return self.request("GET", url, expect="json", **kw)

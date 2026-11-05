@@ -62,6 +62,21 @@ def clean_text(value: str | None) -> str | None:
     return text or None
 
 
+def checked_version(value, pattern: str) -> dict:
+    """Versión de una base de datos tal como la da su API, comprobada contra su forma esperada (`pattern`, expresión
+    regular que debe casar entera): {"version": texto} si la tiene; {"version_no_reconocida": texto recortado} si la
+    respuesta trae otra cosa (una página de error, un JSON vacío...), que nunca se registra como versión; {} si no
+    trae nada."""
+    if value is None or isinstance(value, (dict, list, bool)):
+        return {"version_no_reconocida": str(value)[:60]} if value not in (None, {}, []) else {}
+    text = str(value).strip()
+    if not text:
+        return {}
+    if re.fullmatch(pattern, text):
+        return {"version": text}
+    return {"version_no_reconocida": text[:60]}
+
+
 def year_from(value) -> int | None:
     if value is None:
         return None

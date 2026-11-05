@@ -1020,8 +1020,9 @@ def test_red_cli_records_string_version_and_address(proj, router, capsys):
     router.add(r"version-12-0\.string-db\.org/api/json/network", (200, []))
     code, out, _ = run(capsys, ["--json", "red", "PPARA", "CPT1A"])
     data = json.loads(out)
-    assert code == 0 and data["fuente"] == {"nombre": "STRING", "url": "https://version-12-0.string-db.org",
-                                            "version": "12.0"}
+    assert code == 0 and data["fuente"].items() >= {"nombre": "STRING", "url": "https://version-12-0.string-db.org",
+                                                    "version": "12.0"}.items()
+    assert data["fuente"]["version_consultada"].startswith(datetime.now(timezone.utc).date().isoformat()[:4])
     assert events(proj, "red_string")[-1]["outputs"]["fuente"]["version"] == "12.0"
     (proj / "nutria.toml").write_text((proj / "nutria.toml").read_text("utf-8").replace(
         "https://version-12-0.string-db.org", "https://string-db.org"), "utf-8")
@@ -1046,7 +1047,59 @@ def test_reactome_search_analysis_and_version(cfg):
                                                         "especie": ["Bos taurus"], "tipo": "Pathway"}
     result = reactome.analyze_genes(client, ["PPARA", " CPT1A "])
     assert result["token"] == "T" and result["rutas"][0]["encontradas"] == 2
-    assert reactome.version(FakeClient(cfg, lambda *a: "<html>error</html>" * 5)) == {}
+    garbage = reactome.version(FakeClient(cfg, lambda *a: "<html>error</html>" * 5))
+    assert "version" not in garbage and garbage["version_no_reconocida"].startswith("<html>")
+    assert reactome.version(FakeClient(cfg, lambda *a: "")) == {}
+
+
+# D7-15: una respuesta que no es una versión nunca se registra como versión (ni en las órdenes ni en doctor).
+@pytest.mark.parametrize("module, parse, good, bad", [
+    (reactome, reactome.parse_version, "94", ["{}", "<html>Error 500</html>", "94; DROP", "version"]),
+    (stringdb, stringdb.parse_version, [{"string_version": "12.0"}], [{"string_version": "{}"}, ["x"],
+                                                                      [{"string_version": {"a": 1}}]]),
+    (chembl, chembl.parse_release, {"chembl_db_version": "ChEMBL_35", "chembl_release_date": "2024-12-01"},
+     [{"chembl_db_version": "<html>"}, {"chembl_db_version": "35"}, "texto"]),
+    (uniprot, uniprot.parse_release, {"X-UniProt-Release": "2025_04", "X-UniProt-Release-Date": "11-June-2025"},
+     [{"X-UniProt-Release": "{}"}, {"x-uniprot-release": "<html>"}]),
+])
+def test_versions_are_checked_against_their_expected_form(module, parse, good, bad):
+    assert parse(good).get("version")
+    for value in bad:
+        found = parse(value)
+        assert "version" not in found and found.get("version_no_reconocida"), value
+    assert parse(None) == {} and parse("") == {}
+
+
+def test_a_response_that_is_not_a_version_is_neither_cached_nor_recorded(proj, router, capsys):
+    router.add(r"ContentService/data/database/version", (200, "{}"))
+    router.add(r"ContentService/search/query", (200, {"results": []}))
+    code, out, _ = run(capsys, ["--json", "rutas", "buscar", "fatty", "acid"])
+    data = json.loads(out)
+    assert code == 0 and "version" not in data["fuente"]
+    assert any("Reactome respondió sin una versión reconocible" in a for a in data["avisos"])
+    assert "version" not in events(proj, "rutas")[-1]["outputs"]["fuente"]
+    router.add(r"ContentService/data/database/version", (200, "94"))      # no se guardó: se vuelve a pedir
+    code, out, _ = run(capsys, ["--json", "rutas", "buscar", "fatty", "acid"])
+    assert code == 0 and json.loads(out)["fuente"]["version"] == "94"
+    assert sum("database/version" in c["url"] for c in router.calls) == 2
+
+
+def test_version_from_another_date_than_cached_results_is_flagged(proj, router, capsys):
+    # La versión se pide aparte (TTL de 1 día): si los resultados salen de una copia de la caché de otra fecha, la
+    # versión puede no ser la suya y se avisa.
+    router.add(r"ContentService/data/database/version", (200, "94"))
+    router.add(r"ContentService/search/query", (200, {"results": []}))
+    assert run(capsys, ["rutas", "buscar", "fatty", "acid"])[0] == 0
+    code, out, _ = run(capsys, ["--json", "rutas", "buscar", "fatty", "acid"])     # todo de la caché, misma fecha
+    assert code == 0 and not any("otra versión" in a for a in json.loads(out)["avisos"])
+    age_provenance(proj / "research" / "procedencia.jsonl", 10)                   # resultados y versión: 10 días
+    code, out, _ = run(capsys, ["--json", "rutas", "buscar", "fatty", "acid"])     # versión nueva (TTL 1 día)
+    data = json.loads(out)
+    assert code == 0 and data["fuente"]["version"] == "94"
+    assert data["fuente"]["version_consultada"][:10] == datetime.now(timezone.utc).date().isoformat()
+    aviso = next(a for a in data["avisos"] if "otra versión de Reactome" in a)
+    assert "1 respuesta(s)" in aviso
+    assert events(proj, "rutas")[-1]["outputs"]["fuente"]["version_consultada"] == data["fuente"]["version_consultada"]
 
 
 def test_rutas_cli_records_reactome_version(proj, router, capsys):
@@ -1054,7 +1107,9 @@ def test_rutas_cli_records_reactome_version(proj, router, capsys):
     router.add(r"ContentService/search/query", (200, {"results": []}))
     code, out, _ = run(capsys, ["--json", "rutas", "buscar", "fatty", "acid"])
     assert code == 0 and json.loads(out)["fuente"]["version"] == "88"
-    assert events(proj, "rutas")[-1]["outputs"]["fuente"] == {"nombre": "Reactome", "version": "88"}
+    fuente = events(proj, "rutas")[-1]["outputs"]["fuente"]
+    assert fuente["nombre"] == "Reactome" and fuente["version"] == "88" and set(fuente) == {
+        "nombre", "version", "version_consultada"}
 
 
 # ============================================================================ Lens (D7-12)
@@ -1263,6 +1318,14 @@ def test_doctor_checks_keys_lens_webfetch_and_records_versions(proj, router, cap
     assert report["webfetch"]["doi.org"]["permitido_en_settings"] is False
     assert events(proj, "doctor")[-1]["outputs"]["versiones"]["STRING"] == "12.0"
     assert SECRET not in (proj / "research" / "procedencia.jsonl").read_text("utf-8")
+    # D7-15: un cuerpo que no es una versión no se registra como versión de Reactome
+    router.add(r"ContentService/data/database/version", (200, "{}"))
+    code, out, _ = run(capsys, ["--json", "doctor"])
+    report = json.loads(out)
+    assert "Reactome" not in report["versiones"] and report["versiones_no_reconocidas"] == {"Reactome": "{}"}
+    assert events(proj, "doctor")[-1]["outputs"]["versiones_no_reconocidas"] == {"Reactome": "{}"}
+    code, out, _ = run(capsys, ["doctor"])
+    assert "Reactome respondió sin una versión reconocible («{}»)" in out
 
 
 MARKER = '{"doctor_hook": "ok", "python": "venv", "nutria": "/ruta/nutria/__init__.py"}'
@@ -1835,6 +1898,44 @@ def test_network_errors_are_labelled_by_their_cause(proj, router, capsys, monkey
     assert code == cli.SALIDA_RED and err.startswith("Respuesta no válida del servicio:")
     code, out, err = run(capsys, ["buscar", "pubmed", "x"])                          # bloqueado por el proxy
     assert code == cli.SALIDA_RED and err.startswith("Error de red:")
+    # Una petición rechazada (HTTP 400), un error del servicio (5xx tras los reintentos), un límite de uso (429) o la
+    # falta de la clave de OpenAlex tampoco son «errores de red» (el código sigue siendo el de red).
+    for status, prefix, motivo in ((400, "Petición rechazada por el servicio:", "peticion"),
+                                   (503, "Error del servicio:", "servicio"),
+                                   (429, "Límite de uso del servicio:", "limite")):
+        router.add(r"eutils\.ncbi\.nlm\.nih\.gov", (status, '{"error": "x"}'))
+        code, out, err = run(capsys, ["buscar", "pubmed", f"consulta {status}"])
+        assert code == cli.SALIDA_RED and err.startswith(prefix), (status, err)
+        code, out, err = run(capsys, ["--json", "buscar", "pubmed", f"consulta {status}"])
+        assert _assert_json_error(out, err, cli.SALIDA_RED, "red")["motivo"] == motivo
+    code, out, err = run(capsys, ["buscar", "openalex", "rumen"])                     # sin OPENALEX_API_KEY
+    assert code == cli.SALIDA_RED and err.startswith("Error de credenciales:") and "OPENALEX_API_KEY" in err
+    assert not [c for c in router.calls if "openalex" in c["url"]]                     # ni siquiera se intenta
+
+
+def test_a_closed_pipe_has_its_own_code_and_no_traceback(tmp_path):
+    # D10-8: quien lee la salida la cierra antes de que termine (p. ej. `| head`): código 141 (128 + SIGPIPE), de la
+    # tabla, sin traza ni «Exception ignored» al cerrar el intérprete.
+    script = tmp_path / "salida_larga.py"
+    script.write_text(
+        "import sys\n"
+        "from nutria import cli\n"
+        "def larga(args, cfg):\n"
+        "    for i in range(200000):\n"
+        "        print('linea de salida', i)\n"
+        "    return 0\n"
+        "cli.cmd_estado = larga\n"
+        "raise SystemExit(cli.main(['estado']))\n", "utf-8")
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "NUTRIA_HOME": str(tmp_path)}
+    proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                            cwd=tmp_path)
+    proc.stdout.read(64)
+    proc.stdout.close()
+    err = proc.stderr.read().decode("utf-8", "replace")
+    proc.stderr.close()
+    assert proc.wait(timeout=60) == cli.SALIDA_TUBERIA == 141
+    assert "Traceback" not in err and "Exception ignored" not in err and "BrokenPipe" not in err
+    assert cli.CODIGOS_SALIDA[cli.SALIDA_TUBERIA][0] == "tuberia"
 
 
 def test_a_failing_chembl_strategy_does_not_hide_the_others(proj, router, capsys):

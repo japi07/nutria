@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from ..config import DEFAULT_STRING_URL
+from .base import checked_version
 
 DEFAULT_URL = DEFAULT_STRING_URL
 BASE = f"{DEFAULT_URL}/api"   # dirección por defecto; las funciones usan la configurada (`api_url`)
@@ -34,12 +35,34 @@ def _identifiers(genes: list[str]) -> str:
     return "\r".join(g.strip() for g in genes if g.strip())
 
 
-def version(client) -> dict:
-    """Versión de STRING que responde (`/api/json/version`): {"version", "direccion_estable"}."""
-    data = client.get_json(f"{api_url(client.cfg)}/json/version", ttl_days=1)
+VERSION_RE = r"\d{1,3}(?:\.\d{1,3}){0,2}"    # p. ej. «12.0»
+_ADDRESS_RE = re.compile(r"(?i)https?://[a-z0-9.-]+\.string-db\.org/?")
+
+
+def parse_version(data) -> dict:
+    """Versión de una respuesta de `/api/json/version`: {"version", "direccion_estable"}; lo que no tiene la forma
+    esperada no se registra como versión ({"version_no_reconocida": ...})."""
     item = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else {})
-    out = {"version": item.get("string_version"), "direccion_estable": item.get("stable_address")}
-    return {k: v for k, v in out.items() if v}
+    if not isinstance(item, dict):
+        return checked_version(item, VERSION_RE)
+    out = checked_version(item.get("string_version"), VERSION_RE)
+    address = item.get("stable_address")
+    if out.get("version") and isinstance(address, str) and _ADDRESS_RE.fullmatch(address.strip()):
+        out["direccion_estable"] = address.strip()
+    return out
+
+
+def _version_problem(data) -> str | None:
+    """Problema de una respuesta que trae algo que no es una versión (no se guarda en la caché); una respuesta
+    vacía no es un problema: solo dice que no hay versión."""
+    return "no trae una versión de STRING reconocible" if "version_no_reconocida" in parse_version(data) else None
+
+
+def version(client) -> dict:
+    """Versión de STRING que responde (`/api/json/version`): {"version", "direccion_estable"}. Una respuesta sin
+    versión reconocible no se guarda en la caché (`validate`) ni se registra como versión."""
+    return parse_version(client.get_json(f"{api_url(client.cfg)}/json/version", ttl_days=1,
+                                         validate=_version_problem))
 
 
 def network(client, genes: list[str], species: int = 9913, required_score: int = 700) -> list[dict]:
