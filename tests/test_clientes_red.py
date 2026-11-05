@@ -1335,6 +1335,30 @@ def test_llm_router_applies_the_data_policy(llm):
         llm_router.ask(config, "x", role="critico", sensitivity="publica")
 
 
+def test_llm_grade_and_evaluate_with_simulated_models(llm, tmp_path):
+    # D7-12: el banco de pruebas de dominio (grade/evaluate) con los modelos simulados.
+    llm_router, config, calls = llm
+    assert llm_router.grade({"tipo": "exacta", "respuesta_esperada": "Sí"}, "  si ")
+    assert llm_router.grade({"tipo": "contiene", "respuesta_esperada": "rumen"}, "El RUMEN degrada la proteína")
+    assert llm_router.grade({"tipo": "contiene_todos", "respuesta_esperada": ["a", "b"]}, "a y b")
+    assert not llm_router.grade({"tipo": "contiene_todos", "respuesta_esperada": ["a", "z"]}, "a y b")
+    assert llm_router.grade({"tipo": "sino", "respuesta_esperada": "no"}, "No, porque se degrada")
+    assert llm_router.grade({"tipo": "numerica", "respuesta_esperada": 4, "tolerancia": 0.5}, "Unos 4,2 kg/d")
+    assert not llm_router.grade({"tipo": "numerica", "respuesta_esperada": 4}, "sin cifra")
+    with pytest.raises(ValueError):
+        llm_router.grade({"tipo": "desconocido", "respuesta_esperada": "x"}, "x")
+    bank = tmp_path / "banco.jsonl"
+    bank.write_text("\n".join(json.dumps(item) for item in (
+        {"id": "q1", "pregunta": "¿Qué opinas?", "respuesta_esperada": "opinion", "tipo": "contiene"},
+        {"id": "q2", "pregunta": "¿2+2?", "respuesta_esperada": "4", "tipo": "numerica"})) + "\n", "utf-8")
+    result = llm_router.evaluate(config, bank, role="critico")
+    assert result["n_items"] == 2 and len(calls) == 4            # banco no confidencial: los dos modelos
+    assert result["resultados"]["local1"] == {"aciertos": 1, "total": 2, "exactitud": 0.5}
+    rows = [json.loads(line) for line in Path(result["detalle"]).read_text("utf-8").splitlines()]
+    assert {(r["item"], r["modelo"], r["correcto"]) for r in rows} == {
+        ("q1", "local1", True), ("q1", "externo", True), ("q2", "local1", False), ("q2", "externo", False)}
+
+
 def test_llm_cli_offline_omits_models(proj, router, capsys, monkeypatch):
     (proj / "config").mkdir(exist_ok=True)
     (proj / "config" / "modelos.toml").write_text(MODELS, "utf-8")
