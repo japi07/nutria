@@ -730,6 +730,42 @@ def test_oportunidad_raza_y_estado_fisiologico_con_no_consta_explicito():
         for valor in ("", "-", "todas", "No consta", "n/a"):
             with pytest.raises(SystemExit):
                 _validate("oportunidad", dict(base, **{campo: valor}))
+    # revisión: el error de la raza habla de la raza, no de la etapa
+    with pytest.raises(SystemExit, match="raza o el tipo genético") as exc:
+        _validate("oportunidad", dict(base, raza="varias"))
+    assert "indica la etapa" not in str(exc.value)
+
+
+@pytest.mark.parametrize("especie", [
+    "animales productores de alimentos", "especies productoras de alimentos", "food-producing species",
+    "animales destinados a la producción de alimentos", "rumiantes en general", "todos los rumiantes",
+    "cualquier rumiante", "rumiantes y monogástricos", "aves en general", "ruminants in general", "depende",
+    "la que corresponda", "según corresponda", "depende de la especie"])
+def test_genericos_de_la_revision_rechazados_como_especie(especie):
+    """Revisión de D4-5: la fórmula 'animales productores de alimentos' y un grupo de especies con palabras genéricas
+    ('rumiantes en general') no nombran la especie; tampoco 'depende' o 'la que corresponda'."""
+    for kind in ("oportunidad", "hipotesis"):
+        with pytest.raises(SystemExit, match="genérico"):
+            _validate(kind, dict(_example(f"{kind}_ejemplo"), especie=especie))
+
+
+@pytest.mark.parametrize("etapa", ["siempre", "depende de la especie", "depende", "cuando proceda", "as needed",
+                                   "siempre que sea necesario", "la que corresponda"])
+def test_genericos_de_la_revision_rechazados_como_etapa(etapa):
+    for kind in ("oportunidad", "hipotesis"):
+        with pytest.raises(SystemExit, match="genérico"):
+            _validate(kind, dict(_example(f"{kind}_ejemplo"), etapa=etapa))
+
+
+def test_grupo_de_especies_solo_o_calificado_se_acepta():
+    """Un grupo de especies solo ('rumiantes', 'monogástricos') o con un calificativo que lo concreta ('pequeños
+    rumiantes', 'rumiantes lecheros') nombra a quién se dirige; una especie con 'en general' sigue siendo la especie."""
+    base = _example("oportunidad_ejemplo")
+    for especie in ("rumiantes", "monogástricos", "pequeños rumiantes", "rumiantes lecheros", "aves de corral",
+                    "vacuno en general", "vacuno y ovino", "rumiantes adultos"):
+        _validate("oportunidad", dict(base, especie=especie))
+    for etapa in ("vacas que paren en otoño", "periodo seco", "cebo"):
+        _validate("oportunidad", dict(base, etapa=etapa))
 
 
 def test_oportunidad_generica_rechazada_por_la_cli(project):
@@ -775,9 +811,19 @@ def test_afirmacion_pub_exige_contexto_biologico(project, capsys):
     nombrada = copy.deepcopy(base)
     nombrada["contexto"]["especie"] = "no_consta"                                       # especie_diana sin especie
     invalidas.append(nombrada)
+    otra = copy.deepcopy(nombrada)                  # revisión: 'otra_especie' también exige saber cuál es la especie
+    otra["transferibilidad"] = "otra_especie"
+    invalidas.append(otra)
     for claim in invalidas:
         with pytest.raises(SystemExit):
             main(["afirmacion", "agregar", "--datos", _write(project / "a.json", claim)])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="otra_especie' hay que nombrar la especie"):
+        main(["afirmacion", "agregar", "--datos", _write(project / "a.json", otra)])
+    with pytest.raises(db.RegistryError, match="otra_especie' hay que nombrar la especie"):   # y por la API
+        db.add_claim(_conn(), otra)
+    otra["contexto"]["especie"] = "ovino lechero"
+    assert main(["afirmacion", "agregar", "--datos", _write(project / "a.json", otra)]) == 0
     # lo que la fuente no informa se declara con 'no_consta' explícito
     declarada = copy.deepcopy(base)
     declarada["transferibilidad"] = "in_vitro"
@@ -943,6 +989,19 @@ def test_incidencia_expresada_como_porcentaje_tambien_exige_definicion_y_ventana
         with pytest.raises(SystemExit, match="definicion_caso"):
             _validate("extraccion", dict(pct, variable=variable, unidad=unidad))
     for variable, unidad in (("acidosis", "% of time"), ("milk fat", "%"), ("rumination", "min/d")):
+        _validate("extraccion", dict(sin_contexto, variable=variable, unidad=unidad))
+    # revisión: la proporción de animales se reconoce también por la unidad ('% de vacas'), por los animales que la
+    # tienen ('vacas con BHB alto'), por un umbral en el nombre ('BHB ≥ 1,2 mmol/L' en '%') o por la abreviatura
+    for variable, unidad in (("BHB ≥ 1,2 mmol/L", "% de vacas"), ("vacas con BHB alto", "%"), ("SCK", "% de vacas"),
+                             ("SCK", "%"), ("BHB ≥ 1,2 mmol/L", "%"), ("RCS > 200 000 células/mL", "%"),
+                             ("Ca < 2,0 mmol/L", "proporción"), ("cualquier nombre", "% de las vacas"),
+                             ("Cows with high BHB", "%"), ("P/IA", "%"), ("casos de cojera", "casos/100 vacas/año")):
+        with pytest.raises(SystemExit, match="definicion_caso"):
+            _validate("extraccion", dict(pct, variable=variable, unidad=unidad))
+    # sin falsos positivos: un umbral sobre el tiempo, la composición o un marcador continuo no son incidencias
+    for variable, unidad in (("tiempo con pH < 5,8", "%"), ("pH ruminal < 5,8", "h/d"), ("pH < 5,8", "% del tiempo"),
+                             ("BHB ≥ 1,2 mmol/L", "mmol/L"), ("proteína de la leche", "%"), ("estrógenos", "pg/mL"),
+                             ("digestibilidad de la FND", "%"), ("ingestión de MS", "% del PV")):
         _validate("extraccion", dict(sin_contexto, variable=variable, unidad=unidad))
 
 

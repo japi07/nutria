@@ -40,8 +40,7 @@
           "const": "no_consta"
         },
         {
-          "$ref": "#/$defs/texto_especifico",
-          "minLength": 2
+          "$ref": "#/$defs/texto_raza"
         }
       ],
       "description": "Raza o tipo genético diana; 'no_consta' si no se ha definido."
@@ -406,8 +405,16 @@
       "minLength": 2,
       "pattern": "[^\\W_]",
       "x-texto": "especifico",
-      "x-mensaje": "indica la etapa o el estado concretos (p. ej. 'periodo de transición', 'cebo', 'destete') o, en raza y estado_fisiologico, 'no_consta'",
+      "x-mensaje": "indica la etapa o el estado concretos (p. ej. 'periodo de transición', 'cebo', 'destete') o, en estado_fisiologico, 'no_consta'",
       "description": "Como texto_informado y, además (\"x-texto\": \"especifico\"), no formado solo por palabras genéricas (todas, varias, cualquier, especies, etapas, fases, animales, ganado, de producción, all, species...), tampoco escritas sin espacios o letra a letra: debe nombrar una especie, una etapa o un estado concretos."
+    },
+    "texto_raza": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "[^\\W_]",
+      "x-texto": "especifico",
+      "x-mensaje": "indica la raza o el tipo genético concretos (p. ej. 'Holstein-Frisona', 'cruce Holstein × Montbéliarde') o 'no_consta' si no se ha definido",
+      "description": "Como texto_especifico (\"x-texto\": \"especifico\"), con su propio mensaje: nombra la raza o el tipo genético, no una palabra genérica ('varias', 'todas', 'cualquiera')."
     },
     "texto_especie": {
       "type": "string",

@@ -493,6 +493,8 @@ species|stage{,s}|phase{,s}|animal{,s}|livestock|farm{,s}|production|productive|
 categories|type{,s}|target|of|the|and|or|in|for|an|to|with|overall|broad|range|spectrum|unspecific|nonspecific|non
 specific|universal|mammal{,s}|vertebrate{,s}|organism{,s}|life|lifetime|year{,s}|cycle{,s}|period{,s}|state{,s}
 condition{,s}|group{,s}|class{,es}|sex{,es}|breed{,s}|kind{,s}|individual{,s}|population{,s}|system{,s}|case{,s}
+depende{,n}|dependiendo|dependera{,n}|corresponda{,n}|proceda{,n}|convenga{,n}|siempre|cuando|que|cual{,es}|sea{,n}
+necesari{o,a,os,as}|depend{,s,ing}|always|whichever|whatever|appropriate|needed|required|when|as|if|apply|applies
 """
 # Combinaciones genéricas de palabras que, solas, pueden ser concretas ('fase de producción' en ponedoras, 'cría').
 _GENERIC_PHRASE_TEMPLATES = """
@@ -502,6 +504,17 @@ produccion animal
 food producing
 foodproducing
 farm animal{,s}
+productor{,es,a,as} de alimento{,s}
+destinad{o,a,os,as} a la produccion de alimento{,s}
+para ?el consumo humano
+"""
+# Grupos de especies ('rumiantes', 'aves', 'monogástricos'): solos nombran un grupo concreto, pero con palabras
+# genéricas ('rumiantes en general', 'todos los rumiantes', 'rumiantes y monogástricos') no nombran la especie.
+_GROUP_TEMPLATES = """
+rumiante{,s}|monogastric{o,a,os,as}|poligastric{o,a,os,as}|herbivor{o,a,os,as}|omnivor{o,a,os,as}|carnivor{o,a,os,as}
+ave{,s}|avicola{,s}|pez|peces|ungulad{o,os}|bovid{o,os}|camelid{o,os}|equid{o,os}|suid{o,os}
+ruminant{,s}|monogastric{,s}|herbivore{,s}|omnivore{,s}|carnivore{,s}|poultry|bird{,s}|fish|fishes|ungulate{,s}
+bovid{,s}|camelid{,s}|equid{,s}
 """
 # Solo en los campos de especie: palabras que describen a los animales sin nombrar la especie ('animales adultos').
 _DESCRIPTOR_TEMPLATES = """
@@ -544,10 +557,12 @@ def _vocabulary() -> dict[str, Any]:
     fillers = _expand(_FILLER_TEMPLATES)
     generic = fillers | _expand(_GENERIC_TEMPLATES) | _expand(_GENERIC_PHRASE_TEMPLATES)
     descriptors = generic | _expand(_DESCRIPTOR_TEMPLATES)
+    groups = _expand(_GROUP_TEMPLATES)
     generic_compact = frozenset(c for c in ("".join(t) for t in generic) if len(c) >= 3)
-    return {"filler": fillers, "generic": generic, "descriptor": descriptors,
+    return {"filler": fillers, "generic": generic, "descriptor": descriptors, "group": groups,
+            "generic_group": generic | groups,
             "filler_compact": frozenset("".join(t) for t in fillers), "generic_compact": generic_compact,
-            "max_len": max(len(t) for t in descriptors), "compact_max": max(map(len, generic_compact))}
+            "max_len": max(len(t) for t in descriptors | groups), "compact_max": max(map(len, generic_compact))}
 
 
 def _fold(text: str) -> str:
@@ -650,6 +665,11 @@ def text_problem(value: Any, mode: str = "informado") -> str | None:
                 return "es genérico: no nombra una especie, una etapa ni un estado concretos"
         if mode == "especie" and any(_covered(ws, vocab["descriptor"], vocab["max_len"]) for ws in readings):
             return "no nombra la especie: solo describe a los animales"
+        if mode == "especie" and any(_covered(ws, vocab["generic_group"], vocab["max_len"])
+                                     and not _covered(ws, vocab["group"], vocab["max_len"]) for ws in readings):
+            return ("es genérico: un grupo de especies ('rumiantes', 'aves', 'monogástricos') con palabras genéricas no "
+                    "nombra la especie; indica la especie (p. ej. 'vacuno lechero') o, si se dirige a todo el grupo, "
+                    "solo el grupo")
     return None
 
 
@@ -741,7 +761,31 @@ INCIDENCE_OUTCOME_RE = re.compile(
     r"|incidence|prevalence|risk|ketosis|hyperketon(?:a)?emia|hypocalc(?:a)?emia|milk fever|parturient paresis"
     r"|retained (?:placenta|fetal membranes)|displaced abomasum|lameness|fatty liver|hepatic lipidosis|morbidity"
     r"|mortality|deaths?|survival|abortions?|dystocias?|diarrh(?:o)?ea|diseases?|disorders?|pregnancy (?:loss|rate)"
-    r"|pregnancies per ai|pregnancy per ai|conception|fertility|culling|culled|removals?|cure rate)\b")
+    r"|pregnancies per ai|pregnancy per ai|conception|fertility|culling|culled|removals?|cure rate"
+    # reproducción, otros trastornos y abreviaturas habituales en los artículos (SCK: cetosis subclínica; SCH:
+    # hipocalcemia subclínica; SCM: mastitis subclínica; RFM: retención de membranas fetales; LDA: abomaso desplazado
+    # a la izquierda; P/IA: gestaciones por inseminación)
+    r"|celos?|estros?|anestros?|ovulacion|quistes? ovaricos?|gestantes|prenadas|neumonias?|timpanismo|meteorismo"
+    r"|cetonuria|estrus|anestrus|ovulation|ovarian cysts?|pregnant|pneumonia|bloat|ketonuria"
+    r"|sck|sch|scm|rfm|lda|p ?/ ?(?:ia|ai))\b")
+# Proporción de animales (o unidades) con algo, por la unidad o por el nombre: '% de vacas', 'proporción de animales',
+# 'casos/100 vacas', 'vacas con BHB alto', 'cows with'. Es una incidencia aunque la variable no nombre un trastorno.
+_ANIMAL_WORDS = (r"vacas?|novillas?|terneros?|terneras?|becerr[oa]s?|cerdas?|lechones|cerdos?|ovejas?|cabras?"
+                 r"|corderos?|cabritos?|aves|gallinas?|pollos?|animales|hembras|machos|individuos|cows?|heifers?|calves"
+                 r"|calf|sows?|piglets?|pigs?|ewes?|goats?|lambs?|birds|hens?|broilers?|animals|females|males"
+                 r"|individuals")
+ANIMAL_PROPORTION_RE = re.compile(
+    r"(?:%|‰|\bporcentaje|\bproporcion|\bfraccion|\bpercent(?:age)?|\bproportion|\bfraction)\s*"
+    r"(?:(?:de|del|of)\s+)?(?:(?:las|los|la|el|the)\s+)?(?:" + _ANIMAL_WORDS + r")\b"
+    r"|\b(?:casos?|eventos?|cases?|events?)\s*(?:/|por|per)\s*(?:100|1\.?000|cada|each)?\s*(?:" + _ANIMAL_WORDS
+    + r")\b|\b(?:" + _ANIMAL_WORDS + r")\s+(?:con|que|with|that|having)\b")
+# Umbral en el nombre de la variable ('BHB ≥ 1,2 mmol/L', 'RCS > 200 000 células/mL'): con una unidad de proporción,
+# es la proporción de animales por encima o por debajo del umbral.
+THRESHOLD_RE = re.compile(r"[<>≤≥⩽⩾]\s*=?\s*\d|=\s*[<>]\s*\d|\b(?:mayor|menor|superior|inferior)(?:es)?\s+(?:o igual\s+)?"
+                          r"(?:que|a|de)\s+\d|\bpor (?:encima|debajo) de\s+\d|\b(?:above|below|over|under|at least"
+                          r"|greater than|less than|al menos)\s+\d")
+# Un umbral sobre el tiempo ('tiempo con pH < 5,8') no es una proporción de animales.
+TIME_OUTCOME_RE = re.compile(r"\b(?:tiempo|time|duracion|duration|horas?|hours?|minutos?|minutes?)\b")
 INCIDENCE_UNIT_RE = re.compile(
     r"%|\b(?:porcentaje|proporcion|fraccion|casos?|animales|vacas|novillas|terneros|cerdas|lechones|aves|incidencia"
     r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?|percent(?:age)?|proportion|cases?|animals|cows|heifers"
@@ -757,10 +801,18 @@ COMPOSITION_UNIT_RE = re.compile(r"\b(?:ms|mo|pb|pv|peso|materia|ingesta|dieta|r
 
 def incidence_like(outcome: Any, unit: Any) -> bool:
     """Variable de incidencia o de un trastorno expresada como proporción de animales o recuento (no como velocidad
-    por tiempo ni como porcentaje de composición)."""
+    por tiempo ni como porcentaje de composición): por la unidad ('% de vacas', 'casos/100 vacas'), por el nombre de
+    un trastorno ('cetosis', 'SCK', 'retained placenta'), por los animales que la tienen ('vacas con BHB alto') o por
+    un umbral en el nombre ('BHB ≥ 1,2 mmol/L') con una unidad de proporción."""
+    if ANIMAL_PROPORTION_RE.search(_fold(str(unit or ""))):
+        return True
     unit_text = plain_text(unit)
-    return bool(INCIDENCE_OUTCOME_RE.search(plain_text(outcome)) and INCIDENCE_UNIT_RE.search(unit_text)
-                and not PER_TIME_UNIT_RE.search(unit_text) and not COMPOSITION_UNIT_RE.search(unit_text))
+    if (not INCIDENCE_UNIT_RE.search(unit_text) or PER_TIME_UNIT_RE.search(unit_text)
+            or COMPOSITION_UNIT_RE.search(unit_text)):
+        return False
+    outcome_text, outcome_fold = plain_text(outcome), _fold(str(outcome or ""))
+    return bool(INCIDENCE_OUTCOME_RE.search(outcome_text) or ANIMAL_PROPORTION_RE.search(outcome_fold)
+                or (THRESHOLD_RE.search(outcome_fold) and not TIME_OUTCOME_RE.search(outcome_text)))
 
 
 def is_incidence(get) -> bool:
@@ -1424,8 +1476,9 @@ def pub_context_problems(data: dict) -> list[str]:
         problems.append("faltan en 'contexto': " + ", ".join(missing))
     if _blank(data.get("transferibilidad")):
         problems.append("falta 'transferibilidad' (especie_diana, otra_especie, in_vitro, in_silico o humano)")
-    elif data["transferibilidad"] == "especie_diana" and ctx.get("especie") == "no_consta":
-        problems.append("con transferibilidad 'especie_diana' hay que nombrar la especie del estudio")
+    elif data["transferibilidad"] in ("especie_diana", "otra_especie") and ctx.get("especie") == "no_consta":
+        problems.append(f"con transferibilidad '{data['transferibilidad']}' hay que nombrar la especie del estudio (es "
+                        "la que se compara con la especie diana)")
     return problems
 
 

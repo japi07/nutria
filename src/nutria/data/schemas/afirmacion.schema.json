@@ -317,7 +317,10 @@
         ],
         "properties": {
           "transferibilidad": {
-            "const": "especie_diana"
+            "enum": [
+              "especie_diana",
+              "otra_especie"
+            ]
           }
         }
       },
@@ -329,7 +332,7 @@
                 "not": {
                   "const": "no_consta"
                 },
-                "x-mensaje": "con transferibilidad 'especie_diana' hay que nombrar la especie"
+                "x-mensaje": "con transferibilidad 'especie_diana' u 'otra_especie' hay que nombrar la especie del estudio (es la que se compara con la especie diana)"
               }
             }
           }
