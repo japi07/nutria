@@ -1820,3 +1820,13 @@ def test_p8_mision1_repetir_la_fase_no_duplica_ni_sobrescribe(project, capsys): 
     assert {"titulo": "Oportunidad A", "motivo": "ya registrada (O-0001)"} in segunda["resultado"]["no_registradas"]
     code, out = _cli(capsys, "--json", "oportunidad", "listar")
     assert [o["title"] for o in json.loads(out)].count("Oportunidad A") == 1
+
+
+@requires_node
+def test_p8_mision1_propuesta_top3_atribuida_y_por_oportunidad(project, capsys):  # trazabilidad (regla 10)
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}},
+              *_reglas_novedad(), *_registro_secuencial(1)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    ranking = _norm(call(out, "ranking")["prompt"])
+    assert 'nutria --agente director-cientifico decision registrar --entidad <ID> --decision "propuesta top-3 M1"' in ranking
+    assert "sin --firma-humana" in ranking

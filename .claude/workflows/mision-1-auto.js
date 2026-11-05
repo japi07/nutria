@@ -712,7 +712,8 @@ if (FASE === 'oportunidades') {
     `Escribe ${rutaRanking} (es un fichero nuevo: si ya existiera, no lo sobrescribas; añade -2, -3... y devuelve la ruta real) con ambas salidas e interpretación: estado de cada oportunidad ` +
     '(APTA, CONDICIONAL, BLOQUEADA, INCOMPLETA, INSUFICIENTE), robustez frente a los pesos (rango con cada perfil), desacuerdos entre evaluadores y compuertas pendientes ' +
     'de firma humana. Propón como candidatas a planes las 3 mejores NO bloqueadas (las APTA antes que las CONDICIONALES). Es una PROPUESTA: la selección la decide una ' +
-    'persona. Regístrala con nutria decision registrar --decision "propuesta top-3 M1" --motivo "..." sin --firma-humana.' +
+    'persona. Regístrala para cada una de las propuestas con nutria --agente director-cientifico decision registrar --entidad <ID> ' +
+    '--decision "propuesta top-3 M1" --motivo "..." sin --firma-humana.' +
     (bloqueadas.length ? `\nNo se puntuaron por tener compuertas bloqueadas: ${bloqueadas.map((o) => `${o.id} (${o.bloqueos.map((b) => b.compuerta).join(', ')})`).join('; ')}.` : '') +
     (fallos.length ? `\nAgentes que fallaron (decláralo en el documento): ${fallos.map((f) => f.agente).join(', ')}` : ''),
     { label: 'ranking', phase: 'Ranking', agentType: 'director-cientifico', schema: RANKING },
