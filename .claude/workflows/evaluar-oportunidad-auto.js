@@ -493,10 +493,18 @@ const resumenEvidencia = {
 
 // ================================================================ especialistas
 phase('Especialistas')
-// Tope de preguntas: las obligatorias primero (proponen compuertas) y después las del plan, en su orden.
+// Tope de preguntas: las obligatorias primero (proponen compuertas) y después las del plan, en su orden. Si el plan
+// trae su propia pregunta para un agente obligatorio, se le añade la obligatoria: la propuesta de compuerta y la
+// novedad frente a productos y patentes no dependen de cómo redacte el plan la pregunta.
 const delPlan = (Array.isArray(plan.preguntas) ? plan.preguntas : []).filter((q) => q && ESPECIALISTAS.includes(q.agente) && q.pregunta)
-const obligatorias = OBLIGATORIAS.map((o) => delPlan.find((q) => q.agente === o.agente) || o)
-const resto = delPlan.filter((q) => !obligatorias.includes(q))
+const usadasDelPlan = new Set()
+const obligatorias = OBLIGATORIAS.map((o) => {
+  const q = delPlan.find((x) => x.agente === o.agente)
+  if (!q) return o
+  usadasDelPlan.add(q)
+  return { agente: o.agente, pregunta: `${q.pregunta} Además (obligatorio): ${o.pregunta}`, entregable: `${q.entregable}; ${o.entregable}` }
+})
+const resto = delPlan.filter((q) => !usadasDelPlan.has(q))
 const preguntas = [...obligatorias, ...resto.slice(0, MAX_PREGUNTAS - obligatorias.length)]
 const sinLanzar = resto.slice(MAX_PREGUNTAS - obligatorias.length)
 if (sinLanzar.length) {

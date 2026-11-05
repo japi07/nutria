@@ -569,7 +569,7 @@ def test_evaluar_stops_when_quick_discard_proposes_blocked(analisis, agente, pro
               {"label": f"descarte:{analisis}", "respuesta": {"analisis": analisis, "estado": "bloqueada",
                                                              "motivo": "MOTIVO-BLOQUEO", "resumen": "r"}}]
     out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
-    assert {c["label"]: c["agentType"] for c in out["llamadas"]} == {
+    assert {c["label"]: c.get("agentType") for c in out["llamadas"]} == {
         "compuertas-registro:inicio": None,
         "descarte:regulatoria": "regulacion-seguridad", "descarte:seguridad": "compuestos-toxicologia",
         "descarte:destino_digestivo": "fisiologia-bioquimica", "descarte:modelo_ganadero": "economia-mercado-pi"}
@@ -751,3 +751,888 @@ def test_comparar_sistemas_counts_and_reports_failed_agents():
     assert [d.split(" ")[0] for d in res["dimensiones_sin_evaluar"]] == ["D3", "D4"]
     assert len(res["sin_verificar"]) == 1
     assert "AGENTES FALLIDOS" in call(out, "sintesis")["prompt"]
+
+
+# ====================================================================================================================
+# P8: workflows, skills y agentes (independencia de los evaluadores, descarte temprano, idempotencia, topes y
+# contenido regulatorio y fisiológico). Utilidades y pruebas de este bloque.
+# ====================================================================================================================
+import hashlib  # noqa: E402
+
+EJEMPLOS = ROOT / "ejemplos"
+WORKFLOWS_INVESTIGACION = ("mision-1-auto", "evaluar-oportunidad-auto", "red-team-auto")
+FRAGMENTOS_VALIDACION = ("donantes con procedimiento autorizado o de matadero", "Directiva 2010/63/UE", "Real Decreto 53/2013",
+                         "la técnica in situ es in vivo", "EFSA J 2024;22(7):e8856", "BPL", "varianzas reales",
+                         "registro previo del protocolo", "Reglamento (UE) 2019/1381, art. 32b", "incubaciones cortas en lote")
+PROPIETARIO = {compuerta: agente for agente, compuerta in COMPUERTA_DE.items()}
+
+
+def _ejemplo(nombre: str) -> dict:
+    return json.loads((EJEMPLOS / f"{nombre}.json").read_text("utf-8"))
+
+
+def _cli(capsys, *argv) -> tuple[int, str]:
+    """Ejecuta la CLI real en el proyecto de prueba y devuelve (código de salida, salida estándar)."""
+    from nutria.cli import main
+    capsys.readouterr()
+    try:
+        code = main(list(argv))
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    return code, capsys.readouterr().out
+
+
+def _salida(capsys, *argv) -> dict:
+    """Respuesta de un agente que transcribe literalmente la salida de una orden nutria."""
+    code, out = _cli(capsys, *argv)
+    return {"orden": "nutria " + " ".join(argv), "codigo_salida": code, "salida": out}
+
+
+def _registrar_oportunidades(project, capsys, n: int, especie: str | None = None) -> None:
+    """Deja n oportunidades en el registro (a partir del ejemplo de ejemplos/), con títulos distintos."""
+    code, out = _cli(capsys, "--json", "oportunidad", "listar")
+    ya = len(json.loads(out)) if code == 0 else 0
+    base = _ejemplo("oportunidad_ejemplo")
+    nuevas = [{**base, "titulo": f"{base['titulo']} ({i})", **({"especie": especie} if especie else {})}
+              for i in range(ya + 1, n + 1)]
+    if not nuevas:
+        return
+    ruta = project / f"oportunidades_{ya + 1}_{n}.json"
+    ruta.write_text(json.dumps(nuevas, ensure_ascii=False), "utf-8")
+    code, out = _cli(capsys, "--agente", "fisiologia-bioquimica", "oportunidad", "nueva", "--datos", str(ruta))
+    assert code == 0, out
+
+
+def _registrar_oportunidad(project, capsys, titulo: str, especie: str | None = None) -> str:
+    datos = {**_ejemplo("oportunidad_ejemplo"), "titulo": titulo, **({"especie": especie} if especie else {})}
+    ruta = project / f"oportunidad_{hashlib.sha256(titulo.encode()).hexdigest()[:8]}.json"
+    ruta.write_text(json.dumps(datos, ensure_ascii=False), "utf-8")
+    code, out = _cli(capsys, "--agente", "fisiologia-bioquimica", "--json", "oportunidad", "nueva", "--datos", str(ruta))
+    assert code == 0, out
+    return json.loads(out)["ids"][0]
+
+
+def _ver(capsys, opp_id: str) -> dict:
+    return _salida(capsys, "--agente", "orquestador", "--json", "oportunidad", "ver", opp_id, "--sin-puntuaciones")
+
+
+def _bloquear(capsys, opp_id: str, compuerta: str, motivo: str = "MOTIVO-REGISTRO") -> None:
+    code, out = _cli(capsys, "--agente", PROPIETARIO[compuerta], "puntuar", "compuerta", opp_id, compuerta, "bloqueada",
+                     "--motivo", motivo)
+    assert code == 0, out
+
+
+def _regla_registro(project, capsys, opp_id: str, etiqueta: str = "compuertas-registro:") -> dict:
+    """Regla del arnés: toda lectura de compuertas del registro devuelve la salida real de `oportunidad ver`."""
+    _registrar_oportunidades(project, capsys, int(opp_id[2:]))
+    return {"labelPrefix": etiqueta, "respuesta": _ver(capsys, opp_id)}
+
+
+def _ls(project) -> str:
+    """Salida de `ls -1` de los directorios que lee el paso 0 de la misión 1."""
+    bloques = []
+    for d in ("research/revisiones", "research/oportunidades", "research/hipotesis"):
+        nombres = sorted(p.name for p in (project / d).iterdir()) if (project / d).is_dir() else []
+        bloques.append(f"{d}:\n" + "".join(f"{n}\n" for n in nombres))
+    return "\n".join(bloques)
+
+
+DOCTOR_SIN_RED = {"orden": "nutria --agente orquestador --json doctor", "codigo_salida": 0, "salida": json.dumps({
+    "version": "x", "red": {"PubMed (NCBI E-utilities)": "BLOQUEADO por proxy/política de red", "Crossref": "OK (200)"},
+    "claves": {"NCBI_API_KEY": False, "OPENALEX_API_KEY": False, "LENS_API_TOKEN": False}})}
+
+
+def _regla_paso0(project, capsys, fecha: str = "2026-11-04", ficheros: str | None = None) -> dict:
+    return {"label": "paso0", "respuesta": {
+        "doctor": DOCTOR_SIN_RED,
+        "estado": _salida(capsys, "--agente", "orquestador", "--json", "estado"),
+        "fecha": {"orden": "date -u +%F", "codigo_salida": 0, "salida": f"{fecha}\n"},
+        "ficheros": {"orden": "ls -1 research/revisiones research/oportunidades research/hipotesis", "codigo_salida": 0,
+                     "salida": _ls(project) if ficheros is None else ficheros}}}
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _reglas_puntuacion_emitida(project, capsys, opp_id: str, evaluadores=(1, 2, 3)) -> list[dict]:
+    """Reglas del arnés para la puntuación diferida: cada evaluador deja su JSON (del ejemplo) y devuelve su sha256;
+    el registro posterior devuelve la salida real de `puntuar registrar`."""
+    reglas = []
+    for n in evaluadores:
+        ev = f"evaluador-{n}"
+        datos = {**_ejemplo("puntuacion_ejemplo"), "oportunidad": opp_id, "evaluador": ev}
+        ruta = project / "research" / "oportunidades" / f"{opp_id}_puntuacion_{ev}.json"
+        ruta.write_text(json.dumps(datos, ensure_ascii=False), "utf-8")
+        sha = _sha256(ruta)
+        rel = f"research/oportunidades/{ruta.name}"
+        registro = _salida(capsys, "--agente", ev, "--json", "puntuar", "registrar", "--datos", str(ruta))
+        assert registro["codigo_salida"] == 0, registro
+        reglas += [{"labelRegex": f"^puntuacion:{ev}(:reintento)?$", "respuesta": {"archivo": rel, "sha256": sha, "resumen": "r"}},
+                   {"label": f"registro-puntuacion:{ev}", "respuesta": {"sha256": sha, "coincide": True, **registro}}]
+    return reglas
+
+
+def _comprobar(completa=True, errores=(), codigo=0, pendientes=0) -> dict:
+    resumen = {"total": 2, "verificadas": 2 - pendientes, "pendientes": pendientes, "con_error": 0, "completa": completa}
+    return {"orden": "nutria --agente verificador-citas --json informe comprobar research/informes/O-0003.md --online --sellar",
+            "codigo_salida": codigo, "salida": json.dumps({
+                "incidencias": [{"severity": "error", "message": m, "line": 1} for m in errores], "referencias": [],
+                "resumen": resumen})}
+
+
+def _sello(valido=True, codigo=0, mensaje="Sello válido") -> dict:
+    return {"orden": "nutria --agente verificador-citas --json informe sello research/informes/O-0003.md",
+            "codigo_salida": codigo, "salida": json.dumps({"valido": valido, "mensaje": mensaje})}
+
+
+SELLO_VALIDO = {"comprobar": _comprobar(), "sello": _sello()}
+
+
+def _maximo_logueado(out, patron=r"como máximo (\d+) agentes") -> int:
+    valores = [int(m.group(1)) for msg in out["logs"] for m in [re.search(patron, msg)] if m]
+    assert valores, out["logs"]
+    return valores[0]
+
+
+def _plan_evaluar(n_preguntas=3) -> dict:
+    agentes = ["investigador-bibliografico", "estadistico", "nutricion-formulacion", "fisiologia-bioquimica",
+               "compuestos-toxicologia", "bioinformatico", "regulacion-seguridad"]
+    return {"peco": "PECO", "variables": ["leche_kg_d"], "preguntas": [
+        {"agente": agentes[i % len(agentes)], "pregunta": f"pregunta {i + 1}", "entregable": "e"} for i in range(n_preguntas)]}
+
+
+# ------------------------------------------------------------------ evaluar-oportunidad-auto: compuertas del registro
+@requires_node
+@pytest.mark.parametrize("compuerta", sorted(PROPIETARIO))
+def test_p8_evaluar_se_detiene_si_el_registro_ya_tiene_una_compuerta_bloqueada(compuerta, project, capsys):  # D1-7, D2-8
+    _registrar_oportunidades(project, capsys, 3)
+    _bloquear(capsys, "O-0003", compuerta)
+    reglas = [{"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0003")},
+              {"labelPrefix": "descarte:", "respuesta": {"analisis": "x", "estado": "no_resuelta", "motivo": "m", "resumen": "r"}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    assert labels(out) == ["compuertas-registro:inicio"]  # nada más se gasta
+    lectura = call(out, "compuertas-registro:inicio")
+    assert "oportunidad ver O-0003 --sin-puntuaciones" in lectura["prompt"] and "--json" in lectura["prompt"]
+    res = out["resultado"]
+    assert res["detenida_en"] == "Compuertas del registro"
+    assert [b["compuerta"] for b in res["bloqueos"]] == [compuerta]
+    assert res["bloqueos"][0]["motivo"] == "MOTIVO-REGISTRO"
+    assert "herramienta Workflow" in res["siguiente"]
+
+
+@requires_node
+def test_p8_evaluar_ruta_fuera_de_alcance_bloquea_aunque_no_haya_fila_de_compuerta(project, capsys):  # D1-7 (escéptico)
+    _registrar_oportunidades(project, capsys, 3)
+    salida = _ver(capsys, "O-0003")
+    ver = json.loads(salida["salida"])
+    ver["regulatory_route"] = "fuera_de_alcance_medicamento"
+    ver["compuertas_efectivas"]["regulatoria"] = "bloqueada"
+    ver["compuertas"] = []
+    reglas = [{"labelPrefix": "compuertas-registro:", "respuesta": {**salida, "salida": json.dumps(ver)}},
+              {"labelPrefix": "descarte:", "respuesta": {"analisis": "x", "estado": "no_resuelta", "motivo": "m", "resumen": "r"}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    assert labels(out) == ["compuertas-registro:inicio"]
+    assert out["resultado"]["bloqueos"][0]["motivo"] == "ruta regulatoria fuera_de_alcance_medicamento"
+
+
+@requires_node
+@pytest.mark.parametrize("respuesta", [
+    None,  # el agente no devuelve nada
+    {"orden": "nutria ...", "codigo_salida": 1, "salida": ""},
+    {"orden": "nutria ...", "codigo_salida": 0, "salida": "compuertas: todas superadas"},  # resumen en vez de la salida literal
+    {"orden": "nutria ...", "codigo_salida": 0, "salida": json.dumps({"id": "O-0003", "compuertas_efectivas": {"regulatoria": "superada"}})},
+], ids=["sin-resultado", "codigo-1", "no-json", "incompleta"])
+def test_p8_evaluar_falla_en_cerrado_si_no_puede_leer_el_registro(respuesta):  # D1-7
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [{"labelPrefix": "compuertas-registro:", "respuesta": respuesta}])
+    assert labels(out) == ["compuertas-registro:inicio"]
+    assert out["resultado"]["detenida_en"] == "Compuertas del registro"
+    assert "no se pudieron leer las compuertas" in out["resultado"]["motivo"]
+
+
+@requires_node
+def test_p8_evaluar_falla_en_cerrado_si_la_salida_es_de_otra_oportunidad(project, capsys):  # D1-7
+    _registrar_oportunidades(project, capsys, 3)
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", [{"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0002")}])
+    assert labels(out) == ["compuertas-registro:inicio"]
+    assert "O-0002" in out["resultado"]["motivo"]
+
+
+@requires_node
+def test_p8_evaluar_el_registro_manda_tras_el_descarte_rapido(project, capsys):  # D1-7 (escéptico), D2-8
+    _registrar_oportunidades(project, capsys, 3)
+    limpio = _ver(capsys, "O-0003")
+    _bloquear(capsys, "O-0003", "seguridad", "REGISTRADA-SIN-DECIRLO")
+    reglas = [{"label": "compuertas-registro:inicio", "respuesta": limpio},
+              {"label": "compuertas-registro:descarte", "respuesta": _ver(capsys, "O-0003")},
+              {"labelPrefix": "descarte:", "respuesta": {"analisis": "x", "estado": "no_resuelta", "motivo": "m", "resumen": "r"}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    ls = labels(out)
+    assert ls[-1] == "compuertas-registro:descarte" and len(ls) == 6
+    assert not any(l.startswith(("plan:", "bibliografia:", "puntuacion:", "informe:")) for l in ls)
+    res = out["resultado"]
+    assert res["detenida_en"] == "Descarte rápido"
+    assert res["bloqueos"][0]["compuerta"] == "seguridad" and res["bloqueos"][0]["motivo"] == "REGISTRADA-SIN-DECIRLO"
+
+
+@requires_node
+def test_p8_evaluar_se_detiene_antes_de_puntuar_si_un_especialista_propone_bloqueada(project, capsys):  # D2-8
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"labelPrefix": "desarrollo-industrial:", "respuesta": {
+                  "archivo": "research/revisiones/O-0003_02_desarrollo-industrial.md", "resumen": "r", "afirmaciones": [],
+                  "compuerta_propuesta": {"compuerta": "analitica", "estado": "bloqueada", "motivo": "SIN-METODO"}}},
+              {"labelPrefix": "critica:", "respuesta": {"veredicto": "refutada", "debilidades": ["d"]}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    ls = labels(out)
+    assert not any(l.startswith(("puntuacion:", "informe:", "sello:", "registro-puntuacion:", "compuertas-registro:antes")) for l in ls)
+    res = out["resultado"]
+    assert res["detenida_en"] == "Especialistas"
+    assert res["bloqueos"] == [{"agente": "desarrollo-industrial", "compuerta": "analitica", "motivo": "SIN-METODO",
+                                "archivo": "research/revisiones/O-0003_02_desarrollo-industrial.md"}]
+
+
+@requires_node
+def test_p8_evaluar_relee_el_registro_antes_de_puntuar(project, capsys):  # D2-8
+    _registrar_oportunidades(project, capsys, 3)
+    limpio = _ver(capsys, "O-0003")
+    _bloquear(capsys, "O-0003", "etica")
+    reglas = [{"label": "compuertas-registro:inicio", "respuesta": limpio},
+              {"label": "compuertas-registro:descarte", "respuesta": limpio},
+              {"label": "compuertas-registro:antes-de-puntuar", "respuesta": _ver(capsys, "O-0003")},
+              {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    ls = labels(out)
+    assert ls[-1] == "compuertas-registro:antes-de-puntuar"
+    assert not any(l.startswith(("puntuacion:", "informe:", "sello:")) for l in ls)
+    assert out["resultado"]["detenida_en"] == "Especialistas"
+    assert [b["compuerta"] for b in out["resultado"]["bloqueos"]] == ["etica"]
+
+
+# ------------------------------------------------------------------ evaluar-oportunidad-auto: independencia y sello
+@requires_node
+def test_p8_evaluar_evaluadores_ciegos_antes_del_informe(project, capsys):  # D1-3, D2-2
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(2)},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"),
+              {"label": "informe:O-0003", "respuesta": {"archivo": "research/informes/O-0003.md", "decision_propuesta": "DECISION-DIRECTOR"}},
+              {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    ls = labels(out)
+    evaluadores = [c for c in out["llamadas"] if c["label"].startswith("puntuacion:")]
+    assert [c["label"] for c in evaluadores] == ["puntuacion:evaluador-1", "puntuacion:evaluador-2", "puntuacion:evaluador-3"]
+    assert len({c["model"] for c in evaluadores}) == 3
+    informe = ls.index("informe:O-0003")
+    for c in evaluadores:
+        ev = c["label"].split(":")[1]
+        assert ls.index(c["label"]) < informe  # puntúan antes de la síntesis, el informe y la decisión
+        assert c["agentType"] == "evaluador-independiente"
+        assert f"nutria --agente {ev} oportunidad ver O-0003 --sin-puntuaciones --json" in c["prompt"]
+        assert "research/informes/O-0003.md" not in c["prompt"] and "DECISION-DIRECTOR" not in c["prompt"]
+        assert "decision_propuesta" not in c["prompt"]
+        otros = [f"_puntuacion_evaluador-{n}" for n in (1, 2, 3) if f"evaluador-{n}" != ev]
+        assert not any(o in c["prompt"] for o in otros)
+        assert "NO la registres" in c["prompt"]
+    assert ls.index("informe:O-0003") < ls.index("verificacion-informe:O-0003") < ls.index("sello:O-0003")
+    # el director redacta después incorporando las puntuaciones; él no puntúa
+    prompt_informe = call(out, "informe:O-0003")["prompt"]
+    assert "research/oportunidades/O-0003_puntuacion_evaluador-1.json" in prompt_informe and "No puntúes" in prompt_informe
+    registros = [c for c in out["llamadas"] if c["label"].startswith("registro-puntuacion:")]
+    assert len(registros) == 3 and all(ls.index(c["label"]) > ls.index("sello:O-0003") for c in registros)
+    for c in registros:
+        ev = c["label"].split(":")[1]
+        assert f"nutria --agente {ev} --json puntuar registrar --datos research/oportunidades/O-0003_puntuacion_{ev}.json" in c["prompt"]
+    assert not any(c.get("agentType") == "director-cientifico" for c in evaluadores + registros)
+    res = out["resultado"]
+    assert res["evaluadores_registrados"] == 3 and res["informe"]["sello_valido"] is True
+    assert res["informe"]["decision_propuesta"] == "DECISION-DIRECTOR"
+
+
+@requires_node
+def test_p8_evaluar_critica_y_verificacion_eligen_las_afirmaciones(project, capsys):  # D2-2
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"labelPrefix": "investigador-bibliografico:", "respuesta": {
+                  "archivo": "research/revisiones/O-0003_01_investigador-bibliografico.md", "resumen": "r",
+                  "afirmaciones": [{"texto": "X", "etiqueta": "HIP"}]}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    critica = call(out, "critica:investigador-bibliografico:4")  # las 3 preguntas obligatorias van primero
+    assert critica["agentType"] == "critico-red-team"
+    assert "Lee completo research/revisiones/O-0003_01_investigador-bibliografico.md" in critica["prompt"]
+    assert "no te limites a las que el autor declara" in critica["prompt"]
+    # sin afirmaciones [PUB] declaradas por el autor, las fuentes se verifican igualmente leyendo el fichero
+    fuentes = call(out, "fuentes:investigador-bibliografico:4")
+    assert fuentes["agentType"] == "verificador-citas"
+    assert "TODAS las afirmaciones [PUB] de research/revisiones/O-0003_01_investigador-bibliografico.md" in fuentes["prompt"]
+
+
+SELLOS_NO_VALIDOS = {
+    "sello-no-valido": {"comprobar": _comprobar(), "sello": _sello(False, 1, "Sin sello")},
+    "verificacion-incompleta": {"comprobar": _comprobar(False, codigo=1, pendientes=2), "sello": _sello()},
+    "errores": {"comprobar": _comprobar(errores=("[R1] no tiene fila en el Anexo A",), codigo=1), "sello": _sello()},
+    "incoherente": {"comprobar": _comprobar(), "sello": _sello(True, 1)},
+    "declarado-por-el-llm": {"comprobar": {"orden": "x", "codigo_salida": 0, "salida": "Todo correcto"},
+                             "sello": {"orden": "x", "codigo_salida": 0, "salida": "sello_valido: true"}},
+    "sin-resultado": None,
+}
+
+
+@requires_node
+@pytest.mark.parametrize("caso", sorted(SELLOS_NO_VALIDOS))
+def test_p8_evaluar_sin_sello_valido_no_registra_puntuaciones(caso, project, capsys):  # D3-3
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"),
+              {"label": "informe:O-0003", "respuesta": {"archivo": "research/informes/O-0003.md", "decision_propuesta": "continuar"}},
+              {"label": "sello:O-0003", "respuesta": SELLOS_NO_VALIDOS[caso]}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    sello = call(out, "sello:O-0003")
+    assert "informe comprobar research/informes/O-0003.md --online --sellar" in sello["prompt"]
+    assert "--json informe sello research/informes/O-0003.md" in sello["prompt"]
+    assert not any(l.startswith("registro-puntuacion:") for l in labels(out))
+    res = out["resultado"]
+    assert res["informe"]["sello_valido"] is False and res["informe"]["motivo_sello"]
+    assert res["evaluadores_registrados"] == 0
+    assert [p["evaluador"] for p in res["puntuaciones_pendientes"]] == ["evaluador-1", "evaluador-2", "evaluador-3"]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", p["sha256"]) for p in res["puntuaciones_pendientes"])
+    assert "registrar_puntuaciones" in res["siguiente"] and "herramienta Workflow" in res["siguiente"]
+    assert "no se da por bueno" in res["siguiente"]
+
+
+@requires_node
+def test_p8_evaluar_interpreta_la_salida_real_de_informe_sello(project, capsys):  # D3-3
+    (project / "research" / "informes" / "O-0003.md").write_text("---\nestado: borrador\n---\n# Informe\n", "utf-8")
+    real = {"comprobar": _comprobar(), "sello": _salida(capsys, "--agente", "verificador-citas", "--json", "informe", "sello",
+                                                         "research/informes/O-0003.md")}
+    assert real["sello"]["codigo_salida"] != 0 and json.loads(real["sello"]["salida"])["valido"] is False
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"), {"label": "sello:O-0003", "respuesta": real}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    assert not any(l.startswith("registro-puntuacion:") for l in labels(out))
+    assert out["resultado"]["informe"]["sello_valido"] is False
+    assert out["resultado"]["informe"]["motivo_sello"].startswith("nutria informe sello:")
+
+
+@requires_node
+def test_p8_evaluar_no_registra_un_fichero_de_puntuacion_modificado(project, capsys):  # D1-3, D3-3
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"label": "registro-puntuacion:evaluador-1", "respuesta": {"sha256": "0" * 64, "coincide": False, "codigo_salida": 0, "salida": ""}},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"), {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    res = out["resultado"]
+    ev1 = next(e for e in res["evaluadores"] if e["id"] == "evaluador-1")
+    assert ev1["registrado"] is False and "sha256" in ev1["fallo"]
+    assert res["evaluadores_registrados"] == 2
+    assert [p["evaluador"] for p in res["puntuaciones_pendientes"]] == ["evaluador-1"]
+
+
+@requires_node
+def test_p8_evaluar_modo_registrar_puntuaciones_pendientes(project, capsys):  # D3-3
+    _registrar_oportunidades(project, capsys, 3)
+    reglas_p = _reglas_puntuacion_emitida(project, capsys, "O-0003")
+    pendientes = [{"evaluador": f"evaluador-{n}", "sha256": reglas_p[2 * (n - 1)]["respuesta"]["sha256"], "modelo": m}
+                  for n, m in ((1, "opus"), (2, "sonnet"), (3, "fable"))]
+    args = {"id": "O-0003", "registrar_puntuaciones": pendientes}
+    out = run_workflow("evaluar-oportunidad-auto", args, [_regla_registro(project, capsys, "O-0003"), *reglas_p,
+                                                          {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}])
+    assert labels(out) == ["compuertas-registro:inicio", "sello:O-0003", "registro-puntuacion:evaluador-1",
+                           "registro-puntuacion:evaluador-2", "registro-puntuacion:evaluador-3"]
+    assert [c["model"] for c in out["llamadas"][2:]] == ["opus", "sonnet", "fable"]
+    assert out["resultado"]["evaluadores_registrados"] == 3 and out["resultado"]["puntuaciones_pendientes"] == []
+    # sin sello válido no se registra nada y siguen pendientes
+    sin = run_workflow("evaluar-oportunidad-auto", args, [_regla_registro(project, capsys, "O-0003"),
+                                                          {"label": "sello:O-0003", "respuesta": SELLOS_NO_VALIDOS["sello-no-valido"]}])
+    assert labels(sin) == ["compuertas-registro:inicio", "sello:O-0003"]
+    assert len(sin["resultado"]["puntuaciones_pendientes"]) == 3
+    # una lista mal formada no lanza nada
+    for mala in ([], [{"evaluador": "evaluador-1", "sha256": "abc"}], [pendientes[0], pendientes[0]], "evaluador-1"):
+        err = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "registrar_puntuaciones": mala})
+        assert err["llamadas"] == [] and "registrar_puntuaciones" in err["resultado"]["error"]
+
+
+@requires_node
+def test_p8_evaluar_modo_registrar_respeta_las_compuertas_bloqueadas(project, capsys):  # D1-7, D3-3
+    _registrar_oportunidades(project, capsys, 3)
+    _bloquear(capsys, "O-0003", "regulatoria")
+    args = {"id": "O-0003", "registrar_puntuaciones": [{"evaluador": "evaluador-1", "sha256": "a" * 64}]}
+    out = run_workflow("evaluar-oportunidad-auto", args, [{"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0003")},
+                                                          {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}])
+    assert labels(out) == ["compuertas-registro:inicio"]
+    assert out["resultado"]["detenida_en"] == "Compuertas del registro"
+
+
+# ------------------------------------------------------------------ evaluar-oportunidad-auto: topes y estimación
+@requires_node
+def test_p8_evaluar_tope_de_preguntas_y_estimacion_coherente(project, capsys):  # D10-3
+    estudios = [{"fuente": f"doi:10.1000/e{i}", "especie": "vacuno lechero", "tipo_estudio": "ensayo", "datos_cuantitativos": True,
+                 "comparable": True} for i in range(1, 41)]
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(25)},
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "b.md", "estudios": estudios}},
+              {"labelPrefix": "conciliacion:", "respuesta": {"discrepancias": 0, "registrada": True, "estado_verificacion": "doble_concordante"}},
+              {"labelRegex": r"^puntuacion:evaluador-\d$", "respuesta": None}]  # peor caso: todos los evaluadores se reintentan
+    out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "max_estudios": 30, "max_preguntas": 15}, reglas)
+    ls = labels(out)
+    especialistas = [c for c in out["llamadas"] if c["phase"] == "Especialistas"]
+    assert len(especialistas) == 15
+    assert len([l for l in ls if l.startswith("extraccion:A:")]) == 30
+    assert len(ls) <= _maximo_logueado(out)
+    assert any("Límite de 15 preguntas" in m for m in out["logs"])
+    assert len(out["resultado"]["preguntas_sin_lanzar"]) == 25 + 3 - 15
+    # por defecto, 10 preguntas como máximo (incluidas las 3 de las compuertas)
+    defecto = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas[:2])
+    assert len([c for c in defecto["llamadas"] if c["phase"] == "Especialistas"]) == 10
+    assert len(labels(defecto)) <= _maximo_logueado(defecto)
+    assert call(defecto, "plan:O-0003")["schema"]["properties"]["preguntas"]["maxItems"] == 10
+
+
+@requires_node
+@pytest.mark.parametrize("args", [{"id": "O-0003", "max_preguntas": 2}, {"id": "O-0003", "max_preguntas": 16},
+                                  {"id": "O-0003", "max_estudios": 0}, {"id": "O-0003", "max_estudios": "10"}])
+def test_p8_evaluar_topes_no_validos_no_lanzan_nada(args):  # D10-3
+    out = run_workflow("evaluar-oportunidad-auto", args)
+    assert out["llamadas"] == [] and "debe ser un entero" in out["resultado"]["error"]
+
+
+# ------------------------------------------------------------------ mensajes: workflows por su nombre, no con barra
+def test_p8_ningun_mensaje_presenta_un_workflow_como_orden_con_barra():  # D10-9
+    nombres = "|".join(re.escape(p.stem) for p in WORKFLOWS)
+    patron = re.compile(rf"(?<![\w./-])/({nombres})\b")
+    for path in [*WORKFLOWS, *sorted(SKILLS_DIR.glob("*/SKILL.md")), *sorted(AGENTS_DIR.glob("*.md"))]:
+        assert not patron.search(_text(path)), f"{path.name}: {patron.search(_text(path)).group(0)}"
+
+
+@requires_node
+def test_p8_siguiente_de_evaluar_lanza_red_team_por_su_nombre(project, capsys):  # D10-9
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              *_reglas_puntuacion_emitida(project, capsys, "O-0003"), {"label": "sello:O-0003", "respuesta": SELLO_VALIDO}]
+    siguiente = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)["resultado"]["siguiente"]
+    assert "red-team-auto por su nombre con la herramienta Workflow" in siguiente
+    assert '{"archivo": "research/informes/O-0003.md"}' in siguiente
+    assert not re.search(r"/red-team-auto", siguiente)
+
+
+# ------------------------------------------------------------------ red-team-auto
+@requires_node
+@pytest.mark.parametrize("args,autor,extractor,refutadores", [
+    ("research/informes/O-0003.md", "director-cientifico", "critico-red-team",
+     {"fuentes": "verificador-citas", "biologia": "critico-red-team", "viabilidad": "critico-red-team"}),
+    ("research/planes/O-0003.md", "director-cientifico", "critico-red-team",
+     {"fuentes": "verificador-citas", "biologia": "critico-red-team", "viabilidad": "critico-red-team"}),
+    ("research/revisiones/informes_O-0003_redteam.md", "critico-red-team", "verificador-citas",
+     {"fuentes": "verificador-citas", "biologia": "fisiologia-bioquimica", "viabilidad": "regulacion-seguridad"}),
+    ({"archivo": "research/revisiones/notas.md", "autor": "critico-red-team"}, "critico-red-team", "verificador-citas",
+     {"fuentes": "verificador-citas", "biologia": "fisiologia-bioquimica", "viabilidad": "regulacion-seguridad"}),
+    ({"archivo": "x.md", "autor": "verificador-citas"}, "verificador-citas", "critico-red-team",
+     {"fuentes": "investigador-bibliografico", "biologia": "critico-red-team", "viabilidad": "critico-red-team"}),
+    ("research/revisiones/O-0003_descarte_destino_digestivo.md", "fisiologia-bioquimica", "critico-red-team",
+     {"fuentes": "verificador-citas", "biologia": "critico-red-team", "viabilidad": "critico-red-team"}),
+])
+def test_p8_red_team_ningun_paso_lo_hace_el_autor(args, autor, extractor, refutadores):  # D2-2
+    reglas = [{"label": "extraccion", "respuesta": {"afirmaciones": [{"id": "A1", "texto": "t"}, {"id": "A2", "texto": "u"}]}}]
+    out = run_workflow("red-team-auto", args, reglas)
+    assert call(out, "extraccion")["agentType"] == extractor
+    assert call(out, "consolidacion")["agentType"] == extractor
+    for enfoque, rol in refutadores.items():
+        assert call(out, f"A1:{enfoque}")["agentType"] == rol
+    assert not any(c.get("agentType") == autor for c in out["llamadas"])
+    assert out["resultado"]["autor"]["rol"] == autor
+    assert f"nutria --agente {extractor} decision registrar" in call(out, "consolidacion")["prompt"]
+
+
+@requires_node
+def test_p8_red_team_autor_no_valido():  # D2-2
+    out = run_workflow("red-team-auto", {"archivo": "x.md", "autor": "nadie"})
+    assert out["llamadas"] == [] and '"autor" no válido' in out["resultado"]["error"]
+
+
+VEREDICTOS_RT = ("sostenida", "debilitada", "refutada", "no_verificable", None)
+
+
+@requires_node
+def test_p8_red_team_regla_de_fuentes_en_todas_las_combinaciones():  # D2-10
+    combinaciones = [(f, b, v) for f in VEREDICTOS_RT for b in VEREDICTOS_RT for v in VEREDICTOS_RT]
+    resultados = {}
+    for inicio in range(0, len(combinaciones), 25):
+        bloque = combinaciones[inicio:inicio + 25]
+        ids = [f"C{inicio + i + 1}" for i in range(len(bloque))]
+        reglas = [{"label": "extraccion", "respuesta": {"afirmaciones": [{"id": i, "texto": i} for i in ids]}}]
+        for i, votos in zip(ids, bloque):
+            for enfoque, voto in zip(("fuentes", "biologia", "viabilidad"), votos):
+                reglas.append({"label": f"{i}:{enfoque}", "respuesta": None if voto is None else {"veredicto": voto, "motivo": "m"}})
+        out = run_workflow("red-team-auto", {"archivo": "research/informes/O-0003.md", "max_afirmaciones": 25}, reglas)
+        for r in out["resultado"]["resultados"]:
+            resultados[bloque[ids.index(r["id"])]] = r["resultado"]
+    assert len(resultados) == len(combinaciones)
+    for (f, b, v), res in resultados.items():
+        validos = [x for x in (f, b, v) if x is not None]
+        if len(validos) < 2:
+            assert res == "sin_quorum", (f, b, v, res)
+        elif f == "refutada":
+            assert res == "refutada", (f, b, v, res)
+        elif f != "sostenida":  # fuentes no_verificable, debilitada o sin resultado: nunca sostenida
+            assert res in ("debilitada", "no_verificable", "refutada"), (f, b, v, res)
+        if res == "sostenida":
+            assert f == "sostenida" and "refutada" not in (b, v), (f, b, v, res)
+    # casos señalados por el escéptico y por el diseño
+    assert resultados[("no_verificable", "sostenida", "sostenida")] == "no_verificable"
+    assert resultados[(None, "sostenida", "sostenida")] == "no_verificable"
+    assert resultados[("no_verificable", "debilitada", "sostenida")] == "debilitada"
+    assert resultados[("refutada", "sostenida", "sostenida")] == "refutada"
+    assert resultados[("sostenida", "sostenida", "no_verificable")] == "sostenida"
+
+
+def test_p8_red_team_regla_de_fuentes_documentada_en_script_y_skill():  # D2-10
+    script = _norm(_text(WORKFLOWS_DIR / "red-team-auto.js"))
+    assert 'si "fuentes" da "no_verificable" o no da resultado, la afirmación nunca sale "sostenida"' in script
+    skill = _norm(_skill("red-team"))
+    assert "si el enfoque de fuentes da `no_verificable` (p. ej. sin red) o no da resultado, la afirmación nunca sale `sostenida`" in skill
+
+
+@requires_node
+@pytest.mark.parametrize("args,destino", [
+    ("research/planes/O-0001.md", "research/revisiones/planes_O-0001_redteam.md"),
+    ("research/informes/O-0001.md", "research/revisiones/informes_O-0001_redteam.md"),
+    ("/home/u/nutria/research/informes/O-0001.md", "research/revisiones/informes_O-0001_redteam.md"),
+    ("research/informes/sub/O-0001.md", "research/revisiones/informes_sub_O-0001_redteam.md"),
+    ({"archivo": "notas.md", "autor": "persona"}, "research/revisiones/notas_redteam.md"),
+])
+def test_p8_red_team_salida_incluye_el_directorio_de_origen(args, destino):  # D2-16
+    out = run_workflow("red-team-auto", args)
+    assert out["resultado"]["informe"] == destino
+    assert f"Escribe {destino}" in call(out, "consolidacion")["prompt"]
+
+
+@requires_node
+def test_p8_red_team_revisar_plan_e_informe_no_se_pisan():  # D2-16 (reproducción del hallazgo)
+    destinos = {run_workflow("red-team-auto", f"research/{d}/O-0001.md")["resultado"]["informe"] for d in ("planes", "informes")}
+    assert destinos == {"research/revisiones/planes_O-0001_redteam.md", "research/revisiones/informes_O-0001_redteam.md"}
+
+
+@requires_node
+@pytest.mark.parametrize("archivo", ["notas.md", "research/revisiones/O-0003_verificacion.md",
+                                     "research/oportunidades/M1_2026-11-04_colina.json"])
+def test_p8_red_team_sin_autor_deducible_no_empieza(archivo):  # D2-2: falla en cerrado
+    out = run_workflow("red-team-auto", archivo)
+    assert out["llamadas"] == []
+    assert '"autor"' in out["resultado"]["error"] and "quien genera no evalúa" in out["resultado"]["error"]
+    con_autor = run_workflow("red-team-auto", {"archivo": archivo, "autor": "verificador-citas"})
+    assert call(con_autor, "extraccion")["agentType"] == "critico-red-team"
+    assert {c.get("agentType") for c in con_autor["llamadas"] if c["label"].endswith(":fuentes")} == {"investigador-bibliografico"}
+
+
+@requires_node
+def test_p8_red_team_tope_de_afirmaciones_y_estimacion():  # D10-3
+    afirmaciones = [{"id": f"A{i}", "texto": f"t{i}"} for i in range(1, 41)]
+    reglas = [{"label": "extraccion", "respuesta": {"afirmaciones": afirmaciones}}]
+    out = run_workflow("red-team-auto", "research/informes/O-0003.md", reglas)
+    refutaciones = [c for c in out["llamadas"] if c["phase"] == "Refutación"]
+    assert len(refutaciones) == 15 * 3
+    assert out["resultado"]["no_revisadas"] == [f"A{i}" for i in range(16, 41)]
+    assert len(out["llamadas"]) <= _maximo_logueado(out)
+    assert call(out, "extraccion")["schema"]["properties"]["afirmaciones"]["maxItems"] == 15
+    treinta = run_workflow("red-team-auto", {"archivo": "research/informes/O-0003.md", "max_afirmaciones": 30}, reglas)
+    assert len([c for c in treinta["llamadas"] if c["phase"] == "Refutación"]) == 90
+    assert len(treinta["llamadas"]) <= _maximo_logueado(treinta)
+    for malo in (0, 31, "15"):
+        err = run_workflow("red-team-auto", {"archivo": "x.md", "max_afirmaciones": malo})
+        assert err["llamadas"] == [] and "max_afirmaciones" in err["resultado"]["error"]
+
+
+# ------------------------------------------------------------------ mision-1-auto: paso 0, idempotencia y topes
+def _problema(i: int, especie: str = "vacuno lechero") -> dict:
+    return {"id": f"P{i}", "titulo": f"Problema {i}", "especie": especie, "etapa": "transición", "mecanismos": ["m"],
+            "soluciones_actuales": f"SOLUCIONES-P{i}"}
+
+
+def _reglas_novedad(veredicto="nueva") -> list[dict]:
+    return [{"labelPrefix": "M1b:novedad-literatura", "respuesta": {"veredicto": veredicto, "literatura": "l"}},
+            {"labelPrefix": "M1b:novedad-mercado", "respuesta": {"veredicto": veredicto, "productos": "x", "patentes": "p"}}]
+
+
+def _registro_secuencial(n: int) -> list[dict]:
+    return [{"label": f"registro:{i}", "respuesta": {"id": f"O-{i:04d}"}} for i in range(1, n + 1)]
+
+
+@requires_node
+@pytest.mark.parametrize("args", [{"fase": "mapa"}, {"fase": "oportunidades", "problemas": ["Problema"]},
+                                  {"fase": "planes", "seleccion": ["O-0001"]}], ids=["mapa", "oportunidades", "planes"])
+def test_p8_mision1_paso0_en_cada_fase(args, project, capsys):  # D2-15
+    out = run_workflow("mision-1-auto", args, [_regla_paso0(project, capsys)])
+    paso0 = out["llamadas"][0]
+    assert paso0["label"] == "paso0" and out["fases"][0] == "Preparación"
+    for orden in ("nutria --agente orquestador --json doctor", "nutria --agente orquestador --json estado", "date -u +%F",
+                  "ls -1 research/revisiones research/oportunidades research/hipotesis"):
+        assert orden in paso0["prompt"], orden
+    assert out["resultado"]["preparacion"]["fuentes_no_accesibles"] == ["PubMed (NCBI E-utilities): BLOQUEADO por proxy/política de red"]
+    assert out["resultado"]["fecha"] == "2026-11-04"  # la del sistema (paso 0) si no se indica args.fecha
+
+
+@requires_node
+def test_p8_mision1_sin_registro_no_continua_la_fase_oportunidades():  # D2-15
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": ["Problema"]},
+                       [{"label": "paso0", "respuesta": None}])
+    assert labels(out) == ["paso0"]
+    assert out["resultado"]["detenida_en"] == "Preparación"
+
+
+@requires_node
+def test_p8_mision1_deduplica_contra_el_registro(project, capsys):  # D2-15
+    registrada = _registrar_oportunidad(project, capsys, "Colina protegida en vacas en transición")
+    gen = {"oportunidades": [_opp("COLINA  protegida en VACAS en transición."), _opp("Oportunidad nueva")]}
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": gen}, *_reglas_novedad(),
+              {"label": "registro:1", "respuesta": {"id": "O-0002"}}]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    ls = labels(out)
+    assert "Colina protegida en vacas en transición" in call(out, "M1b:gen:P1")["prompt"]  # el generador la conoce
+    assert "M1b:novedad-literatura:P1.1" not in ls and "M1b:novedad-mercado:P1.1" not in ls  # no se gasta en comprobarla
+    assert "M1b:novedad-literatura:P1.2" in ls
+    assert [l for l in ls if l.startswith("registro:")] == ["registro:1"]
+    assert "Oportunidad nueva" in call(out, "registro:1")["prompt"]
+    assert {"titulo": "COLINA  protegida en VACAS en transición.", "motivo": f"ya registrada ({registrada})"} in out["resultado"]["no_registradas"]
+
+
+@requires_node
+def test_p8_mision1_nombres_de_fichero_que_no_se_pisan(project, capsys):  # D2-15
+    for d, nombre in (("revisiones", "M1a_mapa_problemas_2026-11-04.md"), ("revisiones", "M1_ranking_2026-11-04.md"),
+                      ("oportunidades", "M1_2026-11-04_oportunidad-a.json"), ("hipotesis", "M1_2026-11-04_oportunidad-b_H1.json")):
+        (project / "research" / d / nombre).write_text("{}", "utf-8")
+    titulo_largo = "Una oportunidad con un título muy largo que comparte el principio"
+    gen = {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B"), _opp(titulo_largo + " uno")]}
+    gen2 = {"oportunidades": [_opp(titulo_largo + " dos")]}
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": gen}, {"label": "M1b:gen:P2", "respuesta": gen2},
+              *_reglas_novedad(), *_registro_secuencial(4)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1), _problema(2)], "n_oportunidades": 4}, reglas)
+    prompts = {c["label"]: c["prompt"] for c in out["llamadas"]}
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a-2.json" in prompts["registro:1"]
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-b-2.json" in prompts["registro:2"]
+    base = "M1_2026-11-04_una-oportunidad-con-un-titulo-muy-largo-que"  # cortado en un límite de palabra
+    assert f"research/oportunidades/{base}.json" in prompts["registro:3"]
+    assert f"research/oportunidades/{base}-2.json" in prompts["registro:4"]
+    assert f"research/hipotesis/{base}-2_H<n>.json" in prompts["registro:4"]
+    assert "research/revisiones/M1_ranking_2026-11-04-2.md" in prompts["ranking"]
+    mapa = run_workflow("mision-1-auto", {"fase": "mapa"}, [_regla_paso0(project, capsys)])
+    assert "research/revisiones/M1a_mapa_problemas_2026-11-04-2.md" in call(mapa, "M1a:consolidacion")["prompt"]
+    otra_fecha = run_workflow("mision-1-auto", {"fase": "mapa", "fecha": "2026-12-01"}, [_regla_paso0(project, capsys)])
+    assert "research/revisiones/M1a_mapa_problemas_2026-12-01.md" in call(otra_fecha, "M1a:consolidacion")["prompt"]
+
+
+@requires_node
+def test_p8_mision1_n_oportunidades_es_un_tope(project, capsys):  # D10-3
+    problemas = [_problema(i) for i in range(1, 9)]
+    gen = [{"label": f"M1b:gen:P{i}", "respuesta": {"oportunidades": [_opp(f"P{i} oportunidad {j}") for j in range(1, 6)]}}
+           for i in range(1, 9)]
+    reglas = [_regla_paso0(project, capsys), *gen, *_reglas_novedad(), *_registro_secuencial(24),
+              {"labelRegex": r"^puntuacion:evaluador-\d:O-\d{4}$", "respuesta": None}]  # peor caso: reintentos
+    for n_ops in (5, 24):
+        out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": problemas, "n_oportunidades": n_ops}, reglas)
+        ls = labels(out)
+        assert len([l for l in ls if l.startswith("registro:")]) == n_ops
+        assert len(out["resultado"]["oportunidades"]) == n_ops
+        assert len([l for l in ls if l.startswith("M1b:novedad-literatura")]) == 8 * 3  # como máximo 3 por generador
+        assert len(ls) <= _maximo_logueado(out)
+        fuera = [o for o in out["resultado"]["no_registradas"] if o["motivo"].startswith("fuera del tope")]
+        assert len(fuera) == 24 - n_ops
+
+
+@requires_node
+@pytest.mark.parametrize("args,mensaje", [
+    ({"fase": "oportunidades", "problemas": [f"P{i}" for i in range(9)]}, "el tope es 8"),
+    ({"fase": "oportunidades", "problemas": [f"P{i}" for i in range(13)], "max_problemas": 12}, "el tope es 12"),
+    ({"fase": "oportunidades", "problemas": ["P"], "max_problemas": 13}, '"max_problemas" debe ser un entero'),
+    ({"fase": "oportunidades", "problemas": ["P"], "n_oportunidades": 25}, '"n_oportunidades" debe ser un entero'),
+    ({"fase": "oportunidades", "problemas": ["P"], "n_oportunidades": "12"}, '"n_oportunidades" debe ser un entero'),
+    ({"fase": "mapa", "fecha": "04/11/2026"}, '"fecha" debe tener el formato'),
+])
+def test_p8_mision1_topes_no_validos_no_lanzan_nada(args, mensaje):  # D10-3
+    out = run_workflow("mision-1-auto", args)
+    assert out["llamadas"] == [] and mensaje in out["resultado"]["error"]
+
+
+@requires_node
+def test_p8_mision1_minimo_de_rumiantes(project, capsys):  # D2-15
+    problemas = [_problema(1, "vacuno lechero"), _problema(2, "porcino")]
+    reglas = [_regla_paso0(project, capsys),
+              {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Vacuno 1")]}},
+              {"label": "M1b:gen:P2", "respuesta": {"oportunidades": [_opp(f"Cerdo {j}", "porcino") for j in (1, 2, 3)]}},
+              {"label": "M1b:gen:P1:r1", "respuesta": {"oportunidades": [_opp(f"Vacuno {j}") for j in (2, 3, 4)]}},
+              *_reglas_novedad(), *_registro_secuencial(4)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": problemas, "n_oportunidades": 4}, reglas)
+    ls = labels(out)
+    # con 4 candidatas ya está el total, pero faltan rumiantes (1 de 3): ronda extra solo con el problema de rumiantes
+    assert [l for l in ls if l.startswith("M1b:gen")] == ["M1b:gen:P1", "M1b:gen:P2", "M1b:gen:P1:r1"]
+    assert "Faltan oportunidades en rumiantes" in call(out, "M1b:gen:P1:r1")["prompt"]
+    res = out["resultado"]
+    assert sorted(o["titulo"] for o in res["oportunidades"]) == ["Cerdo 1", "Vacuno 1", "Vacuno 2", "Vacuno 3"]
+    assert res["minimo_mision"] == {"requisito": "al menos 10 oportunidades, al menos 6 en rumiantes", "oportunidades": 4,
+                                    "rumiantes": 3, "cumple": False}
+    assert any("no se cumple el mínimo de la misión" in m for m in out["logs"])
+    # sin problemas de rumiantes lo avisa y no genera en vano
+    solo_cerdo = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(2, "porcino")], "n_oportunidades": 3},
+                              [_regla_paso0(project, capsys), reglas[2], *_reglas_novedad(), *_registro_secuencial(3)])
+    assert [l for l in labels(solo_cerdo) if l.startswith("M1b:gen")] == ["M1b:gen:P2"]
+    assert any("ningún problema aprobado es de rumiantes" in m for m in solo_cerdo["logs"])
+
+
+def test_p8_mision1_reconoce_especies_de_rumiantes():  # D2-15
+    js = _text(WORKFLOWS_DIR / "mision-1-auto.js")
+    patron = re.search(r"const RUMIANTES_RE = /(.+)/\n", js).group(1)
+    proc = subprocess.run([NODE or "node", "-e", f"""
+const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\\s+/g, ' ').trim()
+const re = /{patron}/
+const casos = JSON.parse(process.argv[1])
+process.stdout.write(JSON.stringify(casos.map((c) => re.test(norm(c)))))
+""", json.dumps(["vacuno lechero", "Vacas de leche", "ovino", "cabras lecheras", "terneros", "Bos taurus", "dairy cows",
+                 "porcino", "lechones", "broiler", "riñón (kidney) de cerdo", "conejos"])],
+                          capture_output=True, text=True, timeout=60, check=False) if NODE else None
+    if proc is None:
+        pytest.skip("node no está disponible")
+    assert json.loads(proc.stdout) == [True] * 7 + [False] * 5
+
+
+@requires_node
+def test_p8_mision1_no_puntua_las_oportunidades_bloqueadas(project, capsys):  # D4-3, D2-8
+    _registrar_oportunidades(project, capsys, 3)
+    _bloquear(capsys, "O-0002", "seguridad", "BLOQUEADA-EN-EL-REGISTRO")
+    gen = {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B"), _opp("Oportunidad C")]}
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": gen}, *_reglas_novedad(),
+              *_registro_secuencial(3),
+              {"label": "triage:regulatoria:O-0001", "respuesta": {"compuerta": "regulatoria", "estado": "bloqueada",
+                                                                   "motivo": "MEDICAMENTO-POR-FUNCION", "resumen": "r"}},
+              {"labelPrefix": "triage:", "respuesta": {"compuerta": "x", "estado": "no_resuelta", "motivo": "m", "resumen": "r"}},
+              {"label": "compuertas-registro:M1c:O-0001", "respuesta": _ver(capsys, "O-0001")},
+              {"label": "compuertas-registro:M1c:O-0002", "respuesta": _ver(capsys, "O-0002")},
+              {"label": "compuertas-registro:M1c:O-0003", "respuesta": _ver(capsys, "O-0003")}]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 3}, reglas)
+    ls = labels(out)
+    assert not any(l.startswith("puntuacion:") and ("O-0001" in l or "O-0002" in l) for l in ls)
+    assert [l for l in ls if l.startswith("puntuacion:")] == [f"puntuacion:evaluador-{n}:O-0003" for n in (1, 2, 3)]
+    res = out["resultado"]
+    bloqueadas = {b["id"]: b["bloqueos"] for b in res["bloqueadas"]}
+    assert set(bloqueadas) == {"O-0001", "O-0002"}
+    assert bloqueadas["O-0001"][0]["motivo"] == "MEDICAMENTO-POR-FUNCION"
+    assert bloqueadas["O-0002"][0] == {"compuerta": "seguridad", "motivo": "BLOQUEADA-EN-EL-REGISTRO",
+                                       "propuesta_por": "compuestos-toxicologia", "origen": "registro"}
+    assert "O-0001 (regulatoria)" in call(out, "ranking")["prompt"] and "O-0002 (seguridad)" in call(out, "ranking")["prompt"]
+    por_id = {o["id"]: o for o in res["oportunidades"]}
+    assert por_id["O-0001"]["bloqueada"] and por_id["O-0001"]["evaluadores"] == []
+    assert not por_id["O-0003"]["bloqueada"] and len(por_id["O-0003"]["evaluadores"]) == 3
+
+
+@requires_node
+def test_p8_mision1_sin_compuertas_legibles_no_puntua(project, capsys):  # D4-3
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}},
+              *_reglas_novedad(), *_registro_secuencial(1),
+              {"label": "compuertas-registro:M1c:O-0001", "respuesta": {"orden": "x", "codigo_salida": 1, "salida": ""}}]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    assert not any(l.startswith("puntuacion:") for l in labels(out))
+    assert "no se pudieron leer las compuertas del registro" in out["resultado"]["oportunidades"][0]["sin_puntuar"]
+
+
+@requires_node
+def test_p8_mision1_novedad_por_el_rol_que_fija_la_skill(project, capsys):  # D2-18
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("A"), _opp("B")]}},
+              {"label": "M1b:novedad-mercado:P1.2", "respuesta": None}, *_reglas_novedad(), *_registro_secuencial(2)]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 2}, reglas)
+    literatura, mercado = call(out, "M1b:novedad-literatura:P1.1"), call(out, "M1b:novedad-mercado:P1.1")
+    assert literatura["agentType"] == "investigador-bibliografico" and mercado["agentType"] == "economia-mercado-pi"
+    assert "PATENTES" in mercado["prompt"] and "nutria patentes" in mercado["prompt"] and "PRODUCTOS" in mercado["prompt"]
+    assert "nutria patentes" not in literatura["prompt"]
+    assert set(mercado["schema"]["required"]) >= {"productos", "patentes"}
+    assert {"titulo": "B", "motivo": "novedad sin comprobar en productos y patentes (fallo de agente)"} in out["resultado"]["no_registradas"]
+    skill = _norm(_skill("mision-1"))
+    assert "`investigador-bibliografico` (literatura) y `economia-mercado-pi` (productos y patentes)" in skill
+    oportunidad = _norm(_skill("oportunidad"))
+    assert "`economia-mercado-pi` (rNPV, novedad frente a productos y patentes" in oportunidad
+    evaluar = _text(WORKFLOWS_DIR / "evaluar-oportunidad-auto.js")
+    assert "la novedad frente a productos y patentes es tuya" in evaluar
+
+
+@requires_node
+def test_p8_mision1_planes_critica_con_la_lista_y_etica_repropuesta(project, capsys):  # D1-12
+    _registrar_oportunidades(project, capsys, 2)
+    _bloquear(capsys, "O-0002", "regulatoria")
+    plan = {"archivo": "research/planes/O-0001.md", "resumen": "r", "seleccion_firmada": False}
+    critica = {"veredicto": "debilitada", "debilidades": ["d"], "experimento_decisivo": "e",
+               "lista_validacion": [{"punto": n, "estado": {2: "omite", 4: "cubre_mal"}.get(n, "cubre"), "motivo": "m"} for n in range(1, 9)]}
+    reglas = [_regla_paso0(project, capsys), {"label": "compuertas-registro:planes:O-0001", "respuesta": _ver(capsys, "O-0001")},
+              {"label": "compuertas-registro:planes:O-0002", "respuesta": _ver(capsys, "O-0002")},
+              {"label": "plan:O-0001", "respuesta": plan}, {"label": "revision-plan:O-0001", "respuesta": plan},
+              {"label": "critica-plan:O-0001", "respuesta": critica},
+              {"label": "etica-plan:O-0001", "respuesta": {"compuerta": "etica", "estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION", "resumen": "r"}}]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002"]}, reglas)
+    ls = labels(out)
+    assert "plan:O-0002" not in ls  # compuerta bloqueada en el registro: no se redacta el plan
+    critica_plan = call(out, "critica-plan:O-0001")
+    assert critica_plan["agentType"] == "critico-red-team"
+    for fragmento in FRAGMENTOS_VALIDACION:
+        assert fragmento in _norm(critica_plan["prompt"]), fragmento
+    assert critica_plan["schema"]["properties"]["lista_validacion"]["items"]["properties"]["estado"]["enum"] == ["cubre", "cubre_mal", "omite"]
+    assert ls.index("revision-plan:O-0001") < ls.index("etica-plan:O-0001")
+    etica = call(out, "etica-plan:O-0001")
+    assert etica["agentType"] == "sostenibilidad-bienestar"
+    assert "nutria --agente sostenibilidad-bienestar puntuar compuerta O-0001 etica" in etica["prompt"]
+    assert "research/revisiones/O-0001_etica_plan_2026-11-04.md" in etica["prompt"]
+    res = {p["id"]: p for p in out["resultado"]["planes"]}
+    assert res["O-0001"]["lista_validacion"] == {"omitidos": [2], "mal_cubiertos": [4], "sin_respuesta": [9]}
+    assert res["O-0001"]["etica"] == {"estado": "bloqueada", "motivo": "DONANTES-SIN-AUTORIZACION"} and res["O-0001"]["bloqueada"]
+    assert res["O-0002"]["plan"] is None and res["O-0002"]["bloqueada"]
+    assert any("Compuerta ética repropuesta" in m for m in out["logs"])
+    assert len(ls) <= _maximo_logueado(out, r"Estimación: (\d+) agentes")
+
+
+@requires_node
+def test_p8_mision1_estimacion_de_las_fases_mapa_y_planes(project, capsys):  # D10-3
+    mapa = run_workflow("mision-1-auto", {"fase": "mapa"}, [_regla_paso0(project, capsys)])
+    assert len(labels(mapa)) == _maximo_logueado(mapa, r"Estimación: (\d+) agentes")
+    _registrar_oportunidades(project, capsys, 3)
+    reglas = [_regla_paso0(project, capsys)] + [{"label": f"compuertas-registro:planes:O-000{i}", "respuesta": _ver(capsys, f"O-000{i}")}
+                                                for i in (1, 2, 3)]
+    planes = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002", "O-0003"]}, reglas)
+    assert len(labels(planes)) == _maximo_logueado(planes, r"Estimación: (\d+) agentes")
+
+
+# ------------------------------------------------------------------ compuertas: rol propietario y --agente
+def test_p8_compuertas_propuestas_por_su_rol_propietario():  # D5-10, P1 (rol propietario)
+    patron = re.compile(r"nutria (?:--agente (\S+) )?(?:--json )?puntuar compuerta (\S+) (\S+)")
+    revisadas = 0
+    for path in [*WORKFLOWS, *sorted(SKILLS_DIR.glob("*/SKILL.md")), *sorted(AGENTS_DIR.glob("*.md"))]:
+        for linea in _text(path).splitlines():
+            for m in patron.finditer(linea):
+                agente, compuerta = m.group(1), m.group(3)
+                if agente is None:  # solo la vía humana (firma en su terminal) va sin --agente
+                    assert "--firma-humana NOMBRE" in linea and "terminal" in linea, f"{path.name}: {linea.strip()}"
+                    continue
+                revisadas += 1
+                if compuerta in PROPIETARIO and not agente.startswith(("$", "<")):
+                    assert agente == PROPIETARIO[compuerta], f"{path.name}: {compuerta} propuesta por {agente}"
+    assert revisadas >= 10
+
+
+# ------------------------------------------------------------------ contenido fisiológico y regulatorio
+def test_p8_adaptacion_de_la_microbiota_ruminal():  # D4-4
+    for texto in (_norm(_agent("fisiologia-bioquimica")[1]), _norm(_agent("critico-red-team")[1]), _norm(_skill("hipotesis"))):
+        for fragmento in ("se adapta", "días o semanas `[SUP]`", "incubaciones cortas en lote (24-48 h `[SUP]`)", "RUSITEC", "in vivo",
+                          "`[HIP]`"):
+            assert fragmento in texto, fragmento
+    fisio = _norm(_agent("fisiologia-bioquimica")[1])
+    assert "No extrapoles" in fisio and "indica la duración de cada estudio" in fisio
+    # el crítico del plan y los prompts de los workflows también lo comprueban
+    assert "incubaciones cortas en lote" in _text(WORKFLOWS_DIR / "mision-1-auto.js")
+    assert "adaptación de la microbiota ruminal" in _text(WORKFLOWS_DIR / "evaluar-oportunidad-auto.js")
+
+
+def test_p8_antibioticos_y_moduladores_ruminales_antimicrobianos():  # D5-4
+    textos = {"skill": _norm(_skill("triage-regulatorio")), "agente": _norm(_agent("regulacion-seguridad")[1]),
+              "regulacion": _norm(_text(ROOT / "docs" / "REGULACION_UE.md"))}
+    for nombre, texto in textos.items():
+        for fragmento in ("art. 11, apartado 2", "CELEX 32003R1831", "coccidiostáticos e histomonóstatos",
+                          "moduladores ruminales antimicrobianos", "ionóforos", "pendiente de verificación",
+                          "no hay vía como pienso ni como aditivo"):
+            assert fragmento in texto, (nombre, fragmento)
+    assert "verificar artículo" not in textos["skill"] + textos["agente"]
+    assert "ionóforos" in _norm(_agent("compuestos-toxicologia")[1])
+
+
+def test_p8_omg_microorganismos_y_qps():  # D5-13
+    textos = {"skill": _norm(_skill("triage-regulatorio")), "regulacion": _norm(_text(ROOT / "docs" / "REGULACION_UE.md"))}
+    for nombre, texto in textos.items():
+        for fragmento in ("32003R1829", "considerando 16", '"con" un OMG', '"a partir de"', "células viables",
+                          "ADN recombinante", "QPS", "genes de resistencia", "toxigenicidad", "pendiente de verificación"):
+            assert fragmento in texto, (nombre, fragmento)
+    assert "Productos de fermentación con cepas modificadas | pendiente |" not in _text(ROOT / "docs" / "REGULACION_UE.md")

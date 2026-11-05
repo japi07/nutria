@@ -1,7 +1,7 @@
 export const meta = {
   name: 'red-team-auto',
   description: 'Revisión adversarial de un documento: un agente que no lo escribió (el crítico, o el verificador de citas si el autor es el crítico) extrae las afirmaciones clave, cada una se somete a tres refutadores con enfoques distintos (fuentes, biología, viabilidad), ninguno del rol autor, y los veredictos se agregan con quórum y la regla de fuentes (sin fuentes comprobadas nunca sale sostenida); segunda opinión opcional de otra familia de modelos según la política de datos',
-  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial", "max_afirmaciones": 15, "autor": "<rol>"} (sensibilidad por defecto "confidencial"; "normal" solo para información no confidencial; como máximo 30 afirmaciones; "autor" es el rol que escribió el documento si no se deduce de la ruta). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
+  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial", "max_afirmaciones": 15, "autor": "<rol>"} (sensibilidad por defecto "confidencial"; "normal" solo para información no confidencial; como máximo 30 afirmaciones; "autor" es el rol que escribió el documento, o "persona": obligatorio si no se deduce de la ruta, como en informes, planes y análisis con el rol en el nombre). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
   phases: [
     { title: 'Afirmaciones', detail: 'extracción, con tope, de las afirmaciones que sostienen la conclusión por un agente que no escribió el documento' },
     { title: 'Refutación', detail: '3 enfoques independientes por afirmación y agregación con quórum y regla de fuentes' },
@@ -39,7 +39,8 @@ if (!Number.isInteger(MAX_AFIRMACIONES) || MAX_AFIRMACIONES < 1 || MAX_AFIRMACIO
 // ---------------------------------------------------------------- autor del documento (quien genera no evalúa)
 // Ningún paso lo hace el rol que escribió el documento: ni la extracción de afirmaciones, ni la refutación, ni la
 // consolidación. El autor se toma de args.autor o se deduce de la ruta; en cada paso se usa el primer rol candidato
-// que no sea el autor.
+// que no sea el autor. Si no se puede saber quién lo escribió, el workflow no empieza (falla en cerrado): podría ser
+// uno de los roles que extraen o refutan.
 const ROLES = ['director-cientifico', 'investigador-bibliografico', 'extractor-datos', 'fisiologia-bioquimica',
   'compuestos-toxicologia', 'nutricion-formulacion', 'bioinformatico', 'estadistico', 'critico-red-team', 'verificador-citas',
   'regulacion-seguridad', 'desarrollo-industrial', 'economia-mercado-pi', 'sostenibilidad-bienestar', 'evaluador-independiente']
@@ -76,6 +77,11 @@ if (A.autor !== undefined && A.autor !== null && A.autor !== '') {
   const d = deducirAutor(ARCHIVO)
   AUTOR = d.autor
   ORIGEN_AUTOR = d.origen
+}
+if (!AUTOR) {
+  return { documento: ARCHIVO, error: `No se puede deducir de la ruta quién escribió "${ARCHIVO}" y quien genera no evalúa: indica el rol que lo ` +
+    `escribió con "autor" (p. ej. {"archivo": "${ARCHIVO}", "autor": "fisiologia-bioquimica"}, o "persona" si lo escribió una persona). ` +
+    `Opciones: ${AUTORES_VALIDOS.join(', ')}` }
 }
 const elegir = (candidatos) => candidatos.find((r) => r !== AUTOR)
 const ROL_EXTRACCION = elegir(['critico-red-team', 'verificador-citas'])
@@ -143,8 +149,8 @@ const ENFOQUES = [
 // 2. no_verificable con 2 o más "no_verificable";
 // 3. debilitada si hay alguna "refutada" o "debilitada";
 // 4. sostenida solo si "fuentes" da "sostenida", hay 2 o más "sostenida" y ninguna "refutada";
-// 5. en cualquier otro caso, no_verificable. Así, si "fuentes" da "no_verificable" o no da resultado, la afirmación
-//    nunca sale "sostenida" (como mucho "debilitada" o "no_verificable"), aunque los otros dos enfoques la sostengan.
+// 5. en cualquier otro caso, no_verificable.
+// Regla de fuentes: si "fuentes" da "no_verificable" o no da resultado, la afirmación nunca sale "sostenida" (como mucho "debilitada" o "no_verificable"), aunque los otros dos enfoques la sostengan.
 const QUORUM = 2
 const agregar = (validos) => {
   if (validos.length < QUORUM) return 'sin_quorum'

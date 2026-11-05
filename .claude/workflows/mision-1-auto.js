@@ -201,7 +201,19 @@ const esObjeto = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x)
 const recorte = (t) => String(t === undefined || t === null ? '' : t).slice(0, 300)
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-const slugTitulo = (t) => norm(t).replace(/ /g, '-').slice(0, 48).replace(/-+$/, '') || 'oportunidad'
+// Título normalizado para nombres de fichero: palabras unidas por guiones, cortado en un límite de palabra (48 caracteres).
+const slugTitulo = (t) => {
+  let slug = ''
+  for (const palabra of norm(t).split(' ').filter(Boolean)) {
+    const siguiente = slug ? `${slug}-${palabra}` : palabra
+    if (siguiente.length > 48) {
+      if (!slug) slug = palabra.slice(0, 48)
+      break
+    }
+    slug = siguiente
+  }
+  return slug || 'oportunidad'
+}
 // Especies de rumiantes (en el campo especie, ya normalizado: sin tildes ni signos).
 const RUMIANTES_RE = /\b(vacun\w*|bovin\w*|vacas?|novill\w*|terner\w*|bueye?s?|toros?|ovin\w*|ovejas?|corder\w*|caprin\w*|cabras?|cabrit\w*|rumiant\w*|bufal\w*|cattle|cows?|heifers?|calf|calves|steers?|bulls?|sheep|ewes?|lambs?|goats?|kids?|ruminants?|buffalo\w*|dairy|bos|ovis|capra|bubalus)\b/
 const esRumiante = (especie) => RUMIANTES_RE.test(norm(especie))
@@ -409,7 +421,7 @@ if (FASE === 'oportunidades') {
   const porOportunidad = 1 + TRIAGE.length + 1 + 1 + EVALUADORES.length
   const maximo = 1 + (1 + MAX_RONDAS_EXTRA) * P * (1 + 2 * MAX_POR_GENERADOR) + N_OPS * (porOportunidad + EVALUADORES.length) + 2
   log(`Fase "oportunidades": ${P} problemas aprobados (tope ${MAX_PROBLEMAS}), objetivo y tope de ${N_OPS} oportunidades (al menos ${OBJ_RUM} en rumiantes). ` +
-    `Estimación: unos ${1 + P * (1 + 2 * 2.5) + N_OPS * porOportunidad + 2} agentes y como máximo ${maximo}: paso 0; por problema y ronda, 1 generador y 2 comprobaciones ` +
+    `Estimación: unos ${1 + P * (1 + 2 * 2.5) + N_OPS * porOportunidad + 2} agentes y como máximo ${maximo} agentes: paso 0; por problema y ronda, 1 generador y 2 comprobaciones ` +
     `de novedad (literatura; productos y patentes) por cada una de sus hasta ${MAX_POR_GENERADOR} oportunidades (hasta ${MAX_RONDAS_EXTRA} rondas extra); por oportunidad ` +
     `seleccionada (como máximo ${N_OPS}), registro, ${TRIAGE.length} propuestas de compuerta, crítica, lectura del registro y ${EVALUADORES.length} evaluadores ` +
     `(${porOportunidad - EVALUADORES.length} si queda bloqueada; hasta ${EVALUADORES.length} reintentos); ranking y verificación${textoPresupuesto()}`)
