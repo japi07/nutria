@@ -5,6 +5,23 @@ análisis de influencia (uno fuera), subgrupos y agregación de efectos dependie
 
 Validado contra el conjunto clásico BCG (metafor::dat.bcg); ver tests/test_meta.py.
 
+HKSJ con q < 1: el IC del HKSJ estándar puede ser más estrecho que el de Wald con el mismo tau²
+(Röver, Knapp y Friede 2015, BMC Med Res Methodol 15:99; Jackson et al. 2017, Stat Med 36:3923-3934),
+algo que no ocurre con la variante modificada max(1, q). `nutria meta analizar` usa por eso la
+variante modificada por defecto (`--ajuste hksj-mod`; coincide con la estándar si q >= 1), que
+conserva la ventaja del HKSJ frente a DerSimonian-Laird con pocos estudios (IntHout, Ioannidis y
+Borm 2014, BMC Med Res Methodol 14:25) sin dar nunca un IC más estrecho que el de Wald. Con
+`ajuste="hksj"` y q < 1 se calculan también el IC y la p modificados y, si el IC estándar es más
+estrecho que el de Wald, se emite un aviso (campo `avisos`).
+
+Intervalo de predicción: μ̂ ± t(k - 2; 1 - α/2)·√(tau² + EE²), con el EE de Wald del efecto medio
+(√(1/Σw), w = 1/(vi + tau²)) y k - 2 grados de libertad (Higgins, Thompson y Spiegelhalter 2009,
+J R Stat Soc A 172:137-159). No depende del ajuste elegido para el IC. predict() de metafor, con
+sus opciones por defecto, usa la distribución de la prueba del modelo (z con test = "z", y t con
+k - 1 gl y el EE de Knapp-Hartung con test = "knha"): con z, estas mismas piezas reproducen su
+intervalo para dat.bcg ([-1,8667; 0,4376]; ver tests/test_estadistica_v2.py). Para que R y nutria
+coincidan, el script de `nutria meta exportar-r` calcula el intervalo con la fórmula de arriba.
+
 Efectos dependientes (varios tratamientos frente a un control compartido, varias variables o
 momentos por estudio): `detect_dependence` avisa de los clústeres con más de una fila y
 `aggregate_dependent` los resume en un efecto por clúster suponiendo una correlación común ρ.
@@ -54,8 +71,21 @@ class MetaResult:
     notes: list[str] = field(default_factory=list)
     ajuste: str = "ninguno"
     hksj_q: float | None = None
+    # Con ajuste "hksj" y q < 1: IC y p del HKSJ modificado (max(1, q)), como sensibilidad.
     ci_mod_low: float | None = None
     ci_mod_high: float | None = None
+    p_mod: float | None = None
+    # Con ajuste "hksj-mod" y q < 1: IC y p del HKSJ estándar (más estrechos), solo como sensibilidad.
+    ci_hksj_low: float | None = None
+    ci_hksj_high: float | None = None
+    p_hksj: float | None = None
+    # Prueba de Wald (z) con el mismo tau², para comparar la amplitud del IC (modelos de efectos aleatorios).
+    ci_wald_low: float | None = None
+    ci_wald_high: float | None = None
+    p_wald: float | None = None
+    # Grados de libertad del intervalo de predicción (k - 2; Higgins et al. 2009).
+    pi_df: int | None = None
+    avisos: list[str] = field(default_factory=list)
 
     @property
     def tau(self) -> float:
@@ -68,19 +98,27 @@ class MetaResult:
 
     def summary(self) -> str:
         pct = int(round(self.level * 100))
-        lines = [
+        lines = [f"AVISO: {a}" for a in self.avisos]
+        lines += [
             f"Modelo: {self.model} ({self.method}), k = {self.k}, prueba {self.test}",
             f"Estimación = {self.estimate:.4f} (EE {self.se:.4f}); IC{pct} [{self.ci_low:.4f}; {self.ci_high:.4f}]; "
             f"estadístico = {self.statistic:.3f}; p = {self.p_value:.4g}",
         ]
         if self.ci_mod_low is not None:
             lines.append(f"IC{pct} HKSJ modificado (max(1, q), q = {self.hksj_q:.4g}): "
-                         f"[{self.ci_mod_low:.4f}; {self.ci_mod_high:.4f}]")
+                         f"[{self.ci_mod_low:.4f}; {self.ci_mod_high:.4f}]; p = {self.p_mod:.4g}")
+        if self.ci_hksj_low is not None:
+            lines.append(f"IC{pct} HKSJ estándar (q = {self.hksj_q:.4g} < 1; más estrecho, solo sensibilidad): "
+                         f"[{self.ci_hksj_low:.4f}; {self.ci_hksj_high:.4f}]; p = {self.p_hksj:.4g}")
+        if self.ci_wald_low is not None and self.ajuste != "ninguno":
+            lines.append(f"IC{pct} de Wald (z, mismo tau²), referencia: [{self.ci_wald_low:.4f}; "
+                         f"{self.ci_wald_high:.4f}]; p = {self.p_wald:.4g}")
         lines.append(
             f"Heterogeneidad: tau² = {self.tau2:.4f} (tau = {self.tau:.4f}); Q({self.Q_df}) = {self.Q:.3f}, "
             f"p = {self.Q_p:.4g}; I² = {self.I2:.1f} %; H² = {self.H2:.2f}")
         if self.pi_low is not None:
-            lines.append(f"Intervalo de predicción {pct} %: [{self.pi_low:.4f}; {self.pi_high:.4f}]")
+            lines.append(f"Intervalo de predicción {pct} % (t con k - 2 = {self.pi_df} gl y EE de Wald; Higgins et "
+                         f"al. 2009): [{self.pi_low:.4f}; {self.pi_high:.4f}]")
         lines += [f"Nota: {n}" for n in self.notes]
         return "\n".join(lines)
 
@@ -240,10 +278,18 @@ def random_effects(yi, vi, method: str = "REML", ajuste: str = "ninguno", level:
 
     - "ninguno": prueba z de Wald, EE = √(1/Σw) con w = 1/(vi + tau²).
     - "hksj": Hartung-Knapp-Sidik-Jonkman, EE = √(q/Σw) con q = Σw(yi - μ)²/(k - 1) y t con k - 1 gl.
-      Si q < 1, el IC puede ser más estrecho que el de Wald: se calcula además el IC modificado
-      con max(1, q) y se guarda en `ci_mod_low`/`ci_mod_high` (con nota). Si q = 0 (efectos
-      idénticos), el resultado principal usa max(1, q) = 1 para no dividir por un EE nulo.
-    - "hksj-mod": HKSJ modificado, siempre con max(1, q).
+      Si q < 1 se calculan además el IC y la p del HKSJ modificado max(1, q) (`ci_mod_low`,
+      `ci_mod_high`, `p_mod`) y, si el IC estándar resulta más estrecho que el de Wald con el mismo
+      tau², se añade un aviso (`avisos`). Si q = 0 (efectos idénticos), el resultado principal usa
+      max(1, q) = 1 para no dividir por un EE nulo.
+    - "hksj-mod": HKSJ modificado, siempre con max(1, q) (Röver et al. 2015): nunca da un IC más
+      estrecho que el de Wald y coincide con el estándar si q >= 1. Con q < 1 se guardan el IC y la p
+      del estándar (`ci_hksj_low`, `ci_hksj_high`, `p_hksj`) solo como sensibilidad. Es el valor por
+      defecto de `nutria meta analizar`; el de esta función sigue siendo "ninguno" por compatibilidad.
+
+    Con cualquier ajuste se guardan también el IC y la p de Wald (`ci_wald_low`, `ci_wald_high`, `p_wald`).
+    Intervalo de predicción (k >= 3): t con k - 2 gl y el EE de Wald (Higgins et al. 2009; ver el
+    docstring del módulo); no depende del ajuste.
 
     `hksj` se conserva por compatibilidad: True equivale a ajuste="hksj" (si `ajuste` no pide ya
     un ajuste HKSJ); False no cambia `ajuste`. Un booleano en la posición de `ajuste` se interpreta igual.
@@ -263,19 +309,39 @@ def random_effects(yi, vi, method: str = "REML", ajuste: str = "ninguno", level:
     w = 1.0 / (v + tau2)
     sw = float(np.sum(w))
     est = float(np.sum(w * y) / sw)
-    se = math.sqrt(1.0 / sw)
+    se_wald = math.sqrt(1.0 / sw)
+    se = se_wald
     notes: list[str] = []
+    avisos: list[str] = []
     alpha = 1 - level
+    z_crit = float(stats.norm.ppf(1 - alpha / 2))
+    ci_wald = (est - z_crit * se_wald, est + z_crit * se_wald)
+    p_wald = float(2 * stats.norm.sf(abs(est / se_wald)))
     q: float | None = None
-    ci_mod_low = ci_mod_high = None
+    ci_mod_low = ci_mod_high = p_mod = None
+    ci_hksj_low = ci_hksj_high = p_hksj = None
     if ajuste != "ninguno" and k > 1:
         q = float(np.sum(w * (y - est) ** 2) / (k - 1))
         crit = float(stats.t.ppf(1 - alpha / 2, k - 1))
         q_is_zero = q < _Q_ZERO_TOL
+
+        def hk(factor: float) -> tuple[float, float, float, float, float]:
+            se_f = math.sqrt(factor / sw)
+            stat_f = est / se_f
+            return se_f, stat_f, float(2 * stats.t.sf(abs(stat_f), k - 1)), est - crit * se_f, est + crit * se_f
+
         if ajuste == "hksj-mod":
             factor = max(1.0, q)
             test = f"t (HKSJ modificado max(1, q), gl = {k - 1})"
-            notes.append(f"HKSJ modificado: factor de escala max(1, q) = {factor:.4g} (q = {q:.4g}).")
+            if q >= 1:
+                notes.append(f"HKSJ modificado con q = {q:.4g} >= 1: coincide con el HKSJ estándar.")
+            elif q_is_zero:
+                notes.append("HKSJ modificado con q = 0 (efectos idénticos): max(1, q) = 1.")
+            else:
+                _, _, p_hksj, ci_hksj_low, ci_hksj_high = hk(q)
+                notes.append(f"HKSJ modificado con q = {q:.4g} < 1: se usa max(1, q) = 1, así que el IC no es más "
+                             "estrecho que el de Wald (Röver et al. 2015). El HKSJ estándar (ci_hksj_low, "
+                             "ci_hksj_high, p_hksj) se da solo como sensibilidad.")
         elif q_is_zero:
             factor = 1.0
             test = f"t (HKSJ con max(1, q) porque q = 0, gl = {k - 1})"
@@ -284,44 +350,59 @@ def random_effects(yi, vi, method: str = "REML", ajuste: str = "ninguno", level:
         else:
             factor = q
             test = f"t (HKSJ, gl = {k - 1})"
-        se = math.sqrt(factor / sw)
-        statistic = est / se
-        p_value = float(2 * stats.t.sf(abs(statistic), k - 1))
-        if ajuste == "hksj" and q < 1:
-            se_mod = math.sqrt(1.0 / sw)  # max(1, q) = 1
-            ci_mod_low, ci_mod_high = est - crit * se_mod, est + crit * se_mod
-            if not q_is_zero:
-                notes.append(f"HKSJ con factor de escala q = {q:.4g} < 1: el IC puede ser más estrecho que el de "
-                             "Wald; se da también el IC del HKSJ modificado max(1, q) (ci_mod_low, ci_mod_high) "
-                             "como análisis de sensibilidad.")
+        se, statistic, p_value, ci_low, ci_high = hk(factor)
+        if ajuste == "hksj" and q < 1 and not q_is_zero:
+            _, _, p_mod, ci_mod_low, ci_mod_high = hk(1.0)
+            pct = int(round(level * 100))
+            if ci_high - ci_low < ci_wald[1] - ci_wald[0]:
+                avisos.append(f"El IC{pct} del HKSJ estándar (q = {q:.4g} < 1) es más estrecho que el de Wald con el "
+                              f"mismo tau² ([{ci_low:.4f}; {ci_high:.4f}] frente a [{ci_wald[0]:.4f}; "
+                              f"{ci_wald[1]:.4f}]): con pocos estudios y efectos homogéneos el HKSJ estándar puede "
+                              "ser liberal. El HKSJ modificado max(1, q) da IC "
+                              f"[{ci_mod_low:.4f}; {ci_mod_high:.4f}] y p = {p_mod:.4g} (Röver et al. 2015; Jackson "
+                              "et al. 2017); es el ajuste por defecto (--ajuste hksj-mod).")
+            else:
+                notes.append(f"HKSJ con q = {q:.4g} < 1: el IC no llega a ser más estrecho que el de Wald, pero se da "
+                             "también el HKSJ modificado max(1, q) (ci_mod_low, ci_mod_high, p_mod) como sensibilidad.")
     else:
         if ajuste != "ninguno":
             notes.append(f"Con k = 1 no se aplica el ajuste {ajuste} (0 gl): se usa la prueba z.")
-        crit = float(stats.norm.ppf(1 - alpha / 2))
         statistic = est / se
-        p_value = float(2 * stats.norm.sf(abs(statistic)))
+        p_value = p_wald
+        ci_low, ci_high = ci_wald
         test = "z"
     Q = _q_statistic(y, v)
     df = k - 1
     s2 = _typical_within_variance(v) if k > 1 else float("nan")
     I2 = 100 * tau2 / (tau2 + s2) if k > 1 and (tau2 + s2) > 0 else 0.0
     H2 = (tau2 + s2) / s2 if k > 1 and s2 > 0 else float("nan")
-    pi_low = pi_high = None
+    pi_low = pi_high = pi_df = None
     if k >= 3:
-        t_pi = stats.t.ppf(1 - alpha / 2, k - 2)
-        half = t_pi * math.sqrt(tau2 + se ** 2)
-        pi_low, pi_high = est - half, est + half
+        pi_low, pi_high = prediction_interval(est, se_wald, tau2, k, level)
+        pi_df = k - 2
     else:
         notes.append("Con k < 3 no se calcula intervalo de predicción.")
     if k < 5:
         notes.append(f"k = {k}: la estimación de tau² es muy imprecisa; interpreta la heterogeneidad con cautela.")
     return MetaResult(
-        model="RE", method=method, k=k, estimate=est, se=se, ci_low=est - crit * se, ci_high=est + crit * se,
+        model="RE", method=method, k=k, estimate=est, se=se, ci_low=ci_low, ci_high=ci_high,
         statistic=statistic, p_value=p_value, test=test, tau2=tau2, Q=Q, Q_df=df,
         Q_p=float(stats.chi2.sf(Q, df)) if df > 0 else float("nan"), I2=I2, H2=H2,
         pi_low=pi_low, pi_high=pi_high, level=level, weights=list(100 * w / np.sum(w)), notes=notes,
-        ajuste=ajuste, hksj_q=q, ci_mod_low=ci_mod_low, ci_mod_high=ci_mod_high,
+        ajuste=ajuste, hksj_q=q, ci_mod_low=ci_mod_low, ci_mod_high=ci_mod_high, p_mod=p_mod,
+        ci_hksj_low=ci_hksj_low, ci_hksj_high=ci_hksj_high, p_hksj=p_hksj,
+        ci_wald_low=ci_wald[0], ci_wald_high=ci_wald[1], p_wald=p_wald, pi_df=pi_df, avisos=avisos,
     )
+
+
+def prediction_interval(estimate: float, se_wald: float, tau2: float, k: int, level: float = 0.95) -> tuple[float, float]:
+    """Intervalo de predicción del efecto en un estudio nuevo (Higgins, Thompson y Spiegelhalter 2009):
+    μ̂ ± t(k - 2; 1 - α/2)·√(tau² + EE²), con EE el error estándar de Wald del efecto medio
+    (√(1/Σw), w = 1/(vi + tau²)). Necesita k >= 3."""
+    if k < 3:
+        raise ValueError("El intervalo de predicción necesita k >= 3")
+    half = float(stats.t.ppf(1 - (1 - level) / 2, k - 2)) * math.sqrt(tau2 + se_wald ** 2)
+    return estimate - half, estimate + half
 
 
 # --------------------------------------------------------------------------- sesgo de publicación
@@ -419,7 +500,8 @@ def leave_one_out(yi, vi, labels: list[str] | None = None, method: str = "REML",
         res = random_effects(y[mask], v[mask], method=method, ajuste=ajuste)
         rows.append({"excluido": labels[i], "estimacion": res.estimate, "ci_low": res.ci_low,
                      "ci_high": res.ci_high, "p": res.p_value, "tau2": res.tau2, "I2": res.I2,
-                     "ci_mod_low": res.ci_mod_low, "ci_mod_high": res.ci_mod_high})
+                     "ci_mod_low": res.ci_mod_low, "ci_mod_high": res.ci_mod_high, "p_mod": res.p_mod,
+                     "avisos": res.avisos})
     return rows
 
 

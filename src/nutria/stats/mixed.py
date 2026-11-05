@@ -16,8 +16,35 @@ relación entre estudios.
 Por eso `st_pierre` descompone por defecto (descomponer=True) la dosis en <dosis>_intra (dosis
 menos la media de su estudio) y <dosis>_entre (media del estudio) y ajusta ambas como efectos
 fijos (enfoque de Mundlak): pendiente_intra estima la respuesta dentro de los estudios y
-pendiente_entre la asociación entre estudios. Los p-valores son de Wald z (statsmodels), sin
-Kenward-Roger.
+pendiente_entre la asociación entre estudios.
+
+Pendiente aleatoria (por defecto, random_slope="auto"): si la respuesta a la dosis varía entre
+estudios, el modelo con solo intercepto aleatorio infravalora el error estándar de la pendiente
+y la prueba es liberal (en simulaciones con 5 a 10 estudios y pendientes heterogéneas, la prueba
+de Wald z de ese modelo, la que se usaba antes por defecto, rechazaba del 11 al 27 % de las veces
+en lugar del 5 % nominal). Por eso, cuando es estimable (al menos MIN_ESTUDIOS_PENDIENTE estudios con
+al menos MIN_NIVELES_PENDIENTE niveles de dosis distintos), se ajustan los dos modelos por REML
+(mismos efectos fijos, así que sus verosimilitudes REML son comparables) y se comparan con la razón
+de verosimilitudes. La varianza de la pendiente está en la frontera del espacio de parámetros bajo
+la hipótesis nula, así que el estadístico no sigue una chi² con 2 gl: con la covarianza
+intercepto-pendiente libre, su distribución nula es la mezcla 50:50 de chi² con 1 y 2 gl (Self y
+Liang 1987, JASA 82:605-610; Stram y Lee 1994, Biometrics 50:1171-1177), y p = 0,5·P(chi²₁ > LRT) +
+0,5·P(chi²₂ > LRT). Se elige la pendiente aleatoria si p < ALFA_LRT = 0,20: un umbral más
+permisivo que 0,05 para no quedarse con el modelo liberal por falta de potencia de la prueba
+(Matuschek et al. 2017, J Mem Lang 94:305-315). El resultado declara el modelo elegido y el
+motivo; random_slope=True o False fuerzan uno de los dos. Con la opción por defecto y la inferencia
+de abajo, el error de tipo I con pendientes heterogéneas queda cerca del 5 % nominal (simulación en
+tests/test_estadistica_v2.py).
+
+Inferencia: t de Student con gl = número de estudios - número de efectos fijos, una aproximación
+conservadora (el estudio es la unidad de replicación de la pendiente). No es Satterthwaite ni
+Kenward-Roger: con pocos estudios, reajusta el modelo en R con lme4/lmerTest para comparar.
+
+Ponderación: por defecto el modelo no pondera (y las notas lo dicen). Con `sem=<columna>` (CLI:
+`--ponderar-sem`) cada media de tratamiento se pondera por 1/SEM² (St-Pierre 2001), con los pesos
+normalizados a media 1: varianza residual σ²/w, como la sentencia WEIGHT de SAS PROC MIXED. Se
+ajusta multiplicando y, X y Z por √w, lo que deja la misma estructura aleatoria con errores
+homocedásticos; la razón de verosimilitudes entre los dos modelos sigue siendo válida (mismos pesos).
 
 Requiere `statsmodels` (pip install "nutria[mixto]").
 """
@@ -26,24 +53,97 @@ from __future__ import annotations
 
 import csv
 import math
+import warnings
 from pathlib import Path
 
+#: Umbral de la razón de verosimilitudes para preferir la pendiente aleatoria (Matuschek et al. 2017).
+ALFA_LRT = 0.20
+#: Estudios con al menos MIN_NIVELES_PENDIENTE niveles de dosis necesarios para estimar la pendiente aleatoria.
+MIN_ESTUDIOS_PENDIENTE = 3
+MIN_NIVELES_PENDIENTE = 3
 
-def _wald(estimate: float, se: float) -> dict:
-    """Estimación, EE, p de Wald z e IC 95 % de Wald."""
+_MODELOS = {"intercepto_aleatorio": "intercepto aleatorio", "pendiente_aleatoria": "intercepto y pendiente aleatorios"}
+_METODOS_PENDIENTE = ["powell", "lbfgs", "bfgs"]
+
+
+def _t(estimate: float, se: float, df: int) -> dict:
+    """Estimación, EE, t, gl, p bilateral e IC 95 % con t de Student (None si no son calculables)."""
     from scipy import stats
 
-    if not (math.isfinite(se) and se > 0):
-        return {"estimacion": float(estimate), "ee": float(se), "p": float("nan"), "ic95": [float("nan")] * 2}
-    z = estimate / se
-    crit = float(stats.norm.ppf(0.975))
-    return {"estimacion": float(estimate), "ee": float(se), "p": float(2 * stats.norm.sf(abs(z))),
-            "ic95": [float(estimate - crit * se), float(estimate + crit * se)]}
+    out = {"estimacion": float(estimate), "ee": float(se) if math.isfinite(se) else None, "t": None, "gl": df,
+           "p": None, "ic95": [None, None]}
+    if not (math.isfinite(se) and se > 0) or df < 1:
+        return out
+    t = estimate / se
+    crit = float(stats.t.ppf(0.975, df))
+    out.update({"t": float(t), "p": float(2 * stats.t.sf(abs(t), df)),
+                "ic95": [float(estimate - crit * se), float(estimate + crit * se)]})
+    return out
+
+
+def razon_verosimilitudes(llf_intercepto: float, llf_pendiente: float) -> dict:
+    """LRT REML de la pendiente aleatoria (con covarianza intercepto-pendiente libre) frente al intercepto
+    aleatorio: estadístico 2·(llf_pendiente - llf_intercepto) (truncado en 0) y p con la mezcla 50:50 de chi²
+    con 1 y 2 gl (Self y Liang 1987; Stram y Lee 1994)."""
+    from scipy import stats
+
+    lrt = max(0.0, 2.0 * (float(llf_pendiente) - float(llf_intercepto)))
+    p = 0.5 * float(stats.chi2.sf(lrt, 1)) + 0.5 * float(stats.chi2.sf(lrt, 2))
+    return {"estadistico": lrt, "p": min(1.0, p),
+            "distribucion_nula": "mezcla 50:50 de chi² con 1 y 2 gl (corrección de frontera; Self y Liang 1987; "
+                                 "Stram y Lee 1994)"}
+
+
+def _matrices(df, response: str, terms: list[str], slope_term: str, pesos=None):
+    """(y, X, Z del intercepto aleatorio, Z de intercepto y pendiente aleatorios) para MixedLM.
+
+    Las mismas matrices que construiría la fórmula `Q('y') ~ Q('t1') + ...` (mismos nombres de columna). Con
+    `pesos` w (varianza residual σ²/w, como la sentencia WEIGHT de SAS PROC MIXED), cada fila de y, X y Z se
+    multiplica por √w: el modelo transformado tiene errores homocedásticos y la misma estructura aleatoria."""
+    import numpy as np
+    import pandas as pd
+
+    X = pd.DataFrame({"Intercept": 1.0}, index=df.index)
+    for term in terms:
+        X[f"Q('{term}')"] = df[term].astype(float)
+    z_ri = pd.DataFrame({"Group": 1.0}, index=df.index)
+    z_rs = z_ri.copy()
+    z_rs[f"Q('{slope_term}')"] = df[slope_term].astype(float)
+    y = df[response].astype(float)
+    if pesos is not None:
+        raiz = np.sqrt(np.asarray(pesos, dtype=float))
+        y = y * raiz
+        X, z_ri, z_rs = (m.mul(raiz, axis=0) for m in (X, z_ri, z_rs))
+    return y, X, z_ri, z_rs
+
+
+def _ajustar(y, X, grupos, Z, metodos: list[str] | None = None):
+    """Ajuste REML; devuelve (fit o None, estado) sin dejar avisos de statsmodels en la salida estándar.
+
+    `metodos`: optimizadores de scipy que statsmodels prueba en orden (None = los de statsmodels)."""
+    import numpy as np
+    from statsmodels.regression.mixed_linear_model import MixedLM
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            model = MixedLM(y, X, groups=grupos, exog_re=Z)
+            fit = model.fit(reml=True, method=metodos) if metodos else model.fit(reml=True)
+        except (np.linalg.LinAlgError, ValueError, ZeroDivisionError, FloatingPointError) as exc:
+            return None, {"convergencia": False, "error": str(exc), "avisos_statsmodels": []}
+    mensajes = sorted({str(w.message).splitlines()[0] for w in caught})
+    bse = np.asarray(fit.bse_fe, dtype=float)
+    ok = bool(getattr(fit, "converged", True)) and bool(np.all(np.isfinite(bse))) and math.isfinite(float(fit.llf))
+    return fit, {"convergencia": ok, "avisos_statsmodels": mensajes}
+
+
+def _niveles_por_estudio(df, study: str, dose: str) -> dict:
+    return {str(k): int(v) for k, v in df.groupby(study)[dose].nunique().items()}
 
 
 def st_pierre(rows: list[dict], response: str, dose: str, study: str,
-              covariates: list[str] | None = None, random_slope: bool = False,
-              descomponer: bool = True) -> dict:
+              covariates: list[str] | None = None, random_slope: bool | str = "auto",
+              descomponer: bool = True, alfa_lrt: float = ALFA_LRT, sem: str | None = None) -> dict:
     """Modelo mixto respuesta ~ dosis (+ covariables) con el estudio como efecto aleatorio.
 
     - descomponer=True (por defecto): crea <dosis>_intra = dosis - media de su estudio y
@@ -53,19 +153,36 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
       más de un nivel de dosis.
     - descomponer=False: modelo clásico con la dosis sin descomponer; devuelve `pendiente`, que
       mezcla información intra y entre estudios.
-    - random_slope=True añade una pendiente aleatoria por estudio (sobre <dosis>_intra si se descompone).
+    - random_slope="auto" (por defecto): ajusta el modelo con intercepto aleatorio y, si es estimable, el
+      de intercepto y pendiente aleatorios (sobre <dosis>_intra si se descompone); elige con la razón de
+      verosimilitudes REML (mezcla 50:50 de chi² con 1 y 2 gl, umbral `alfa_lrt`). random_slope=True fuerza
+      la pendiente aleatoria (ValueError si no es estimable); False fuerza el intercepto aleatorio.
 
-    Las covariables entran sin descomponer. Los p-valores son de Wald z, sin Kenward-Roger.
+    - sem (columna con el SEM de cada media de tratamiento, None por defecto): pondera cada media por 1/SEM²
+      (St-Pierre 2001), con los pesos normalizados a media 1; la varianza residual pasa a ser σ²/w. Un SEM
+      ausente, no numérico o <= 0 en una fila usada es un error (no se descarta la fila en silencio). Sin
+      `sem`, el modelo no pondera y las notas lo declaran.
+
+    Inferencia: t de Student con gl = n_estudios - número de efectos fijos (conservadora; no es
+    Satterthwaite ni Kenward-Roger). Si no quedan gl (gl < 1), p e IC son None. Las covariables entran
+    sin descomponer. Devuelve `modelo`, `motivo_modelo`, `comparacion_modelos` (los dos ajustes y el LRT)
+    y notas que explican todo ello.
     """
     try:
+        import numpy as np
         import pandas as pd
-        import statsmodels.formula.api as smf
+        import statsmodels  # noqa: F401
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError('Instala las dependencias opcionales: pip install "nutria[mixto]"') from exc
 
+    if not (random_slope == "auto" or isinstance(random_slope, bool)):
+        raise ValueError(f"random_slope debe ser 'auto', True o False: {random_slope!r}")
+    if isinstance(alfa_lrt, bool) or not (isinstance(alfa_lrt, (int, float)) and 0 < alfa_lrt < 1):
+        raise ValueError(f"alfa_lrt debe estar entre 0 y 1: {alfa_lrt!r}")
     covariates = list(covariates or [])
     df = pd.DataFrame(rows)
-    absent = [col for col in dict.fromkeys([response, dose, study, *covariates]) if col not in df.columns]
+    absent = [col for col in dict.fromkeys([response, dose, study, *covariates, *([sem] if sem else [])])
+              if col not in df.columns]
     if absent:
         raise ValueError(f"Faltan columnas en los datos: {', '.join(absent)}")
     for col in [response, dose, *covariates]:
@@ -75,6 +192,16 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
     n_groups = df[study].nunique()
     if n_groups < 3:
         raise ValueError("Se necesitan al menos 3 estudios")
+    pesos = None
+    if sem:
+        valores = pd.to_numeric(df[sem], errors="coerce")
+        malas = [str(df[study].iloc[i]) for i, v in enumerate(valores) if not (np.isfinite(v) and v > 0)]
+        if malas:
+            raise ValueError(f"La columna {sem} (SEM para ponderar) está vacía, no es numérica o no es > 0 en "
+                             f"{len(malas)} fila(s) (estudios: {', '.join(sorted(set(malas))[:8])}): corrige el "
+                             "dato o no ponderes; no se descartan filas en silencio.")
+        w = 1.0 / valores.to_numpy(dtype=float) ** 2
+        pesos = w / w.mean()
 
     intra, entre = f"{dose}_intra", f"{dose}_entre"
     between_estimable = False
@@ -97,39 +224,144 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
         dose_terms = [dose]
         slope_term = dose
 
-    formula = f"Q('{response}') ~ " + " + ".join(f"Q('{term}')" for term in [*dose_terms, *covariates])
-    re_formula = f"~Q('{slope_term}')" if random_slope else "~1"
-    model = smf.mixedlm(formula, df, groups=df[study], re_formula=re_formula)
-    fit = model.fit(reml=True)
+    niveles = _niveles_por_estudio(df, study, dose)
+    con_niveles = sum(1 for n in niveles.values() if n >= MIN_NIVELES_PENDIENTE)
+    slope_estimable = con_niveles >= MIN_ESTUDIOS_PENDIENTE
+    if random_slope is True and not slope_estimable:
+        raise ValueError(f"La pendiente aleatoria no es estimable: solo {con_niveles} estudio(s) tienen al menos "
+                         f"{MIN_NIVELES_PENDIENTE} niveles de dosis distintos (hacen falta "
+                         f"{MIN_ESTUDIOS_PENDIENTE}); con 2 niveles por estudio la varianza de la pendiente se "
+                         "confunde con la residual. Usa el modelo con intercepto aleatorio.")
+
+    y, X, z_ri, z_rs = _matrices(df, response, [*dose_terms, *covariates], slope_term, pesos)
+    groups = df[study]
+    fit_ri, estado_ri = _ajustar(y, X, groups, z_ri)
+    if fit_ri is None:
+        raise ValueError(f"No se pudo ajustar el modelo con intercepto aleatorio: {estado_ri.get('error')}")
+    fit_rs, estado_rs = (None, {"convergencia": False, "avisos_statsmodels": [], "no_ajustado": True})
+    if slope_estimable:
+        # También con random_slope=False, para avisar si los datos indican heterogeneidad de la pendiente.
+        # Powell (sin derivadas) primero: con la varianza de la pendiente cerca de 0, los optimizadores por
+        # gradiente que statsmodels usa por defecto se quedan a menudo lejos del máximo de la REML.
+        fit_rs, estado_rs = _ajustar(y, X, groups, z_rs, _METODOS_PENDIENTE)
+        if fit_rs is not None and estado_rs["convergencia"]:
+            tol = 1e-4 * max(1.0, abs(float(fit_ri.llf)))
+            if float(fit_rs.llf) < float(fit_ri.llf) - tol:
+                # El modelo con pendiente anida al de intercepto: una verosimilitud menor es un fallo del optimizador.
+                estado_rs = {**estado_rs, "convergencia": False,
+                             "error": "verosimilitud REML menor que la del modelo anidado (optimización fallida)"}
+    lrt = None
+    if fit_rs is not None and estado_rs["convergencia"]:
+        lrt = razon_verosimilitudes(float(fit_ri.llf), float(fit_rs.llf))
+
+    avisos: list[str] = []
+    if random_slope is True:
+        if fit_rs is None or not estado_rs["convergencia"]:
+            raise ValueError("El modelo con pendiente aleatoria no convergió: "
+                             + "; ".join(estado_rs.get("avisos_statsmodels") or [estado_rs.get("error", "")]))
+        modelo, motivo = "pendiente_aleatoria", "pendiente aleatoria forzada (--pendiente-aleatoria)"
+    elif random_slope is False:
+        modelo, motivo = "intercepto_aleatorio", "intercepto aleatorio forzado (--sin-pendiente-aleatoria)"
+        if lrt is not None and lrt["p"] < alfa_lrt:
+            avisos.append(f"Forzaste el intercepto aleatorio, pero la razón de verosimilitudes indica que la "
+                          f"pendiente varía entre estudios (LRT = {lrt['estadistico']:.3f}, p = {lrt['p']:.3g} < "
+                          f"{alfa_lrt:g}): la prueba de la pendiente será liberal.")
+    elif not slope_estimable:
+        modelo = "intercepto_aleatorio"
+        motivo = (f"pendiente aleatoria no estimable: {con_niveles} estudio(s) con al menos {MIN_NIVELES_PENDIENTE} "
+                  f"niveles de dosis (hacen falta {MIN_ESTUDIOS_PENDIENTE})")
+        avisos.append(f"No se pudo comprobar si la respuesta a la dosis varía entre estudios ({motivo}). Si varía, "
+                      "la prueba de la pendiente con intercepto aleatorio es liberal (error de tipo I por encima "
+                      "del nominal); la t con gl = estudios - efectos fijos lo atenúa, pero interpreta la p con "
+                      "cautela.")
+    elif lrt is None:
+        modelo = "intercepto_aleatorio"
+        motivo = "el modelo con pendiente aleatoria no convergió"
+        avisos.append("El modelo con pendiente aleatoria no convergió ("
+                      + "; ".join(estado_rs.get("avisos_statsmodels") or [estado_rs.get("error", "sin detalle")])
+                      + "): se usa el intercepto aleatorio, cuya prueba de la pendiente es liberal si la respuesta "
+                        "varía entre estudios. Reajusta en R (lme4/lmerTest) antes de concluir.")
+    elif lrt["p"] < alfa_lrt:
+        modelo = "pendiente_aleatoria"
+        motivo = (f"razón de verosimilitudes REML = {lrt['estadistico']:.3f}, p = {lrt['p']:.3g} < {alfa_lrt:g} "
+                  "(mezcla 50:50 de chi² con 1 y 2 gl): la pendiente varía entre estudios")
+    else:
+        modelo = "intercepto_aleatorio"
+        motivo = (f"razón de verosimilitudes REML = {lrt['estadistico']:.3f}, p = {lrt['p']:.3g} >= {alfa_lrt:g} "
+                  "(mezcla 50:50 de chi² con 1 y 2 gl): sin indicios de que la pendiente varíe entre estudios")
+    fit = fit_rs if modelo == "pendiente_aleatoria" else fit_ri
+    estado = estado_rs if modelo == "pendiente_aleatoria" else estado_ri
+    if not estado["convergencia"]:
+        avisos.append(f"El modelo elegido ({_MODELOS[modelo]}) no convergió o tiene errores estándar no finitos ("
+                      + "; ".join(estado.get("avisos_statsmodels") or ["sin detalle"])
+                      + "): no uses sus p ni sus IC sin reajustarlo (en R, lme4/lmerTest).")
     params = fit.fe_params
     bse = fit.bse_fe
+    gl = int(n_groups) - int(len(params))
 
     def clean(name: str) -> str:
         return name.replace("Q('", "").replace("')", "")
 
-    fixed = {}
-    for name in params.index:
-        entry = _wald(float(params[name]), float(bse[name]))
-        entry["p"] = float(fit.pvalues[name])  # p de statsmodels (Wald z), igual que antes
-        fixed[clean(name)] = entry
+    fixed = {clean(name): _t(float(params[name]), float(bse[name]), gl) for name in params.index}
+    if gl < 1:
+        avisos.append(f"Con {n_groups} estudios y {len(params)} efectos fijos no quedan grados de libertad para la "
+                      "prueba t conservadora: p e IC no se calculan. Hacen falta más estudios (o menos "
+                      "covariables, o descomponer=False).")
 
+    def resumen_modelo(f, e) -> dict | None:
+        if f is None:
+            if e.get("no_ajustado"):
+                return None  # no estimable: no se ajustó
+            return {"ajustado": False, "convergencia": False, "error": e.get("error")}
+        name = f"Q('{slope_term}')"
+        return {"ajustado": True, "convergencia": e["convergencia"], "llf_reml": float(f.llf),
+                "pendiente": {"estimacion": float(f.fe_params[name]), "ee": float(f.bse_fe[name])},
+                "varianza_estudio": [[float(x) for x in row] for row in f.cov_re.values],
+                "varianza_residual": float(f.scale), "avisos_statsmodels": e.get("avisos_statsmodels", [])}
+
+    prueba = (f"t de Student con gl = estudios - efectos fijos = {n_groups} - {len(params)} = {gl} (conservadora; "
+              "no es Satterthwaite ni Kenward-Roger ni Wald z)")
     notes = [
-        "Modelo sin ponderar; St-Pierre (2001) discute ponderar por la precisión de cada media.",
-        "Los p-valores son de Wald z (aproximación normal), sin corrección de Kenward-Roger para los grados de "
-        "libertad. Para inferencia con pocos estudios, reajusta el modelo en R con lme4/lmerTest "
+        f"Modelo elegido: {_MODELOS[modelo]} ({motivo}).",
+        "Comparación de modelos: con al menos " f"{MIN_ESTUDIOS_PENDIENTE} estudios con {MIN_NIVELES_PENDIENTE} o más "
+        "niveles de dosis se ajustan por REML el modelo con intercepto aleatorio y el de intercepto y pendiente "
+        "aleatorios, y se comparan con la razón de verosimilitudes; como la varianza de la pendiente está en la "
+        "frontera bajo la hipótesis nula, la p usa la mezcla 50:50 de chi² con 1 y 2 gl (Self y Liang 1987; Stram "
+        f"y Lee 1994). Se elige la pendiente aleatoria si p < {alfa_lrt:g} (umbral permisivo para proteger el error "
+        "de tipo I de la pendiente; Matuschek et al. 2017).",
+        f"Inferencia: {prueba}. Para afinar con pocos estudios, reajusta el modelo en R con lme4/lmerTest "
         "(Kenward-Roger o Satterthwaite).",
+        (f"Modelo ponderado por 1/SEM² de cada media (columna {sem}; St-Pierre 2001), con los pesos normalizados a "
+         "media 1: la varianza residual es la de una media de precisión media. Comprueba que los SEM de los "
+         "estudios son comparables (mismo modelo y unidad experimental).") if sem else
+        "Modelo sin ponderar; St-Pierre (2001) discute ponderar por la precisión de cada media (--ponderar-sem).",
         "Revisa residuos, puntos influyentes y el rango de dosis de cada estudio antes de extrapolar.",
         "Una pendiente significativa entre estudios no demuestra causalidad en cada granja.",
     ]
     out = {
         "n_observaciones": int(fit.nobs),
         "n_estudios": int(n_groups),
-        "convergencia": bool(getattr(fit, "converged", True)),
+        "convergencia": bool(estado["convergencia"]),
         "descomponer": bool(descomponer),
-        "prueba": "Wald z (sin Kenward-Roger)",
+        "modelo": modelo,
+        "motivo_modelo": motivo,
+        "pendiente_aleatoria": {"auto": "auto", True: "forzada", False: "desactivada"}[random_slope],
+        "ponderacion": ({"columna_sem": sem, "peso": "1/SEM², normalizado a media 1"} if sem else None),
+        "prueba": prueba,
+        "gl": gl,
         "efectos_fijos": fixed,
         "varianza_estudio": [[float(x) for x in row] for row in fit.cov_re.values],
         "varianza_residual": float(fit.scale),
+        "comparacion_modelos": {
+            "estimable": bool(slope_estimable),
+            "estudios_con_3_o_mas_niveles": int(con_niveles),
+            "niveles_por_estudio": niveles,
+            "alfa_lrt": float(alfa_lrt),
+            "razon_verosimilitudes": lrt,
+            "intercepto_aleatorio": resumen_modelo(fit_ri, estado_ri),
+            "pendiente_aleatoria": resumen_modelo(fit_rs, estado_rs),
+        },
+        "avisos": avisos,
         "notas": notes,
     }
     if descomponer:
@@ -141,23 +373,26 @@ def st_pierre(rows: list[dict], response: str, dose: str, study: str,
             qi, qe = f"Q('{intra}')", f"Q('{entre}')"
             diff = float(params[qe] - params[qi])
             var = float(cov.loc[qe, qe] + cov.loc[qi, qi] - 2 * cov.loc[qe, qi])
-            out["diferencia_entre_intra"] = _wald(diff, math.sqrt(var) if var > 0 else float("nan"))
-            notes.insert(0, "Descomposición intra/entre estudios (enfoque de Mundlak): pendiente_intra usa solo "
+            out["diferencia_entre_intra"] = _t(diff, math.sqrt(var) if var > 0 else float("nan"), gl)
+            notes.insert(1, "Descomposición intra/entre estudios (enfoque de Mundlak): pendiente_intra usa solo "
                             "la variación de dosis dentro de cada estudio; pendiente_entre es la asociación entre "
                             "las dosis medias y las respuestas medias de los estudios, expuesta a confusión "
                             "(sesgo ecológico). Si difieren, la pendiente sin descomponer mezcla ambas y no "
                             "estima la respuesta intraestudio.")
         else:
-            notes.insert(0, "La dosis media es igual en todos los estudios: no hay información entre estudios y "
+            notes.insert(1, "La dosis media es igual en todos los estudios: no hay información entre estudios y "
                             "la pendiente es intraestudio; pendiente_entre no es estimable.")
     else:
         out["pendiente"] = fixed[dose]
-        notes.insert(0, "Sin descomponer, la pendiente mezcla información intra y entre estudios (el intercepto "
+        notes.insert(1, "Sin descomponer, la pendiente mezcla información intra y entre estudios (el intercepto "
                         "aleatorio no la aísla); usa descomponer=True para separarlas.")
-    if random_slope:
+    if modelo == "pendiente_aleatoria":
         notes.append("Con pendiente aleatoria, la heterogeneidad de la respuesta entre estudios queda en la matriz "
-                     "de covarianzas del estudio.")
-    return out
+                     "de covarianzas del estudio (varianza_estudio: intercepto y pendiente).")
+    # Lo que hay que leer primero (avisos, modelo elegido y pendientes) va al principio de la salida.
+    primero = ["avisos", "modelo", "motivo_modelo", "pendiente_aleatoria", "prueba", "gl", "pendiente_intra",
+               "pendiente_entre", "diferencia_entre_intra", "pendiente"]
+    return {**{k: out[k] for k in primero if k in out}, **{k: v for k, v in out.items() if k not in primero}}
 
 
 def read_csv(path: Path, sep: str = ",") -> list[dict]:

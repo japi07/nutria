@@ -1560,10 +1560,25 @@ def cmd_autoria(args, cfg) -> int:
 
 
 # ============================================================================ estadística
-def _read_table(path: str, sep: str, decimal: str) -> list[dict]:
-    """Lee un CSV. Con --decimal ',' convierte la coma decimal en punto (no admite separadores de miles)."""
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        rows = list(csv.DictReader(fh, delimiter=sep))
+def _read_table(path: str, sep: str, decimal: str, huella: dict | None = None) -> list[dict]:
+    """Lee un CSV. Con --decimal ',' convierte la coma decimal en punto (no admite separadores de miles).
+
+    El fichero se lee una sola vez; con `huella` (dict) se guarda en huella["sha256"] la huella SHA-256 de
+    los bytes leídos (procedencia: identifica exactamente los datos analizados). Una fila con más campos
+    que la cabecera (p. ej. comas decimales sin comillas en un CSV separado por comas) es un error: los
+    valores quedarían desplazados de columna."""
+    import io
+    raw = Path(path).read_bytes()
+    if huella is not None:
+        huella["sha256"] = sha256_text(raw)
+    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""), delimiter=sep))
+    # Campos sobrantes vacíos (p. ej. una coma final) se ignoran; con contenido, desplazarían las columnas.
+    largas = [i for i, r in enumerate(rows, 2) if any(str(x).strip() for x in (r.get(None) or []))]
+    for r in rows:
+        r.pop(None, None)
+    if largas:
+        raise ValueError(f"{path}: la(s) línea(s) {', '.join(map(str, largas[:10]))} tienen más campos que la cabecera: "
+                         "revisa --sep y --decimal (¿coma decimal sin comillas en un CSV separado por comas?)")
     if decimal != ".":
         for r in rows:
             for k, v in r.items():
@@ -1587,20 +1602,39 @@ def _num(row: dict, key: str, tag: str) -> float | None:
         raise ValueError(f"{tag}: valor no numérico en '{key}': {value!r}") from None
 
 
-def _effects_from_rows(rows: list[dict], measure: str) -> tuple[list[float], list[float], list[str], list[str]]:
+def _effects_from_rows(rows: list[dict], measure: str, rho_intrasujeto: float | None = None,
+                       mensajes: list | None = None) -> tuple[list[float], list[float], list[str], list[str]]:
+    """(yi, vi, etiquetas, comparaciones) de cada fila.
+
+    La columna opcional `diseno` (paralelo, crossover, cuadrado_latino, factorial, bloques, otro) decide la
+    fórmula: en los diseños cruzados se usan las de grupos emparejados con la correlación intrasujeto de la
+    columna `rho_intrasujeto` o, si está vacía, `rho_intrasujeto` (--rho-intrasujeto). Un diseño desconocido
+    es un error. Con `mensajes` (lista) se añaden tuplas (nivel, texto) que explican el tratamiento de las
+    filas de diseño cruzado, agrupadas."""
     from .stats import effect_sizes as es
     yi, vi, labels, comps = [], [], [], []
+    grupos: dict[tuple[str, str], list[str]] = {}
     for i, r in enumerate(rows, 1):
         label = r.get("estudio") or r.get("study") or str(i)
         tag = f"fila {i} ({label})"
+        try:
+            diseno = es.normalize_design(r.get("diseno"))
+        except ValueError as exc:
+            raise ValueError(f"{tag}: {exc}") from None
+        paired = diseno in es.PAIRED_DESIGNS
+        nota = None
         if r.get("yi") not in (None, "") and r.get("vi") not in (None, ""):
             y, v = _num(r, "yi", tag), _num(r, "vi", tag)
+            nota = es.design_note(measure, None, diseno)
         elif measure in ("RR", "OR", "RD"):
             vals = {k: _num(r, k, tag) for k in ("ev_trt", "n_trt", "ev_ctrl", "n_ctrl")}
             missing = [k for k, val in vals.items() if val is None]
             if missing:
                 raise ValueError(f"{tag}: faltan {', '.join(missing)} para la medida {measure}")
             y, v = es.effect_from_counts(measure, vals["ev_trt"], vals["n_trt"], vals["ev_ctrl"], vals["n_ctrl"], label=tag)
+            if paired:
+                nota = ("aviso", "Diseño cruzado con variable binaria: los recuentos se tratan como grupos "
+                                 "independientes (no hay fórmula emparejada implementada para RR, OR o RD).")
         else:
             kind = (r.get("tipo_disp") or "").strip()
             if not kind:
@@ -1610,43 +1644,204 @@ def _effects_from_rows(rows: list[dict], measure: str) -> tuple[list[float], lis
             missing = [k for k in ("media_trt", "media_ctrl", "n_trt", "n_ctrl") if vals[k] is None]
             if missing:
                 raise ValueError(f"{tag}: faltan {', '.join(missing)}")
+            rho = None
+            if paired:
+                rho = _num(r, "rho_intrasujeto", tag)
+                if rho is not None and rho != rho:  # "nan" en la celda cuenta como dato ausente
+                    rho = None
+                if rho is None and rho_intrasujeto is not None:
+                    rho = rho_intrasujeto
+                    grupos.setdefault(("aviso", f"Correlación intrasujeto supuesta r = {rho_intrasujeto:g} "
+                                                "(--rho-intrasujeto, sin dato en la columna rho_intrasujeto): es un "
+                                                "supuesto de trabajo [SUP]; repite el análisis con otros valores "
+                                                "(p. ej. 0,3 y 0,8) como sensibilidad."), []).append(label)
             try:
                 y, v = es.effect_from_summary(measure, vals["media_trt"], vals["media_ctrl"], vals["n_trt"],
-                                              vals["n_ctrl"], kind, vals["disp_trt"], vals["disp_ctrl"], label=tag)
+                                              vals["n_ctrl"], kind, vals["disp_trt"], vals["disp_ctrl"], label=tag,
+                                              diseno=diseno, rho_intrasujeto=rho)
             except TypeError as exc:
                 raise ValueError(f"{tag}: {exc}") from exc
+            if paired:
+                nota = es.design_note(measure, kind, diseno, rho)
+                if vals["n_trt"] != vals["n_ctrl"]:
+                    grupos.setdefault(("aviso", "Diseño cruzado con n_trt distinto de n_ctrl: se usa como n el menor "
+                                                "(unidades experimentales con ambos tratamientos)."), []).append(label)
+        if nota:
+            grupos.setdefault(nota, []).append(label)
         yi.append(y)
         vi.append(v)
         labels.append(label)
         comps.append(r.get("comparacion") or f"{label}#{i}")
+    if mensajes is not None:
+        for (nivel, texto), labs in grupos.items():
+            mensajes.append((nivel, f"{texto} Filas: {', '.join(labs[:8])}{' y otras' if len(labs) > 8 else ''}."))
     return yi, vi, labels, comps
+
+
+def _resumen_disenos(rows: list[dict], measure: str, labels: list[str]) -> tuple[dict, list[tuple[str, str]]]:
+    """Recuento de diseños y unidades experimentales y avisos si se mezclan (columnas opcionales `diseno` y
+    `unidad_experimental`, las que exporta `nutria extraccion exportar`)."""
+    from collections import Counter
+
+    from .stats import effect_sizes as es
+    info: dict = {}
+    mensajes: list[tuple[str, str]] = []
+    columnas = set().union(*(r.keys() for r in rows))
+    desde_medias = measure in ("MD", "SMD", "ROM") and any(r.get("yi") in (None, "") for r in rows)
+    if "diseno" in columnas:
+        disenos = [es.normalize_design(r.get("diseno")) for r in rows]
+        cuenta = Counter(d or "sin_declarar" for d in disenos)
+        info["disenos"] = dict(cuenta)
+        declarados = {d for d in disenos if d}
+        sin = [lab for lab, d in zip(labels, disenos) if not d]
+        if len(declarados) > 1:
+            cruzados = declarados & set(es.PAIRED_DESIGNS)
+            mensajes.append(("aviso", "Se combinan diseños distintos (" + "; ".join(f"{k}: {v}" for k, v in cuenta.items())
+                             + "). " + ("Los crossovers y cuadrados latinos estiman el efecto dentro de animal "
+                                        "(otra varianza y, en SMD, otra escala si no se corrige). " if cruzados else "")
+                             + "Comprueba que los efectos son comparables y modela el diseño como moderador "
+                               "(--moderador diseno) o analiza por separado (--subgrupo diseno)."))
+        if sin and declarados:
+            mensajes.append(("aviso", f"{len(sin)} fila(s) sin diseño declarado se tratan como diseños paralelos: "
+                             + ", ".join(sin[:8]) + (" y otras" if len(sin) > 8 else "") + "."))
+        elif not declarados:
+            mensajes.append(("nota", "La columna diseno está vacía: todas las filas se tratan como diseños paralelos."))
+        otros = [lab for lab, d in zip(labels, disenos) if d == "otro"]
+        if otros:
+            mensajes.append(("aviso", f"{len(otros)} fila(s) con diseño 'otro' se tratan como grupos independientes "
+                             "(diseño paralelo): comprueba que lo son o calcula yi y vi con la fórmula de su diseño. "
+                             "Filas: " + ", ".join(otros[:8]) + (" y otras" if len(otros) > 8 else "") + "."))
+    elif desde_medias:
+        mensajes.append(("nota", "El CSV no tiene columna diseno: todas las filas se tratan como diseños paralelos. Si "
+                                 "hay crossovers o cuadrados latinos, decláralos (columna diseno) para calcular su "
+                                 "efecto con la fórmula de grupos emparejados."))
+    if "unidad_experimental" in columnas:
+        unidades = [es.normalize_unit(r.get("unidad_experimental")) for r in rows]
+        cuenta = Counter(u or "sin_declarar" for u in unidades)
+        info["unidades_experimentales"] = dict(cuenta)
+        declaradas = {u for u in unidades if u}
+        if len(declaradas) > 1:
+            mensajes.append(("aviso", "Se combinan unidades experimentales distintas ("
+                             + "; ".join(f"{k}: {v}" for k, v in cuenta.items())
+                             + "): la variabilidad entre corrales (o granjas) y entre animales no es la misma y los n "
+                               "cuentan cosas distintas. Modela la unidad como moderador (--moderador "
+                               "unidad_experimental) o analiza por separado (--subgrupo unidad_experimental)."))
+        desconocidas = sorted(u for u in declaradas if u not in es.UNITS)
+        if desconocidas:
+            mensajes.append(("aviso", f"Unidad experimental no reconocida: {', '.join(desconocidas)} (admitidas: "
+                                      f"{', '.join(es.UNITS)})."))
+        no_animal = sorted(u for u in declaradas if u != "animal")
+        if no_animal:
+            mensajes.append(("nota", f"Con unidad experimental {', '.join(no_animal)}, n_trt y n_ctrl deben contar "
+                                     "unidades experimentales (p. ej. corrales), no animales: si cuentan animales, la "
+                                     "varianza queda subestimada."))
+    return info, mensajes
+
+
+def _avisos_mezcla_stpierre(rows: list[dict]) -> list[str]:
+    """Avisos de `meta stpierre` si el CSV declara diseños o unidades experimentales distintos."""
+    from .stats import effect_sizes as es
+
+    def seguro(norm, value):
+        try:
+            return norm(value)
+        except ValueError:
+            return str(value).strip().lower()
+
+    avisos = []
+    columnas = set().union(*(r.keys() for r in rows))
+    for col, norm, nombre in (("diseno", es.normalize_design, "diseños"),
+                              ("unidad_experimental", es.normalize_unit, "unidades experimentales")):
+        if col in columnas:
+            valores = sorted({seguro(norm, r.get(col)) for r in rows} - {None})
+            if len(valores) > 1:
+                avisos.append(f"El CSV combina {nombre} distintos ({', '.join(valores)}): las medias de tratamiento de "
+                              "crossovers o cuadrados latinos y de paralelos, o de corrales y de animales, no tienen "
+                              "la misma varianza residual. Analízalos por separado o añade el diseño como covariable "
+                              "(indicadora 0/1) y compruébalo.")
+    return avisos
+
+
+def _referencias(items) -> dict[str, str]:
+    """--referencia COLUMNA=CATEGORIA (repetible) -> {columna: categoría}."""
+    refs: dict[str, str] = {}
+    for item in items or []:
+        col, sep, val = str(item).partition("=")
+        col, val = col.strip(), val.strip()
+        if not sep or not col or not val:
+            raise ValueError(f"--referencia espera COLUMNA=CATEGORIA: {item!r}")
+        if col in refs:
+            raise ValueError(f"--referencia repetida para la columna {col}")
+        refs[col] = val
+    return refs
+
+
+def _texto_mensajes(mensajes: list[tuple[str, str]]) -> list[str]:
+    return ([f"AVISO: {t}" for nivel, t in mensajes if nivel == "aviso"]
+            + [f"Nota: {t}" for nivel, t in mensajes if nivel == "nota"])
 
 
 def cmd_meta(args, cfg) -> int:
     from .stats import meta as m
-    rows = _read_table(args.csv, args.sep, args.decimal)
+    huella: dict = {}
+    rows = _read_table(args.csv, args.sep, args.decimal, huella)
     if not rows:
         raise ValueError("El CSV no tiene filas")
+    entrada = {"csv": args.csv, "sha256": huella["sha256"], "sep": args.sep, "decimal": args.decimal}
     if args.accion == "stpierre":
-        from .stats.mixed import st_pierre
-        res = st_pierre(rows, args.respuesta, args.dosis, args.estudio, args.covariable, args.pendiente_aleatoria,
-                        descomponer=not args.sin_descomponer)
-        log_event(cfg, "meta_stpierre", inputs={"csv": args.csv, "respuesta": args.respuesta, "dosis": args.dosis},
+        from .stats.mixed import ALFA_LRT, st_pierre
+        modo = "si" if args.pendiente_aleatoria else ("no" if args.sin_pendiente_aleatoria else "auto")
+        res = st_pierre(rows, args.respuesta, args.dosis, args.estudio, args.covariable,
+                        {"si": True, "no": False, "auto": "auto"}[modo], descomponer=not args.sin_descomponer,
+                        sem=args.ponderar_sem)
+        res["avisos"] = [*_avisos_mezcla_stpierre(rows), *res["avisos"]]
+        log_event(cfg, "meta_stpierre", inputs={**entrada, "respuesta": args.respuesta, "dosis": args.dosis,
+                                                "estudio": args.estudio, "covariables": args.covariable,
+                                                "pendiente_aleatoria": modo, "descomponer": not args.sin_descomponer,
+                                                "alfa_lrt": ALFA_LRT, "ponderar_sem": args.ponderar_sem},
                   outputs=res, actor=args.agente)
         _emit(args, res)
         return 0
     if args.accion == "validar-predictivo":
         from .stats.predictive import loso_cv
         res = loso_cv(rows, args.respuesta, args.predictores, args.estudio)
-        log_event(cfg, "meta_validar_predictivo", inputs={"csv": args.csv, "respuesta": args.respuesta,
-                                                          "predictores": args.predictores}, outputs=res, actor=args.agente)
+        log_event(cfg, "meta_validar_predictivo", inputs={**entrada, "respuesta": args.respuesta,
+                                                          "predictores": args.predictores, "estudio": args.estudio},
+                  outputs=res, actor=args.agente)
         _emit(args, res)
         return 0
-    yi, vi, labels, comps = _effects_from_rows(rows, args.medida)
+    from .stats import effect_sizes as es
+    rho_intra = es._check_rho(args.rho_intrasujeto, "--rho-intrasujeto: ")
+    mensajes: list[tuple[str, str]] = []
+    yi, vi, labels, comps = _effects_from_rows(rows, args.medida, rho_intra, mensajes)
+    info_disenos, mensajes_disenos = _resumen_disenos(rows, args.medida, labels)
+    mensajes = mensajes_disenos + mensajes
+    hay_cruzados = any(es.normalize_design(r.get("diseno")) in es.PAIRED_DESIGNS for r in rows)
+    if rho_intra is not None and not hay_cruzados:
+        mensajes.append(("nota", "--rho-intrasujeto no se usa: no hay filas de diseño cruzado (crossover o cuadrado "
+                                 "latino)."))
     if args.accion == "exportar-r":
-        return _export_r(args, rows, yi, vi, labels, comps)
-    out: dict = {"medida": args.medida, "k": len(yi), "estudios": labels}
-    text: list[str] = []
+        return _export_r(args, rows, yi, vi, labels, comps, cfg=cfg, entrada=entrada, mensajes=mensajes)
+    referencias = _referencias(args.referencia)
+    sobrantes = [c for c in referencias if c not in (args.moderador or [])]
+    if sobrantes:
+        raise ValueError(f"--referencia solo se aplica a moderadores (--moderador): {', '.join(sobrantes)}")
+    if args.moderador is not None and not args.moderador:
+        raise ValueError("--moderador necesita al menos una columna del CSV")
+    # Los moderadores se codifican antes del análisis: un error de los datos (columna inexistente, celdas
+    # vacías, números mezclados con texto, referencia inexistente) detiene la orden con código 2; solo un
+    # moderador sin contraste estimable (una sola categoría) se informa como meta-regresión no estimable.
+    codificados = no_estimable = None
+    if args.moderador:
+        from .stats.metareg import ModeradorNoEstimable, codificar_moderadores
+        try:
+            codificados = codificar_moderadores(rows, args.moderador, referencias)
+        except ModeradorNoEstimable as exc:
+            no_estimable = str(exc)
+    out: dict = {"medida": args.medida, "k": len(yi), "estudios": labels, **info_disenos,
+                 "avisos_diseno": [t for nivel, t in mensajes if nivel == "aviso"],
+                 "notas_diseno": [t for nivel, t in mensajes if nivel == "nota"]}
+    text: list[str] = _texto_mensajes(mensajes)
     deps = m.detect_dependence(labels)
     if deps:
         if args.agregar_estudio:
@@ -1664,6 +1859,8 @@ def cmd_meta(args, cfg) -> int:
             out["aviso_dependencia"] = deps
     if args.metodo == "FE":
         res = m.fixed_effect(yi, vi)
+        if args.ajuste != "ninguno":
+            res.notes.append(f"Con --metodo FE no se aplica --ajuste {args.ajuste}: el efecto fijo usa la prueba z.")
     else:
         res = m.random_effects(yi, vi, method=args.metodo, ajuste=args.ajuste)
     out["modelo"] = res.to_dict()
@@ -1690,82 +1887,211 @@ def cmd_meta(args, cfg) -> int:
         hi = max(out["uno_fuera"], key=lambda r: r["estimacion"])
         text.append(f"Uno fuera: estimación entre {lo['estimacion']:.4f} (sin {lo['excluido']}) y "
                     f"{hi['estimacion']:.4f} (sin {hi['excluido']})")
+        estrechos = [r["excluido"] for r in out["uno_fuera"] if r.get("avisos")]
+        if estrechos:
+            text.append(f"AVISO: en {len(estrechos)} de {len(out['uno_fuera'])} análisis uno-fuera (sin "
+                        f"{', '.join(map(str, estrechos[:5]))}{' y otros' if len(estrechos) > 5 else ''}) el IC del "
+                        "HKSJ estándar es más estrecho que el de Wald (q < 1); su p e IC modificados están en "
+                        "uno_fuera (p_mod, ci_mod_low, ci_mod_high).")
     if args.subgrupo:
-        groups = [r.get(args.subgrupo, "") for r in rows]
+        from .stats.metareg import categorias_de_columna
+        if args.subgrupo not in set().union(*(r.keys() for r in rows)):
+            raise ValueError(f"La columna de subgrupo '{args.subgrupo}' no existe en el CSV")
+        vacias = [i for i, r in enumerate(rows, 1) if str(r.get(args.subgrupo) or "").strip() == ""]
+        if vacias:
+            raise ValueError(f"La columna de subgrupo '{args.subgrupo}' está vacía en la(s) fila(s) "
+                             + ", ".join(map(str, vacias[:10])))
+        groups = categorias_de_columna(args.subgrupo, [r.get(args.subgrupo) for r in rows])
         out["subgrupos"] = m.subgroups(yi, vi, groups, method=method_re, ajuste=args.ajuste)
         sg = out["subgrupos"]
         for g, r in sg["subgrupos"].items():
             text.append(f"  subgrupo {g}: k={r['k']}, estimación {r['estimate']:.4f} [{r['ci_low']:.4f}; {r['ci_high']:.4f}]")
+            text += [f"  AVISO (subgrupo {g}): {a}" for a in r.get("avisos") or []]
         if sg.get("Q_entre") is not None:
             text.append(f"  Q entre subgrupos = {sg['Q_entre']:.3f} (gl {sg['gl']}), p = {sg['p']:.3g}. {sg['nota']}")
-    if args.moderador:
+    reg = None
+    if no_estimable is not None:
+        out["meta_regresion"] = {"error": no_estimable}
+        text.append(f"Meta-regresión no estimable: {no_estimable}")
+    elif codificados is not None:
         from .stats.metareg import meta_regression
+        mods, names, desc = codificados
         try:
-            mods = [[_num(r, c, f"fila {i}") for c in args.moderador] for i, r in enumerate(rows, 1)]
-            if any(v is None for row in mods for v in row):
-                raise ValueError("hay moderadores vacíos")
-            reg = meta_regression(yi, vi, mods, args.moderador, method=method_re, ajuste=args.ajuste)
-            out["meta_regresion"] = reg.to_dict()
+            reg = meta_regression(yi, vi, mods, names, method=method_re, ajuste=args.ajuste)
+            out["meta_regresion"] = {**reg.to_dict(), "moderadores": desc}
+            for col, d in desc.items():
+                if d["tipo"] == "categorico":
+                    text.append(f"Moderador categórico {col}: categoría de referencia '{d['referencia']}' "
+                                f"(codificación ficticia: cada coeficiente {col}[x] es la diferencia frente a la "
+                                f"referencia); categorías: {', '.join(d['categorias'])}")
             text.append(reg.summary())
         except ValueError as exc:
             out["meta_regresion"] = {"error": str(exc)}
             text.append(f"Meta-regresión no estimable: {exc}")
-    log_event(cfg, "metaanalisis", inputs={"csv": args.csv, "medida": args.medida, "metodo": args.metodo,
-                                           "ajuste": args.ajuste, "moderadores": args.moderador,
-                                           "subgrupo": args.subgrupo, "agregar_estudio": args.agregar_estudio},
-              outputs={"estimacion": res.estimate, "ic": [res.ci_low, res.ci_high], "tau2": res.tau2, "k": res.k},
-              actor=args.agente)
+    # Todo lo que el texto muestra como AVISO (diseño, dependencia, HKSJ con q < 1 en el modelo, uno fuera,
+    # subgrupos y meta-regresión) también va en el JSON y en la procedencia.
+    out["avisos"] = [linea.strip() for linea in "\n".join(text).splitlines() if linea.strip().startswith("AVISO")]
+    salidas = {"k": res.k, "modelo": res.model, "prueba": res.test, "estimacion": res.estimate, "ee": res.se,
+               "ic": [res.ci_low, res.ci_high], "p": res.p_value, "tau2": res.tau2, "I2": res.I2, "Q": res.Q,
+               "ip": [res.pi_low, res.pi_high], "ip_gl": res.pi_df, "hksj_q": res.hksj_q,
+               "ic_wald": [res.ci_wald_low, res.ci_wald_high], "avisos": out["avisos"], **info_disenos}
+    if reg is not None:
+        salidas["meta_regresion"] = {"coeficientes": dict(zip(reg.names, reg.coef)), "p": dict(zip(reg.names, reg.p_values)),
+                                     "tau2": reg.tau2, "prueba": reg.test, "moderadores": codificados[2]}
+    elif args.moderador:
+        salidas["meta_regresion"] = {"error": out.get("meta_regresion", {}).get("error")}
+    if args.subgrupo:
+        salidas["subgrupos"] = {g: r["estimate"] for g, r in out["subgrupos"]["subgrupos"].items()}
+    salidas["ajuste_aplicado"] = res.ajuste
+    log_event(cfg, "metaanalisis", inputs={**entrada, "medida": args.medida, "metodo": args.metodo,
+                                           "ajuste": args.ajuste, "nivel": res.level,
+                                           "agregar_estudio": args.agregar_estudio, "rho": args.rho,
+                                           "rho_intrasujeto": rho_intra, "moderadores": args.moderador,
+                                           "referencias": referencias, "subgrupo": args.subgrupo},
+              outputs=salidas, actor=args.agente)
     _emit(args, out, "\n".join(text))
     return 0
 
 
-def _export_r(args, rows, yi, vi, labels, comps) -> int:
-    data_path = Path(args.salida).with_suffix(".csv")
-    extra = [k for k in rows[0].keys() if k not in ("yi", "vi", "estudio", "comparacion")]
-    with open(data_path, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["estudio", "comparacion", "yi", "vi", *extra])
-        for r, y, v, lab, comp in zip(rows, yi, vi, labels, comps):
-            writer.writerow([lab, comp, repr(float(y)), repr(float(v)), *[r.get(k, "") for k in extra]])
-    script = f"""# Script generado por nutria {__version__}. Revísalo antes de usarlo.
-# Los tamaños de efecto (yi, vi) ya vienen calculados por nutria, incluida la conversión del SEM o SED a DE.
+def _script_r(data_name: str, medida: str, metodo: str, ajuste: str) -> str:
+    """Script de metafor que reproduce exactamente la inferencia de `nutria meta analizar` con los mismos
+    parámetros (estimación, EE, IC, p e intervalo de predicción de Higgins et al. 2009).
+
+    El modelo de metafor (rma) solo aporta tau² (mismo estimador que nutria); la estimación, el EE, el IC, la
+    p y el intervalo de predicción se calculan después con las mismas fórmulas que nutria.stats.meta, para
+    que no dependan de las convenciones de cada versión de metafor (p. ej. predict() o el HKSJ modificado)."""
+    if metodo == "FE":
+        modelo = 'res <- rma(yi, vi, data = dat, method = "FE")'
+        inferencia = ("se <- sqrt(1 / sum(w)); crit <- qnorm(1 - (1 - nivel) / 2)\n"
+                      "p <- 2 * pnorm(abs(mu / se), lower.tail = FALSE); q <- NA")
+        ajuste_txt = "efecto fijo (prueba z)"
+    else:
+        test = "z" if ajuste == "ninguno" else "knha"
+        modelo = f'res <- rma(yi, vi, data = dat, method = "{metodo}", test = "{test}")'
+        if ajuste == "ninguno":
+            inferencia = ("se <- sqrt(1 / sum(w)); crit <- qnorm(1 - (1 - nivel) / 2)\n"
+                          "p <- 2 * pnorm(abs(mu / se), lower.tail = FALSE); q <- NA")
+            ajuste_txt = "ninguno (prueba z de Wald)"
+        else:
+            factor = "max(1, q)" if ajuste == "hksj-mod" else f"if (q < {_Q_ZERO_R}) 1 else q"
+            ajuste_txt = ("HKSJ modificado, max(1, q)" if ajuste == "hksj-mod"
+                          else "HKSJ estándar (con q = 0 se usa max(1, q))")
+            inferencia = (f"if (k > 1) {{\n"
+                          f"  q <- sum(w * (dat$yi - mu)^2) / (k - 1)\n"
+                          f"  se <- sqrt(({factor}) / sum(w)); crit <- qt(1 - (1 - nivel) / 2, df = k - 1)\n"
+                          f"  p <- 2 * pt(abs(mu / se), df = k - 1, lower.tail = FALSE)\n"
+                          f"}} else {{\n"
+                          f"  q <- NA; se <- sqrt(1 / sum(w)); crit <- qnorm(1 - (1 - nivel) / 2)\n"
+                          f"  p <- 2 * pnorm(abs(mu / se), lower.tail = FALSE)\n"
+                          f"}}")
+    ip = ("" if metodo == "FE" else
+          "# 3) Intervalo de predicción de nutria: t con k - 2 gl y EE de Wald, sqrt(1 / sum(w)), con el mismo tau²\n"
+          "#    (Higgins, Thompson y Spiegelhalter 2009), sea cual sea el ajuste del IC. No uses predict(res) para\n"
+          "#    compararlo: según la prueba del modelo, metafor usa otros gl (k - 1) u otro EE (el del ajuste) o z.\n"
+          "if (k >= 3) {\n"
+          "  ip <- mu + c(-1, 1) * qt(1 - (1 - nivel) / 2, df = k - 2) * sqrt(tau2 + 1 / sum(w))\n"
+          "  cat(sprintf(\"nutria: intervalo de prediccion [%.4f; %.4f] (gl = %d)\\n\", ip[1], ip[2], k - 2))\n"
+          "}\n")
+    return f"""# Script generado por nutria {__version__}. Revísalo antes de usarlo y ejecútalo desde su carpeta.
+# Reproduce `nutria meta analizar <csv> --medida {medida} --metodo {metodo} --ajuste {ajuste}` (sin --agregar-estudio):
+# medida {medida}; método {metodo}; ajuste {ajuste_txt}; nivel 95 %.
+# Los tamaños de efecto (yi, vi) ya vienen calculados por nutria, incluida la conversión del SEM o SED a DE y las
+# fórmulas de grupos emparejados de los diseños cruzados.
 # Requiere: install.packages(c("metafor", "clubSandwich"))
 library(metafor)
-dat <- read.csv("{data_path.name}")
-# 1) Efectos aleatorios con ajuste de Knapp-Hartung
-res <- rma(yi, vi, data = dat, method = "REML", test = "knha")
-print(res); print(predict(res))
-# 2) Dependencia: varias comparaciones por estudio (control compartido o varias variables)
+dat <- read.csv("{data_name}")
+nivel <- 0.95
+# 1) Modelo de metafor: aporta tau² (mismo estimador que nutria). print(res) muestra además la inferencia propia
+#    de metafor, que puede diferir de la de nutria (p. ej. Knapp-Hartung sin max(1, q)): compara las líneas "nutria:".
+{modelo}
+print(res)
+# 2) Inferencia de nutria, calculada explícitamente con el tau² del modelo: debe coincidir con `nutria meta analizar`
+k <- res$k; tau2 <- if (is.null(res$tau2)) 0 else res$tau2
+w <- 1 / (dat$vi + tau2); mu <- sum(w * dat$yi) / sum(w)
+{inferencia}
+cat(sprintf("nutria: estimacion %.4f; EE %.4f; IC [%.4f; %.4f]; p = %.4g; q = %.4g\\n",
+            mu, se, mu - crit * se, mu + crit * se, p, q))
+{ip}# 4) Dependencia: varias comparaciones por estudio (control compartido o varias variables)
 if (any(duplicated(dat$estudio))) {{
   res_ml <- rma.mv(yi, vi, random = ~ 1 | estudio/comparacion, data = dat, method = "REML", test = "t")
   print(res_ml)
   print(robust(res_ml, cluster = dat$estudio, clubSandwich = TRUE))
 }}
-# 3) Sensibilidad; sesgo de publicación solo con k >= 10
+# 5) Diseño como moderador (crossover y cuadrado latino frente a paralelo), si hay varios diseños, con la misma
+#    categoría de referencia que nutria (paralelo) y la prueba de Knapp-Hartung de metafor (sin max(1, s²)).
+#    Como en nutria, no se ajusta si alguna fila no declara el diseño.
+if ("diseno" %in% names(dat)) {{
+  d <- as.character(dat$diseno)
+  if (all(!is.na(d) & d != "") && length(unique(d)) > 1) {{
+    dat$diseno_f <- factor(d)
+    if ("paralelo" %in% levels(dat$diseno_f)) dat$diseno_f <- relevel(dat$diseno_f, ref = "paralelo")
+    print(rma(yi, vi, mods = ~ diseno_f, data = dat, method = "REML", test = "knha"))
+  }}
+}}
+# 6) Sensibilidad (uno fuera con la prueba de metafor); sesgo de publicación solo con k >= 10
 print(leave1out(res))
 if (res$k >= 10) {{ print(regtest(res)); funnel(res) }}
 """
-    Path(args.salida).write_text(script, "utf-8")
-    _emit(args, {"datos": str(data_path), "script": args.salida},
-          f"Datos con yi/vi en {data_path} y script de R (metafor) en {args.salida}")
+
+
+# Umbral de q nulo del HKSJ en el script de R (el mismo que nutria.stats.meta._Q_ZERO_TOL).
+_Q_ZERO_R = "1e-10"
+
+
+def _export_r(args, rows, yi, vi, labels, comps, cfg=None, entrada: dict | None = None,
+              mensajes: list | None = None) -> int:
+    script_path = Path(args.salida)
+    data_path = script_path.with_suffix(".csv")
+    if data_path.resolve() == script_path.resolve():
+        raise ValueError("--salida debe ser el script de R (p. ej. metaanalisis.R), no un .csv: los datos se "
+                         "guardan junto a él con extensión .csv")
+    from .stats import effect_sizes as es
+    extra = [k for k in rows[0].keys() if k not in ("yi", "vi", "estudio", "comparacion")]
+    # diseno y unidad_experimental se exportan normalizados (las mismas categorías que usó nutria).
+    normalizar = {"diseno": es.normalize_design, "unidad_experimental": es.normalize_unit}
+    with open(data_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["estudio", "comparacion", "yi", "vi", *extra])
+        for r, y, v, lab, comp in zip(rows, yi, vi, labels, comps):
+            valores = [(normalizar[k](r.get(k)) or "") if k in normalizar else r.get(k, "") for k in extra]
+            writer.writerow([lab, comp, repr(float(y)), repr(float(v)), *valores])
+    script_path.write_text(_script_r(data_path.name, args.medida, args.metodo, args.ajuste), "utf-8")
+    if cfg is not None:
+        log_event(cfg, "meta_exportar_r", inputs={**(entrada or {}), "medida": args.medida, "metodo": args.metodo,
+                                                  "ajuste": args.ajuste, "rho_intrasujeto": args.rho_intrasujeto,
+                                                  "salida": args.salida},
+                  outputs={"k": len(yi), "datos": str(data_path), "sha256_datos": sha256_file(data_path),
+                           "script": str(script_path), "sha256_script": sha256_file(script_path)},
+                  actor=args.agente)
+    mensajes = mensajes or []
+    _emit(args, {"datos": str(data_path), "script": args.salida, "medida": args.medida, "metodo": args.metodo,
+                 "ajuste": args.ajuste, "avisos_diseno": [t for nivel, t in mensajes if nivel == "aviso"],
+                 "notas_diseno": [t for nivel, t in mensajes if nivel == "nota"]},
+          "\n".join(_texto_mensajes(mensajes)
+                    + [f"Datos con yi/vi en {data_path} y script de R (metafor) en {args.salida} (medida {args.medida}, "
+                       f"método {args.metodo}, ajuste {args.ajuste}; el script imprime la misma estimación, IC, p e "
+                       "intervalo de predicción que `nutria meta analizar`)"]))
     return 0
 
 
 def cmd_potencia(args, cfg) -> int:
     from .stats import power
     if args.accion == "medias":
-        if args.diseno == "paralelo":
-            res = power.n_parallel(args.delta, args.de, args.alfa, args.potencia)
-            if args.m and args.icc is not None:
-                de = power.design_effect(args.m, args.icc)
-                res["efecto_diseno"] = de
-                res["nota"] = (f"Si el corral es la unidad experimental y la DE es entre animales, multiplica por "
-                               f"{de:.2f} o, mejor, usa la DE entre corrales.")
-        else:
-            res = power.n_crossover(args.delta, args.de, args.alfa, args.potencia)
+        res = power.n_means(args.diseno, args.delta, sd=args.de, sd_within=args.de_intra, rho=args.rho_intrasujeto,
+                            animals_per_pen=args.m, icc=args.icc, treatments=args.tratamientos, alpha=args.alfa,
+                            power=args.potencia)
+        text = power.describe(res, args.delta, args.alfa, args.potencia)
     else:
-        res = power.n_proportions(args.p1, args.p2, args.alfa, args.potencia)
-    _emit(args, res)
+        res = power.n_proportions(args.p1, args.p2, args.alfa, args.potencia, animals_per_pen=args.m, icc=args.icc)
+        if res["unidad_experimental"] == "corral":
+            text = (f"Unidad experimental: corral ({res['animales_por_unidad']} animales, ICC {res['icc']:g}, efecto de "
+                    f"diseño {res['efecto_diseno']:.2f}). Corrales: {res['n_unidades_por_grupo']} por grupo "
+                    f"({res['n_unidades_total']} en total). Animales: {res['n_animales_por_grupo']} por grupo "
+                    f"({res['n_animales_total']} en total).\nNota: {res['nota']}")
+        else:
+            text = (f"Unidad experimental: animal. Animales: {res['n_por_grupo']} por grupo ({res['n_total']} en total)."
+                    f"\nNota: {res['nota']}")
+    _emit(args, res, text)
     return 0
 
 
@@ -2230,23 +2556,43 @@ def build_parser() -> argparse.ArgumentParser:
         x.add_argument("--decimal", default=".", help="separador decimal del CSV (',' admitido, sin separador de miles)")
         if name in ("analizar", "exportar-r"):
             x.add_argument("--medida", choices=["MD", "SMD", "ROM", "RR", "OR", "RD"], default="MD")
-        if name == "analizar":
             x.add_argument("--metodo", choices=["REML", "DL", "PM", "FE"], default="REML")
-            x.add_argument("--ajuste", choices=["hksj", "hksj-mod", "ninguno"], default="hksj",
-                           help="Hartung-Knapp-Sidik-Jonkman (por defecto), su variante max(1,q) o Wald")
+            x.add_argument("--ajuste", choices=["hksj", "hksj-mod", "ninguno"], default="hksj-mod",
+                           help="hksj-mod (por defecto): Hartung-Knapp-Sidik-Jonkman modificado, max(1, q), que nunca "
+                                "da un IC más estrecho que Wald y coincide con el estándar si q >= 1; hksj: el "
+                                "estándar (con q < 1 avisa y da también la p y el IC modificados); ninguno: Wald")
+            x.add_argument("--rho-intrasujeto", dest="rho_intrasujeto", type=float,
+                           help="correlación intrasujeto r en [0, 1) para las filas de diseño cruzado (crossover o "
+                                "cuadrado latino) sin columna rho_intrasujeto; la SMD de esos diseños la exige")
+        if name == "analizar":
             x.add_argument("--agregar-estudio", dest="agregar_estudio", action="store_true",
                            help="agrega las comparaciones dependientes de cada estudio")
             x.add_argument("--rho", type=float, default=0.5, help="correlación supuesta entre comparaciones")
-            x.add_argument("--moderador", nargs="*", help="columnas numéricas para meta-regresión")
-            x.add_argument("--subgrupo", help="columna para análisis por subgrupos")
+            x.add_argument("--moderador", nargs="*",
+                           help="columnas para meta-regresión: numéricas o categóricas (p. ej. diseno, "
+                                "unidad_experimental), estas con codificación ficticia frente a una referencia")
+            x.add_argument("--referencia", nargs="*", default=[], metavar="COLUMNA=CATEGORIA",
+                           help="categoría de referencia de un moderador categórico (por defecto, paralelo en diseno, "
+                                "animal en unidad_experimental y, en las demás columnas, la primera en orden "
+                                "alfabético); también fuerza a tratar como categórica una columna numérica")
+            x.add_argument("--subgrupo", help="columna para análisis por subgrupos (p. ej. diseno)")
         if name == "stpierre":
             x.add_argument("--respuesta", required=True)
             x.add_argument("--dosis", required=True)
             x.add_argument("--estudio", required=True)
             x.add_argument("--covariable", nargs="*", default=[])
-            x.add_argument("--pendiente-aleatoria", dest="pendiente_aleatoria", action="store_true")
+            pendiente = x.add_mutually_exclusive_group()
+            pendiente.add_argument("--pendiente-aleatoria", dest="pendiente_aleatoria", action="store_true",
+                                   help="fuerza la pendiente aleatoria (por defecto se elige con la razón de "
+                                        "verosimilitudes si es estimable)")
+            pendiente.add_argument("--sin-pendiente-aleatoria", dest="sin_pendiente_aleatoria", action="store_true",
+                                   help="fuerza el intercepto aleatorio (avisa si los datos indican pendientes "
+                                        "heterogéneas)")
             x.add_argument("--sin-descomponer", dest="sin_descomponer", action="store_true",
                            help="no separa la pendiente intra y entre estudios")
+            x.add_argument("--ponderar-sem", dest="ponderar_sem", metavar="COLUMNA",
+                           help="pondera cada media por 1/SEM² (St-Pierre 2001) con el SEM de esa columna; "
+                                "por defecto no pondera")
         if name == "exportar-r":
             x.add_argument("--salida", default="metaanalisis.R")
         if name == "validar-predictivo":
@@ -2259,17 +2605,24 @@ def build_parser() -> argparse.ArgumentParser:
     pw = s.add_subparsers(dest="accion", required=True)
     x = pw.add_parser("medias", parents=[common])
     x.add_argument("--delta", type=float, required=True, help="diferencia mínima relevante")
-    x.add_argument("--de", type=float, required=True, help="DE (entre unidades experimentales o intraanimal)")
-    x.add_argument("--diseno", choices=["paralelo", "crossover"], default="paralelo")
+    x.add_argument("--de", type=float,
+                   help="DE entre animales (paralelo, también con corrales; en diseños cruzados, con --rho-intrasujeto)")
+    x.add_argument("--diseno", choices=["paralelo", "crossover", "cuadrado_latino"], default="paralelo")
     x.add_argument("--alfa", type=float, default=0.05)
     x.add_argument("--potencia", type=float, default=0.80)
-    x.add_argument("--m", type=int, help="animales por corral")
+    x.add_argument("--m", type=int, help="animales por corral (el corral es la unidad experimental; con --icc)")
     x.add_argument("--icc", type=float, help="correlación intraclase dentro del corral")
+    x.add_argument("--de-intra", dest="de_intra", type=float, help="DE intraanimal (residual) de un diseño cruzado")
+    x.add_argument("--rho-intrasujeto", dest="rho_intrasujeto", type=float,
+                   help="correlación intrasujeto, para obtener la DE intraanimal de --de en un diseño cruzado")
+    x.add_argument("--tratamientos", type=int, help="tratamientos (y periodos) del cuadrado latino")
     x = pw.add_parser("proporciones", parents=[common])
     x.add_argument("--p1", type=float, required=True)
     x.add_argument("--p2", type=float, required=True)
     x.add_argument("--alfa", type=float, default=0.05)
     x.add_argument("--potencia", type=float, default=0.80)
+    x.add_argument("--m", type=int, help="animales por corral o lote (el corral es la unidad experimental; con --icc)")
+    x.add_argument("--icc", type=float, help="correlación intraclase dentro del corral")
     s.set_defaults(func=cmd_potencia)
 
     s = sub.add_parser("econ", parents=[common], help="evaluación económica")
