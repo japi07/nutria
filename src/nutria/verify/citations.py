@@ -168,10 +168,36 @@ _BOUNDARY_RE = re.compile(
     r"|(?<=[,;])\s*(?:1[6-9]|20)\d{2}[a-z]?\s*(?=[,.;:])")         # , 2020,
 
 
+_MONTHS = frozenset({
+    "jan", "january", "feb", "february", "mar", "march", "apr", "april", "jun", "june", "jul", "july", "aug",
+    "august", "sep", "sept", "september", "oct", "october", "nov", "november", "dec", "december", "enero",
+    "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "setiembre", "octubre",
+    "noviembre", "diciembre", "ene", "abr", "ago", "dic", "spring", "summer", "autumn", "winter"})
+# Palabras de los prefijos de título ("Short communication:", "Invited review:"...): pueden ir antes del título.
+_TITLE_PREFIX_WORDS = frozenset({
+    "short", "communication", "technical", "note", "invited", "review", "symposium", "graduate", "student",
+    "literature", "mini", "minireview", "research", "original", "article", "brief", "report", "rapid", "letter",
+    "editor", "editorial", "retracted", "retraction", "withdrawn", "expression", "concern"})
+
+
 def _fold(text: str) -> str:
     text = unicodedata.normalize("NFC", text or "").lower()
     text = "".join(_FOLD.get(ch, ch) for ch in text)
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
+
+def _clean_meta(text) -> str:
+    """Metadato del registro (título, revista, autor) sin etiquetas JATS/MathML (CH<sub>4</sub> -> CH4) ni
+    entidades HTML (&amp;): Crossref las trae en subtítulos y títulos de revista."""
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", _TAG_RE.sub("", html.unescape(str(text)))).strip()
+
+
+def _name_norm(norm: str) -> str:
+    """Forma de comparación de un apellido: transliteraciones alemanas y nórdicas (Müller = Mueller,
+    Schröder = Schroeder). Se aplica a los dos lados de la comparación."""
+    return norm.replace("ae", "a").replace("oe", "o").replace("ue", "u")
 
 
 @dataclass
@@ -275,7 +301,7 @@ def _strip_edition(text: str) -> str:
 
 
 def _title_tokens(text: str | None) -> list[str]:
-    return [t.norm for t in _tokens_of(_strip_edition(text or "")) if _is_sig(t.norm)]
+    return [t.norm for t in _tokens_of(_strip_edition(_clean_meta(text))) if _is_sig(t.norm)]
 
 
 @dataclass
@@ -322,16 +348,20 @@ def _pair_compounds(missing: list[str], extra: list[str], real: list[str], cited
 
 
 _UK_US_WORDS = {"mould": "mold", "moulds": "molds", "mouldy": "moldy", "grey": "gray", "aluminium": "aluminum",
-                "plough": "plow", "programme": "program", "programmes": "programs", "tyre": "tire"}
+                "plough": "plow", "programme": "program", "programmes": "programs", "tyre": "tire",
+                "ageing": "aging", "yoghurt": "yogurt", "yoghurts": "yogurts", "draught": "draft"}
 _UK_US_SUFFIXES = (("isation", "ization"), ("ising", "izing"), ("ised", "ized"), ("ise", "ize"), ("ysing", "yzing"),
-                   ("ysed", "yzed"), ("yse", "yze"), ("ogue", "og"), ("ence", "ense"), ("tre", "ter"),
-                   ("our", "or"))
+                   ("ysed", "yzed"), ("yse", "yze"), ("ogue", "og"), ("ence", "ense"), ("chre", "cher"),
+                   ("tre", "ter"), ("bre", "ber"), ("gre", "ger"), ("vre", "ver"), ("our", "or"))
 
 
 def _us_spelling(word: str) -> str:
-    """Ortografía estadounidense de una palabra británica (ae/oe -> e, ph -> f, ll -> l, -ise -> -ize, -tre -> -ter,
-    -our -> -or...). Se aplica a las dos palabras comparadas, así que solo importa que coincidan."""
+    """Ortografía estadounidense de una palabra británica (ae/oe -> e, ph -> f, ll -> l, leuc- -> leuk-, -ise -> -ize,
+    -tre/-bre -> -ter/-ber: fibre = fiber, titre = titer; -our -> -or...). Se aplica a las dos palabras comparadas,
+    así que solo importa que coincidan."""
     w = word.replace("ae", "e").replace("oe", "e").replace("ph", "f").replace("ll", "l")
+    if w.startswith("leuc"):
+        w = "leuk" + w[4:]
     for uk, us in _UK_US_SUFFIXES:
         if w.endswith(uk):
             return w[:-len(uk)] + us
@@ -412,19 +442,20 @@ def _author_candidates(name: str | None, family: str | None = None, order: str |
         return [t.norm for t in tokens if len(t.norm) >= 2 and not _is_initial(t.raw)
                 and t.norm not in _PARTICLES and t.norm not in _STOPWORDS]
     if family:
-        found = pick(_tokens_of(family))
+        found = pick(_tokens_of(_clean_meta(family)))
         if found:
-            return set(found)
-    tokens = _tokens_of(name or "")
+            return {_name_norm(w) for w in found}
+    tokens = _tokens_of(_clean_meta(name))
     words = pick(tokens)
     if order == "given_family" and len(words) >= 2:
         words = words[1:]
-    return set(words) or {t.norm for t in tokens if len(t.norm) >= 2}
+    return {_name_norm(w) for w in words} or {_name_norm(t.norm) for t in tokens if len(t.norm) >= 2}
 
 
 def _all_author_words(authors) -> set[str]:
     """Todas las palabras de los nombres del registro (apellidos y nombres de pila): no son texto ajeno a la cita."""
-    return {t.norm for name in authors or [] for t in _tokens_of(name or "") if len(t.norm) >= 2}
+    return {_name_norm(t.norm) for name in authors or [] for t in _tokens_of(_clean_meta(name))
+            if len(t.norm) >= 2}
 
 
 def _acronym(name: str | None) -> str | None:
@@ -436,8 +467,8 @@ def _acronym(name: str | None) -> str | None:
 def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
     """Primer autor de la cita: palabras del principio hasta la primera coma, punto y coma, '&', paréntesis,
     cifra, conjunción ("and", "y", "et al."), palabra en minúscula (salvo partículas) o fin de frase. Tras una
-    inicial con punto ("Pérez J. D.", "J. D. Pérez") sigue solo si viene otra inicial o si aún no hay apellido:
-    "Smith J. Pérez J." no hace de Pérez el primer autor."""
+    inicial ("Pérez J D", "J. D. Pérez") sigue solo si viene otra inicial o si aún no hay apellido: ni
+    "Smith J. Pérez J." ni "Smith J Pérez J" hacen de Pérez el primer autor."""
     lead: list[_Tok] = []
     prev_end = 0
     for tok in toks:
@@ -445,11 +476,11 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
         if lead:
             if re.search(r"[,;&(\[:]", gap):
                 break
-            if re.search(r"[.?!]\s", gap + " "):
-                if not _is_initial(lead[-1].raw):
-                    break
-                if not _is_initial(tok.raw) and any(not _is_initial(t.raw) for t in lead):
-                    break
+            if re.search(r"[.?!]\s", gap + " ") and not _is_initial(lead[-1].raw):
+                break
+            if (_is_initial(lead[-1].raw) and not _is_initial(tok.raw)
+                    and any(not _is_initial(t.raw) for t in lead)):
+                break                 # apellido + iniciales + otro apellido: empieza el segundo autor
         if _has_digit(tok.norm) or tok.norm in _LEAD_CONJ:
             break
         if tok.raw[:1].islower() and tok.norm not in _PARTICLES:
@@ -467,12 +498,17 @@ _JOURNAL_STOP = frozenset({"of", "the", "and", "for", "in", "on", "de", "la", "l
                            "an", "a", "da", "do", "dos", "part", "section"})
 _JOURNAL_NOISE = frozenset({"internet", "online", "print", "electronic", "linea", "vol", "volume", "no", "pp",
                             "suppl", "issue"})
+# Palabras que cortan el tramo de la revista (identificadores, volumen, páginas, fechas de consulta).
 _JOURNAL_END = frozenset({"doi", "pmid", "pmcid", "http", "https", "www", "epub", "vol", "volume", "pp",
                           "pages", "page", "suppl", "issue", "available", "disponible", "accessed", "retrieved"})
 _JOURNAL_LEAD_NOISE = frozenset({"in", "en"})
-# Notas que pueden seguir al título y no son una revista ("Review.", "Erratum in: ...").
-_NOT_A_JOURNAL = frozenset({"review", "erratum", "corrigendum", "comment", "published", "abstract", "editorial",
-                            "letter", "retracted", "retraction", "preprint", "spanish", "english"})
+# Notas que pueden ir entre el título y la revista y no son una revista ("Review.", "In press.", "Spanish.").
+_NOT_A_JOURNAL = frozenset({
+    "review", "erratum", "corrigendum", "comment", "published", "abstract", "editorial", "letter", "retracted",
+    "retraction", "preprint", "press", "accepted", "manuscript", "corrected", "proof", "first", "early", "view",
+    "advance", "access", "ahead", "of", "spanish", "english", "french", "german", "portuguese", "italian",
+    "chinese", "japanese", "russian", "polish", "dutch", "turkish", "korean", "czech", "espanol", "ingles",
+    "frances", "aleman", "portugues", "italiano", "chino", "japones"})
 _NON_JOURNAL_TYPES = frozenset({
     "bookchapter", "book", "monograph", "editedbook", "referencebook", "referenceentry", "bookpart", "booksection",
     "bookset", "bookseries", "proceedingsarticle", "proceedings", "conferencepaper", "conferenceproceeding",
@@ -541,6 +577,7 @@ def journal_matches(cited: str | None, full: str | None) -> bool:
 def _journal_variants(journals) -> list[str]:
     out: list[str] = []
     for name in journals or []:
+        name = _clean_meta(name)
         if not name:
             continue
         for variant in (name, name.split(":")[0], re.split(r"\s[-–—]\s", name)[0]):
@@ -562,6 +599,7 @@ class CitationCheck:
     title_missing: list[str] = field(default_factory=list)
     title_extra: list[str] = field(default_factory=list)
     title_in_citation: str | None = None
+    text_before_title: list[str] = field(default_factory=list)   # palabras ajenas entre autores/año y título
     year_in_citation: int | None = None
     author_in_citation: str | None = None
     author_ok: bool | None = None
@@ -586,7 +624,7 @@ def _trim_span(span: list[_Tok], real: set[str], authors: set[str], journals: li
     toks = list(span)
     if lead:
         while toks and toks[0].norm not in real and (
-                toks[0].norm in authors or _is_initial(toks[0].raw) or not _is_sig(toks[0].norm)
+                _name_norm(toks[0].norm) in authors or _is_initial(toks[0].raw) or not _is_sig(toks[0].norm)
                 or toks[0].norm in _NOISE):
             toks.pop(0)
     if tail:
@@ -604,8 +642,7 @@ def _trim_span(span: list[_Tok], real: set[str], authors: set[str], journals: li
 def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors: set[str],
                 journals: list[str]):
     """Tramo de la cita (frases consecutivas) que mejor coincide con alguna variante del título real.
-    Devuelve (comparación, primera palabra, última palabra, parecido del mejor tramo ajeno a ese) o None. El
-    último valor sirve para detectar una cita con dos títulos parecidos al real (uno de ellos, añadido)."""
+    Devuelve (comparación, primera palabra, última palabra) o None."""
     segs = sorted({t.seg for t in toks})
     spans = []
     for a in range(len(segs)):
@@ -615,12 +652,10 @@ def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors:
             if not sig:
                 continue
             quick = max(2 * len(set(v) & sig) / (len(set(v)) + len(sig)) for v in variants)
-            spans.append((quick, a, b, span))
+            spans.append((quick, span))
     if not spans:
         return None
-    best = max(spans, key=lambda item: (item[0], -len(item[3])))
-    _, first_seg, last_seg, span = best
-    other = max((q for q, a, b, _ in spans if b < first_seg or a > last_seg), default=0.0)
+    span = max(spans, key=lambda item: (item[0], -len(item[1])))[1]
     real_all = {w for v in variants for w in v}
     chosen = None
     for lead in (False, True):
@@ -638,7 +673,14 @@ def _best_title(text: str, toks: list[_Tok], variants: list[list[str]], authors:
                         chosen = (key, cmp, cut)
     if chosen is None:
         return None
-    return chosen[1], chosen[2][0], chosen[2][-1], other
+    return chosen[1], chosen[2][0], chosen[2][-1]
+
+
+def _authorish(tok: _Tok, author_words: set[str], acronyms: set[str]) -> bool:
+    """¿Puede ser parte de la lista de autores? Nombre del registro, inicial, partícula, sigla, "et al", "and"."""
+    word = tok.norm
+    return (_is_initial(tok.raw) or len(word) < 2 or word in _PARTICLES or word in _NOISE or word in _STOPWORDS
+            or word in _LEAD_CONJ or _name_norm(word) in author_words or word in acronyms)
 
 
 def _free_words(toks: list[_Tok], authors: set[str], journal_words: set[str]) -> set[str]:
@@ -647,7 +689,8 @@ def _free_words(toks: list[_Tok], authors: set[str], journal_words: set[str]) ->
     out = set()
     for tok in toks:
         word = tok.norm
-        if not _is_sig(word) or word in _NOISE or word in authors or _is_initial(tok.raw) or _has_digit(word):
+        if not _is_sig(word) or word in _NOISE or _name_norm(word) in authors or _is_initial(tok.raw) \
+                or _has_digit(word) or word in _MONTHS:
             continue
         if word in journal_words or any(_abbreviates(word, w) for w in journal_words):
             continue
@@ -655,38 +698,126 @@ def _free_words(toks: list[_Tok], authors: set[str], journal_words: set[str]) ->
     return out
 
 
-def _journal_candidate(text: str, toks: list[_Tok], start: int) -> list[_Tok]:
-    """Palabras que siguen al título (o al año) hasta el volumen, las páginas o un paréntesis. Se salta un año
-    inicial ("Título. 2020. Revista 14:1-10")."""
-    cand: list[_Tok] = []
+_YEAR_TOKEN_RE = re.compile(r"(?:1[6-9]\d{2}|20\d{2})[a-z]?")
+# Palabras de autores colectivos que el registro puede no listar ("on behalf of the XYZ Study Group").
+_GROUP_WORDS = frozenset({"behalf", "group", "groups", "study", "consortium", "investigators", "collaborators",
+                          "collaboration", "team", "network", "committee", "working", "panel", "members"})
+
+
+def _text_before_title(toks: list[_Tok], title_start: int, author_words: set[str], acronyms: set[str],
+                       has_authors: bool) -> list[str]:
+    """Palabras ajenas antes del título: un título inventado delante del real ("Autor. 2020. Título falso.
+    Título real. Revista"). Entre el año y el título no puede haber texto (basta con dos palabras); en la lista de
+    autores se admiten nombres que el registro escribe de otra forma (uno suelto entre iniciales), pero no dos o
+    más palabras seguidas que no sean autores del registro. Sin autores en el registro solo se mira tras el año."""
+    pre = [t for t in toks if t.end <= title_start]
+
+    def explained(tok: _Tok) -> bool:
+        return (_authorish(tok, author_words, acronyms) or _has_digit(tok.norm) or tok.norm in _MONTHS
+                or tok.norm in _TITLE_PREFIX_WORDS or tok.norm in _GROUP_WORDS)
+
+    flagged: list[str] = []
+    years = [i for i, t in enumerate(pre) if _YEAR_TOKEN_RE.fullmatch(t.raw.lower())]
+    block = pre
+    if years:
+        after = [t.raw for t in pre[years[-1] + 1:] if not explained(t)]
+        if len(after) >= 2:
+            flagged += after
+        block = pre[:years[-1]]
+    if has_authors:
+        run: list[str] = []
+        for tok in block + [None]:
+            if tok is not None and tok.norm in _STOPWORDS and not _is_initial(tok.raw):
+                continue              # "of", "in", "and" no cortan ni cuentan
+            if tok is None or explained(tok):
+                if len(run) >= 2:
+                    flagged += run
+                run = []
+            else:
+                run.append(tok.raw)
+    return list(dict.fromkeys(flagged))
+
+
+def _runs_after(text: str, toks: list[_Tok], start: int) -> list[list[_Tok]]:
+    """Tramos de palabras desde `start`, cortados por cifras (volumen, páginas, año), identificadores, '(', '[' y
+    ';'. El primero con contenido debe ser la revista."""
+    runs: list[list[_Tok]] = []
+    cur: list[_Tok] = []
     prev_end = start
-    skipped_year = False
     for tok in toks:
         if tok.start < start:
             continue
-        gap = text[prev_end:tok.start]
-        if cand and re.search(r"[(\[;]", gap):
-            break
-        if not cand and not skipped_year and YEAR_RE.fullmatch(tok.raw):
-            skipped_year, prev_end = True, tok.end
-            continue
-        if _has_digit(tok.norm) or tok.norm in _JOURNAL_END or (not cand and tok.norm in _NOT_A_JOURNAL):
-            break
+        if cur and re.search(r"[(\[;]", text[prev_end:tok.start]):
+            runs.append(cur)
+            cur = []
         prev_end = tok.end
-        if not cand and tok.norm in _JOURNAL_LEAD_NOISE:
+        if _has_digit(tok.norm) or tok.norm in _JOURNAL_END:
+            if cur:
+                runs.append(cur)
+            cur = []
             continue
-        cand.append(tok)
-        if len(cand) >= 14:
-            break
-    return cand
+        cur.append(tok)
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def _prefixes(text: str, run: list[_Tok]) -> list[list[_Tok]]:
+    """Prefijos del tramo que acaban en coma, dos puntos o fin de frase ("Journal of Dairy Science. Elsevier")."""
+    return [run[:k] for k in range(1, len(run) + 1)
+            if k == len(run) or re.search(r"[,:]|[.?!]\s", text[run[k - 1].end:run[k].start] + " ")]
+
+
+def _journal_like(run: list[_Tok]) -> bool:
+    return any(_is_sig(t.norm) and t.norm not in _NOT_A_JOURNAL and t.norm not in _NOISE
+               and t.norm not in _MONTHS and t.norm not in _JOURNAL_LEAD_NOISE for t in run)
+
+
+def _run_matches(text: str, run: list[_Tok], journal_names: list[str]) -> bool:
+    for prefix in _prefixes(text, run):
+        cited = " ".join(t.raw for t in prefix)
+        if any(journal_matches(cited, name) for name in journal_names):
+            return True
+    return False
+
+
+def _check_journal(text: str, toks: list[_Tok], start: int, journal_names: list[str],
+                   skip_authors: tuple[set[str], set[str]] | None = None) -> tuple[bool | None, str | None]:
+    """Compara con la revista del registro el primer tramo con contenido que sigue a `start` (tras el título, o
+    tras los autores si la cita no trae título). No vale poner antes la revista verdadera en otro sitio: lo que
+    ocupa el lugar de la revista ("Animal 14:1-10", "Comment. Animal", "103:1-10. Animal") es lo que se compara.
+    Con `skip_authors` (cita sin título) se admite que el tramo empiece por nombres de autor o iniciales."""
+    for run in _runs_after(text, toks, start):
+        if skip_authors is not None and all(_authorish(t, *skip_authors) for t in run):
+            continue
+        if not _journal_like(run):
+            continue
+        starts = [0]
+        lead = 0
+        while lead < len(run) and (run[lead].norm in _NOT_A_JOURNAL or run[lead].norm in _JOURNAL_LEAD_NOISE
+                                   or run[lead].norm in _MONTHS or run[lead].norm in _NOISE):
+            lead += 1
+            starts.append(lead)
+        if skip_authors is not None:
+            k = 0
+            while k < len(run) - 1 and _authorish(run[k], *skip_authors):
+                k += 1
+                starts.append(k)
+        cited = " ".join(t.raw for t in run)
+        for s in dict.fromkeys(starts):
+            if s < len(run) and _run_matches(text, run[s:], journal_names):
+                return True, " ".join(t.raw for t in run[s:])
+        return False, cited
+    return None, None
 
 
 def compare_citation(citation_text: str | None, *, titles=(), authors=(), families=None, journals=(),
-                     pub_types=()) -> CitationCheck:
+                     pub_types=(), author_order: str | None = None) -> CitationCheck:
     """Compara el texto de una cita con los metadatos del trabajo que identifica su DOI/PMID.
 
     `titles`: título real y variantes (con subtítulo, de otra fuente); `authors` y `families`: autores en el
-    orden del registro y, si se conocen, sus apellidos; `journals`: nombres de la revista (completo y abreviado).
+    orden del registro y, si se conocen, sus apellidos; `author_order="given_family"` si los nombres vienen como
+    "Nombre Apellido" sin apellido aparte (OpenAlex); `journals`: nombres de la revista (completo y abreviado).
     """
     check = CitationCheck()
     text = _clean_citation(citation_text)
@@ -695,19 +826,22 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
         return check
     _assign_segments(text, toks)
     families = list(families or [])
-    authors = [a for a in (authors or []) if a]
-    author_words: set[str] = set()
+    authors = [a for a in (_clean_meta(x) for x in authors or []) if a]
     first_words: set[str] = set()
+    acronyms: set[str] = set()
     for i, name in enumerate(authors):
-        words = _author_candidates(name, families[i] if i < len(families) else None)
-        author_words |= words
         if i == 0:
-            first_words = words
+            first_words = _author_candidates(name, families[0] if families else None, author_order)
+        acronym = _acronym(name)
+        if acronym:
+            acronyms.add(acronym)
+    author_words = _all_author_words(authors) | {
+        w for i, f in enumerate(families) if f and i < len(authors) for w in _author_candidates(authors[i], f)}
     journal_names = _journal_variants(journals)
     journal_words = {w for j in journal_names for w in _journal_words(j, abbreviated=False)}
     variants: list[list[str]] = []
     for title in titles or []:
-        for form in (title, _strip_title_prefix(title or "")):
+        for form in (title, _strip_title_prefix(_clean_meta(title))):
             words = _title_tokens(form)
             if words and words not in variants:
                 variants.append(words)
@@ -718,15 +852,17 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
     if variants:
         found = _best_title(text, toks, variants, author_words, journal_names)
         if found is not None and found[0].score >= 0.5:
-            cmp, first, last, other = found
+            cmp, first, last = found
             region = (first.start, last.end)
             check.title_ok, check.title_score = cmp.ok, round(cmp.score, 3)
             check.title_missing, check.title_extra = cmp.missing, cmp.extra
             check.title_in_citation = text[first.start:last.end]
-            if other >= 0.5:
+            check.text_before_title = _text_before_title(toks, first.start, author_words, acronyms, bool(authors))
+            if check.text_before_title:
                 check.title_ok = False
-                check.notes.append("La cita trae otro texto parecido al título además del título: no se sabe qué "
-                                   "trabajo cita (¿un título añadido?).")
+                check.notes.append("La cita trae, antes del título, texto que no es de los autores del registro ni el "
+                                   f"año («{' '.join(check.text_before_title[:8])}»): no se sabe qué trabajo cita "
+                                   "(¿un título añadido?).")
         elif len(_free_words(toks, author_words, journal_words)) >= 2:
             check.title_ok, check.title_score = False, round(found[0].score, 3) if found else 0.0
             title_unlocated = True
@@ -741,8 +877,9 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
     lead = _lead_tokens(text, toks)
     if lead and authors:
         check.author_in_citation = " ".join(t.raw for t in lead)
-        names = {t.norm for t in lead if len(t.norm) >= 2 and not _is_initial(t.raw) and t.norm not in _PARTICLES}
-        names = names or {t.norm for t in lead}
+        names = {_name_norm(t.norm) for t in lead
+                 if len(t.norm) >= 2 and not _is_initial(t.raw) and t.norm not in _PARTICLES}
+        names = names or {_name_norm(t.norm) for t in lead}
         acronym = _acronym(authors[0])
         by_acronym = acronym is not None and any(
             t.norm == acronym and t.raw.isupper() and len(t.raw) >= 3 for t in lead)
@@ -751,28 +888,11 @@ def compare_citation(citation_text: str | None, *, titles=(), authors=(), famili
     # Revista (solo artículos de revista; un libro, un capítulo o un conjunto de datos no tienen)
     if journal_names and not _is_non_journal(pub_types) and not title_unlocated:
         if region is not None:
-            start = region[1]
-        else:
-            match = YEAR_RE.search(_year_text_for_start(text))
-            start = match.end() if match else None
-        if start is not None:
-            cand = _journal_candidate(text, toks, start)
-            if cand:
-                check.journal_in_citation = " ".join(t.raw for t in cand)
-                prefixes = [cand[:k] for k in range(1, len(cand) + 1)
-                            if k == len(cand) or cand[k].seg != cand[k - 1].seg]
-                check.journal_ok = any(journal_matches(" ".join(t.raw for t in prefix), name)
-                                       for prefix in prefixes for name in journal_names)
+            check.journal_ok, check.journal_in_citation = _check_journal(text, toks, region[1], journal_names)
+        elif lead:
+            check.journal_ok, check.journal_in_citation = _check_journal(
+                text, toks, lead[-1].end, journal_names, skip_authors=(author_words, acronyms))
     return check
-
-
-def _year_text_for_start(text: str) -> str:
-    """El texto con volumen, páginas y fechas de consulta tapados (mismas posiciones) para localizar el año."""
-    def blank(match: re.Match) -> str:
-        return " " * (match.end() - match.start())
-    for rx in (_ACCESS_RE, VOLUME_PAGES_RE, PAGES_RE):
-        text = rx.sub(blank, text)
-    return text
 
 
 # ============================================================================ verificación
@@ -827,9 +947,11 @@ def _add_message(result: Verification, text: str) -> None:
 def _apply_citation(result: Verification, rec: Record | None, citation_text: str | None,
                     titles=(), journals=()) -> Verification:
     if citation_text and result.status == "verificada" and rec is not None:
+        families = (rec.extra or {}).get("families")
+        order = "given_family" if rec.source == "openalex" and not families else None
         check = compare_citation(citation_text, titles=titles or [rec.title], authors=rec.authors,
-                                 families=(rec.extra or {}).get("families"),
-                                 journals=journals or [rec.journal], pub_types=rec.pub_types)
+                                 families=families, journals=journals or [rec.journal], pub_types=rec.pub_types,
+                                 author_order=order)
         result.title_ok, result.title_score = check.title_ok, check.title_score
         result.year_in_citation = check.year_in_citation
         result.author_in_citation, result.author_ok = check.author_in_citation, check.author_ok
@@ -841,6 +963,8 @@ def _apply_citation(result: Verification, rec: Record | None, citation_text: str
                 detail.append("faltan: " + ", ".join(check.title_missing[:6]))
             if check.title_extra:
                 detail.append("sobran: " + ", ".join(check.title_extra[:6]))
+            if check.text_before_title:
+                detail.append("texto ajeno antes del título: " + " ".join(check.text_before_title[:8]))
             reasons.append(f"título ({'; '.join(detail)})")
         if result.year_mismatch:
             reasons.append(f"año (cita {result.year_in_citation}, real {result.year})")
@@ -862,21 +986,22 @@ def _apply_citation(result: Verification, rec: Record | None, citation_text: str
     return result
 
 
-def _pubmed_by_doi(client, doi: str) -> tuple[bool | None, str | None]:
-    """(retractado según PubMed, PMID) del registro de PubMed con ese DOI; (None, None) si no se sabe."""
+def _pubmed_by_doi(client, doi: str) -> Record | None:
+    """Registro de PubMed con ese DOI (búsqueda `<doi>[doi]` y resumen), o None si no se sabe. Se descarta si
+    PubMed le asocia otro DOI: el PMID sería de otro trabajo."""
     finder = getattr(pubmed, "pmid_for_doi", None)
     if finder is None:
-        return None, None
+        return None
     try:
         pmid = finder(client, doi)
         if not pmid:
-            return None, None
+            return None
         records = pubmed.summaries(client, [pmid])
     except NetworkError:
-        return None, None
-    if not records:
-        return None, None
-    return records[0].retracted, str(pmid)
+        return None
+    if not records or (records[0].doi and records[0].doi != normalize_doi(doi)):
+        return None
+    return records[0]
 
 
 def _copy(rec: Record) -> Record:
@@ -916,6 +1041,12 @@ def _existence_fallback(client, doi: str, notes: list[str]) -> tuple[Record | No
         except NetworkError as exc:
             return None, Verification(doi, "doi", "error_red", registration_agency=agency, message=_redact(
                 f"El DOI existe (agencia DataCite), pero no se pudo consultar DataCite: {exc}", cfg))
+    # Un DOI de otra agencia (mEDRA, JaLC, OP...) puede estar en PubMed: sus metadatos sí son comparables.
+    record = _pubmed_by_doi(client, doi)
+    if record is not None:
+        record.extra = dict(record.extra or {}, registration_agency=agency)
+        notes.append(f"metadatos de PubMed (PMID {record.pmid}); agencia de registro: {agency or 'desconocida'}")
+        return record, None
     return None, Verification(doi, "doi", "existe_sin_metadatos", registration_agency=agency, message=(
         f"El DOI está registrado en doi.org (agencia: {agency or 'desconocida'}), pero ninguna fuente consultada da "
         f"metadatos comparables ({'; '.join(notes)}): no se puede comprobar que corresponda a la cita ni si está "
@@ -926,7 +1057,7 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
     cfg = getattr(client, "cfg", None)
     doi = clean_doi(doi)
     notes: list[str] = []
-    rec = oa_rec = None
+    rec = oa_rec = pm_rec = None
     try:
         rec = crossref.work(client, doi)
     except NotFoundError:
@@ -950,11 +1081,12 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
         rec, finished = _existence_fallback(client, doi, notes)
         if finished is not None:
             return finished
+        if rec.source == "pubmed":
+            pm_rec = rec
 
     checked = [rec.source] if rec.retracted is not None else []
     retracted = rec.retracted
-    pubmed_pmid = None
-    if retracted is not True and rec.source != "openalex":
+    if retracted is not True and rec.source not in ("openalex", "pubmed"):
         # Crossref y DataCite solo marcan la retractación en algunos registros: se confirma con otras fuentes.
         try:
             oa_rec = openalex.work_by_doi(client, doi)
@@ -963,26 +1095,29 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
         if oa_rec is not None and oa_rec.retracted is not None:
             checked.append("openalex")
             retracted = bool(oa_rec.retracted)
-    if retracted is not True:
-        value, pubmed_pmid = _pubmed_by_doi(client, doi)
-        if value is not None:
+    if retracted is not True and pm_rec is None:
+        pm_rec = _pubmed_by_doi(client, doi)
+        if pm_rec is not None and pm_rec.retracted is not None:
             checked.append("pubmed")
-            retracted = bool(value)
+            retracted = bool(pm_rec.retracted)
 
     # Registro verificado para el alta: metadatos de la fuente principal y, de las otras consultas por el mismo
     # DOI, el PMID (solo si no hay dos distintos), el PMCID, el identificador de OpenAlex y la licencia.
     full = _copy(rec)
-    pmids = {p for p in (rec.pmid, oa_rec.pmid if oa_rec else None, pubmed_pmid) if p}
-    full.pmid = pmids.pop() if len(pmids) == 1 else None
+    pmids = {p for p in (rec.pmid, oa_rec.pmid if oa_rec else None, pm_rec.pmid if pm_rec else None) if p}
+    full.pmid = next(iter(pmids)) if len(pmids) == 1 else None
     if len(pmids) > 1:
-        notes.append("las fuentes dan PMID distintos para este DOI: no se asocia ninguno")
-    if oa_rec is not None:
-        full.pmcid = full.pmcid or oa_rec.pmcid
-        full.openalex_id = full.openalex_id or oa_rec.openalex_id
+        notes.append(f"las fuentes dan PMID distintos para este DOI ({', '.join(sorted(pmids))}): no se asocia "
+                     "ninguno")
+    for other in (oa_rec, pm_rec):
+        if other is not None and other is not rec:
+            full.pmcid = full.pmcid or other.pmcid
+            full.openalex_id = full.openalex_id or other.openalex_id
     license_ = (rec.extra or {}).get("license") or ((oa_rec.extra or {}).get("license") if oa_rec else None)
     full.extra["license"] = license_
     full.retracted = retracted
-    agency = "Crossref" if rec.source == "crossref" else ("DataCite" if rec.source == "datacite" else None)
+    agency = {"crossref": "Crossref", "datacite": "DataCite"}.get(rec.source) or (rec.extra or {}).get(
+        "registration_agency")
     result = Verification(doi, "doi", "verificada", title=rec.title, year=rec.year, journal=rec.journal,
                           authors=rec.authors[:5], retracted=retracted, retraction_checked_via=checked,
                           source=rec.source, registration_agency=agency, license=license_, record=full)
@@ -990,12 +1125,15 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
     titles = [rec.title] + [f"{rec.title}: {s}" for s in extra.get("subtitles") or [] if rec.title]
     titles += list(extra.get("alternative_titles") or [])
     journals = [rec.journal] + list(extra.get("container_titles") or []) + list(extra.get("short_container_titles") or [])
-    if oa_rec is not None and oa_rec is not rec:
-        titles.append(oa_rec.title)
-        journals.append(oa_rec.journal)
-    if rec.source == "datacite" and notes:
-        _add_message(result, f"Metadatos de DataCite ({'; '.join(notes)}).")
-    return _apply_citation(result, full, citation_text, [t for t in titles if t], [j for j in journals if j])
+    for other in (oa_rec, pm_rec):
+        if other is not None and other is not rec:
+            titles.append(other.title)
+            journals.append(other.journal)
+    titles = list(dict.fromkeys(_clean_meta(t) for t in titles if t and _clean_meta(t)))
+    full.extra["title_variants"] = titles     # para comprobar fusiones de registros (`db.upsert_source`)
+    if notes:
+        _add_message(result, f"Metadatos de {rec.source} ({'; '.join(notes)}).")
+    return _apply_citation(result, full, citation_text, titles, [j for j in journals if j])
 
 
 def verify_pmid(client, pmid: str, citation_text: str | None = None) -> Verification:
@@ -1012,6 +1150,7 @@ def verify_pmid(client, pmid: str, citation_text: str | None = None) -> Verifica
     # PubMed marca las publicaciones retractadas con el tipo "Retracted Publication": False es información real.
     full = _copy(rec)
     full.retracted = bool(rec.retracted)
+    full.extra["title_variants"] = [rec.title] if rec.title else []
     result = Verification(pmid, "pmid", "verificada", title=rec.title, year=rec.year, journal=rec.journal,
                           authors=rec.authors[:5], retracted=bool(rec.retracted),
                           retraction_checked_via=["pubmed"], source="pubmed", record=full)
@@ -1019,7 +1158,8 @@ def verify_pmid(client, pmid: str, citation_text: str | None = None) -> Verifica
 
 
 def verify_entry(client, entry_text: str) -> list[Verification]:
-    """Verifica todos los identificadores de una entrada bibliográfica."""
+    """Verifica todos los identificadores de una entrada bibliográfica (también los repetidos o dos DOI distintos:
+    uno inventado junto a uno real no pasa por el real)."""
     ids = extract_identifiers(entry_text)
     results = [verify_doi(client, d, entry_text) for d in ids["doi"]]
     results += [verify_pmid(client, p, entry_text) for p in ids["pmid"]]
