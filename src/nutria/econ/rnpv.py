@@ -468,7 +468,8 @@ _COHERENCE_SIMS = 20000
 _COHERENCE_SEED = 20240501
 
 
-def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: float, range_tol: float = RANGE_TOL) -> dict:
+def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: float,
+             range_tol: float = RANGE_TOL) -> dict:
     scale = max(abs(farm_c), abs(proj_c), 1e-12)
     item = {"magnitud": name, "ganadero": farm_c, "empresa": proj_c,
             "ganadero_p05_p95": farm_q, "empresa_p05_p95": proj_q}
@@ -532,9 +533,9 @@ def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
             farm_dose_q = farm.dose_g_day_quantiles(model, (5, 95), _COHERENCE_SIMS, _COHERENCE_SEED)
             dose_item = _compare("dosis (g/animal/día)", dose["g_animal_dia"], m["dosis_g_dia"].central(stat),
                                  farm_dose_q, q(m["dosis_g_dia"]), rtol, RANGE_TOL_SIMULATED)
-            dose_item["detalle"] += (f" (la dosis del ganadero está en {model.dose_basis} y se convierte a g/animal/día "
-                                     "con sus ingestiones: el valor central con los valores centrales y el P5-P95 con "
-                                     f"{_COHERENCE_SIMS} simulaciones, con una tolerancia de "
+            dose_item["detalle"] += (f" (la dosis del ganadero está en {model.dose_basis} y se convierte a "
+                                     "g/animal/día con sus ingestiones: el valor central con los valores centrales y "
+                                     f"el P5-P95 con {_COHERENCE_SIMS} simulaciones, con una tolerancia de "
                                      f"{100 * max(rtol, RANGE_TOL_SIMULATED):g} %)")
         items.append(dose_item)
         items.append(_compare("días de uso por ciclo", farm_days.central(stat), m["dias_por_ciclo"].central(stat),
@@ -572,8 +573,8 @@ def _sources_lines(project: Project) -> list[str]:
         lines.append(f"AVISO: {len(missing)} entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o con valor "
                      "por defecto no neutro sin declarar: " + ", ".join(missing) + ". `--exigir-fuentes` las rechaza.")
     lines.append(sources_summary_line(sources_overview(project), "el rNPV"))
-    lines.append("El modelo no trae valores de referencia de coste ni de plazo de las fases (incluida la autorización): "
-                 "cada uno va con su fuente o como [SUP].")
+    lines.append("El modelo no trae valores de referencia de coste ni de plazo de las fases (incluida la "
+                 "autorización): cada uno va con su fuente o como [SUP].")
     return lines
 
 

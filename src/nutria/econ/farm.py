@@ -209,7 +209,8 @@ def _parse_ration(data: dict, declared: set[str]) -> Ration:
     if r.feed_intake is not None and r.carrier is None:
         raise ValueError("[racion].ingestion_pienso_kg_dia exige declarar el pienso portador ('portador' y 'base')")
     if r.dm_fraction is not None and r.carrier is None:
-        raise ValueError("[racion].ms_pienso exige declarar el pienso portador ('portador' y 'base'): sin él no se usaría")
+        raise ValueError("[racion].ms_pienso exige declarar el pienso portador ('portador' y 'base'): sin él no "
+                         "se usaría")
     if r.dm_fraction is not None and r.basis == "ms":
         raise ValueError("[racion].ms_pienso solo se usa con base = \"tal_cual\": en base MS no interviene; quítalo")
     if r.carrier == "racion_completa" and r.feed_intake is not None and r.dmi is not None and \
@@ -356,8 +357,8 @@ def _check_cost(where: str, coste: dict) -> None:
                          + ("falta precio_eur_kg" if has_dose else "falta la dosis (dosis_g_dia, dosis_mg_kg_ms o "
                                                                     "dosis_g_t)"))
     if not has_dose and not any(k in coste for k in ("otros_eur_dia", "fijo_eur_ciclo")):
-        raise ValueError(f"{where}: el modelo necesita un coste: la dosis y precio_eur_kg del producto, otros_eur_dia o "
-                         "fijo_eur_ciclo (sin coste, el ROI no tiene sentido)")
+        raise ValueError(f"{where}: el modelo necesita un coste: la dosis y precio_eur_kg del producto, "
+                         "otros_eur_dia o fijo_eur_ciclo (sin coste, el ROI no tiene sentido)")
 
 
 def load_farm_model(path: Path, central: str = "moda") -> FarmModel:
@@ -758,8 +759,8 @@ def _dose_lines(model: FarmModel, mc: dict, unit: str) -> list[str]:
 
 
 def _breakeven_lines(model: FarmModel, mc: dict) -> list[str]:
-    lines = [f"Respuesta umbral (valores centrales coherentes: coste, valor unitario y días con la {central_text(model)}"
-             "; cambia el estadístico con --valor-central):"]
+    lines = ["Respuesta umbral (valores centrales coherentes: coste, valor unitario y días con la "
+             f"{central_text(model)}; cambia el estadístico con --valor-central):"]
     for t in mc["respuestas_umbral"]:
         per = "unidades/animal/día" if t["por_dia"] else "unidades/animal/ciclo"
         if not math.isfinite(t["valor"]):

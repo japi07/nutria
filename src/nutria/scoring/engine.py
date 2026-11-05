@@ -180,8 +180,8 @@ def load_rubric(path: Path | None = None) -> Rubric:
     missing_gates = [g for g in MANDATORY_GATES if g not in {x.id for x in gates}]
     if missing_gates:
         raise ValueError(f"Rúbrica{' ' + str(path) if path and path.is_file() else ''}: faltan las compuertas "
-                         f"obligatorias {', '.join(missing_gates)} (CLAUDE.md, regla 7: las seis compuertas bloquean sea "
-                         "cual sea la puntuación; una rúbrica propia puede cambiar pesos y anclas, no quitarlas)")
+                         f"obligatorias {', '.join(missing_gates)} (CLAUDE.md, regla 7: las seis compuertas bloquean "
+                         "sea cual sea la puntuación; una rúbrica propia puede cambiar pesos y anclas, no quitarlas)")
     maturity = [MaturityLevel(m["nivel"], m["significado"], m.get("nota", "")) for m in data.get("madurez", [])]
     return Rubric(str(data.get("version", "?")), criteria, gates, data.get("perfiles", {}), maturity)
 
@@ -460,8 +460,8 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
         inside = [name for name, t in tops.items() if r.opportunity_id in t]
         outside = [name for name, t in tops.items() if r.opportunity_id not in t]
         if inside and outside:
-            r.flags.append(f"Dentro del top-{top_k} con {', '.join(inside)} y fuera con {', '.join(outside)}: que entre "
-                           "en la propuesta depende de los pesos o de la incertidumbre de las puntuaciones")
+            r.flags.append(f"Dentro del top-{top_k} con {', '.join(inside)} y fuera con {', '.join(outside)}: que "
+                           "entre en la propuesta depende de los pesos o de la incertidumbre de las puntuaciones")
     for r in [r for r in ordered if r.status in ("APTA", "CONDICIONAL")][:top_k]:
         if r.critical_unresolved:
             r.flags.append(f"En el top-{top_k} para planes con compuertas críticas sin resolver: "

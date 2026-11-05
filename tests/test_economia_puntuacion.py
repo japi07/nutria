@@ -1180,7 +1180,7 @@ def test_resumen_de_fuentes_senala_los_supuestos_que_dominan_el_resultado(tmp_pa
     assert json.loads(capsys.readouterr().out)["resumen_fuentes"]["entradas"] == 13
 
 
-# ============================================================================ D8-1: una rúbrica propia no quita compuertas
+# ======================================================================= D8-1: una rúbrica propia no quita compuertas
 def test_rubrica_propia_no_puede_quitar_compuertas_ni_usar_pesos_negativos(tmp_path, project, capsys):
     text = (ROOT / "src" / "nutria" / "data" / "rubrica.toml").read_text("utf-8")
     start = text.index('[[compuerta]]\nid = "seguridad"')
