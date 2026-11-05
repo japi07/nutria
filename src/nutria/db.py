@@ -453,6 +453,7 @@ def load_schema(kind: str) -> dict:
 # opcional y 'pal{o,a,os,as}' da las variantes de la palabra. Todo en minúsculas y sin tildes.
 _FILLER_TEMPLATES = """
 x|xx|xxx|xyz|abc|asdf|foo|bar|test|prueba|placeholder|0|00|000|blank|tbd|tbc|tba
+ejemplo{,s}|example{,s}|sample|dummy|demo|lorem|ipsum|tmp|temp
 lorem ipsum
 n a|d|c|p|r|s|k
 na|nd|nc|np|nr|ns|nk|sd|sn
@@ -472,8 +473,8 @@ to be determined|defined|confirmed
 """
 # Palabras que, solas o juntas, no identifican una especie, una etapa ni un estado (español e inglés).
 _GENERIC_TEMPLATES = """
-tod{o,a,os,as}|vari{os,as}|divers{o,a,os,as}|distint{o,a,os,as}|diferente{,s}|multiple{,s}|cualquier{,a}|cualesquiera
-ambos|ambas|otr{o,a,os,as}|demas|resto|general{,es,mente}|generic{o,a,os,as}|mixt{o,a,os,as}|indistint{o,a,os,as}
+tod{o,a,os,as,es,xs}|vari{os,as,es,xs}|divers{o,a,os,as,es,xs}|distint{o,a,os,as,es,xs}|diferente{,s}|multiple{,s}
+cualquier{,a}|cualesquiera|ambos|ambas|otr{o,a,os,as,es,xs}|demas|resto|general{,es,mente}|generic{o,a,os,as}|mixt{o,a,os,as}|indistint{o,a,os,as}
 indistintamente|indiferente{,s}|global{,es}|comun{,es}|habitual{,es}|tipic{o,a,os,as}|estandar|normal{,es}
 complet{o,a,os,as}|enter{o,a,os,as}|total{,es}|multiespecie{,s}|pluriespecie{,s}|polivalente{,s}|particular{,es}
 cada|ciert{o,a,os,as}|algun{,o,a,os,as}|much{o,a,os,as}|numeros{o,a,os,as}|principal{,es}|relevante{,s}|posible{,s}
@@ -512,6 +513,9 @@ adult{,s}|young|healthy|sick|male{,s}|female{,s}|breeding|newborn{,s}|laboratory
 _INVISIBLE_CHARS = frozenset("͏ᅟᅠ឴឵᠎⠀ㅤﾠ")
 _HIDDEN_CATEGORIES = frozenset({"Cf", "Cc", "Co", "Cs", "Cn"})
 _WORD_RE = re.compile(r"[^\W_]+")
+# Grafías con cifras o signos en lugar de letras ('t0das', 'tod@s', 'tod*s'): solo para reconocer valores genéricos.
+_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s", "*": "o"})
+_LEET_TOKEN_RE = re.compile(r"[\w@$*]+")
 
 
 def _word_variants(word: str) -> list[str]:
@@ -589,6 +593,16 @@ def _scripts(word: str) -> set[str]:
     return out
 
 
+def _unleet_words(text: str) -> list[str]:
+    """Palabras del texto leyendo como letras las cifras y signos de las palabras que los mezclan con letras."""
+    def fix(match: re.Match) -> str:
+        token = match.group(0)
+        if any(ch.isalpha() for ch in token) and any(ch.isdigit() or ch in "@$*" for ch in token):
+            return token.translate(_LEET)
+        return token
+    return _WORD_RE.findall(_LEET_TOKEN_RE.sub(fix, _fold(text)))
+
+
 def _is_filler(words: list[str], vocab: dict) -> bool:
     if _covered(words, vocab["filler"], vocab["max_len"]):
         return True
@@ -625,10 +639,15 @@ def text_problem(value: Any, mode: str = "informado") -> str | None:
     if _is_filler(words, vocab):
         return "es un valor de relleno, no un dato"
     if mode in ("especifico", "especie"):
-        if (_covered(words, vocab["generic"], vocab["max_len"])
-                or _compact_covered("".join(words), vocab["generic_compact"], vocab["compact_max"])):
-            return "es genérico: no nombra una especie, una etapa ni un estado concretos"
-        if mode == "especie" and _covered(words, vocab["descriptor"], vocab["max_len"]):
+        readings = [words]
+        unleet = _unleet_words(text)
+        if unleet and unleet != words:
+            readings.append(unleet)
+        for ws in readings:
+            if (_covered(ws, vocab["generic"], vocab["max_len"])
+                    or _compact_covered("".join(ws), vocab["generic_compact"], vocab["compact_max"])):
+                return "es genérico: no nombra una especie, una etapa ni un estado concretos"
+        if mode == "especie" and any(_covered(ws, vocab["descriptor"], vocab["max_len"]) for ws in readings):
             return "no nombra la especie: solo describe a los animales"
     return None
 

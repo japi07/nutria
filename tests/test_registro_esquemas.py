@@ -544,7 +544,8 @@ def test_especies_y_etapas_concretas_se_aceptan(kind):
     "a n i m a l e s", "t o d a s", "anim ales", "todaslasetapas", "Todas-las-etapas", "animales_de_granja",
     "universal", "indefinida", "sin restricción", "independiente de la etapa", "multietapa", "multi-especie",
     "todo el ciclo productivo", "ciclo completo", "cualquier fase del ciclo", "animales de producción", "livestock",
-    "food-producing animals", "whole cycle", "especie diana", "n/a, desconocido", "No Consta."])
+    "food-producing animals", "whole cycle", "especie diana", "n/a, desconocido", "No Consta.",
+    "t0das", "T0D0S", "tod@s", "tod*s", "todxs", "todes", "4nim4les", "todas (ejemplo)", "ejemplo", "lorem"])
 @pytest.mark.parametrize("campo", ["especie", "etapa"])
 def test_variantes_de_valores_genericos_rechazadas(campo, valor):
     with pytest.raises(SystemExit, match="JSON no válido"):
@@ -554,7 +555,7 @@ def test_variantes_de_valores_genericos_rechazadas(campo, valor):
 def test_valores_concretos_no_se_confunden_con_genericos():
     base = _example("oportunidad_ejemplo")
     for etapa in ("fase de producción", "fase de crecimiento", "en ayunas", "cría", "adultos", "toda la lactación",
-                  "periodo seco", "inicio de lactación (0 a 21 DEL)"):
+                  "periodo seco", "inicio de lactación (0 a 21 DEL)", "3 años", "F1 en cebo", "100 a 150 DEL"):
         _validate("oportunidad", dict(base, etapa=etapa))
     for especie in ("ganado lechero", "líquido ruminal bovino", "Oncorhynchus mykiss", "salmón atlántico", "ocas",
                     "toros", "monogástricos", "ratas de laboratorio"):
