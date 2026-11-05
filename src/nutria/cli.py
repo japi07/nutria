@@ -1102,15 +1102,19 @@ def cmd_procedencia(args, cfg) -> int:
 
 
 def _texto_verificacion_procedencia(res: dict) -> str:
-    if not res["existe"]:
+    if not res["existe"] and res["integra"]:
         return f"Sin registro de procedencia ({res['fichero']})\nResultado: íntegra (vacía)"
-    lines = [f"Procedencia: {res['fichero']}",
-             f"  eventos: {res['eventos']} (encadenados {res['encadenados']}, anteriores a la cadena "
-             f"{res['anteriores_a_la_cadena']})"]
+    if res["existe"]:
+        lines = [f"Procedencia: {res['fichero']}",
+                 f"  eventos: {res['eventos']} (encadenados {res['encadenados']}, anteriores a la cadena "
+                 f"{res['anteriores_a_la_cadena']})"]
+    else:
+        lines = [f"Procedencia: {res['fichero']} (no existe)"]
     git = res.get("git") or {}
     if git.get("estado") == "amplia_lo_confirmado":
-        lines.append(f"  git: amplía la versión confirmada (commit {str(git.get('commit'))[:12]}; "
-                     f"{git.get('eventos_nuevos')} línea(s) nuevas sin confirmar)")
+        nuevas = f"; {git['eventos_nuevos']} línea(s) nuevas sin confirmar" if "eventos_nuevos" in git else ""
+        lines.append(f"  git: amplía lo confirmado (versiones comprobadas: {git.get('versiones_comprobadas')}; "
+                     f"HEAD {str(git.get('commit'))[:12]}{nuevas})")
     elif git.get("estado") == "sin_referencia":
         lines.append("  git: sin versión confirmada con la que comparar")
     lines += [f"  AVISO: {a}" for a in res["avisos"]]

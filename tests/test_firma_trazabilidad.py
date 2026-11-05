@@ -1196,6 +1196,89 @@ def test_verificar_compara_con_la_version_confirmada_en_git(project, git_real):
     assert not res["integra"] and res["git"]["estado"] == "reescrito"
 
 
+def _commit_all(project: Path, message: str, *extra: str) -> str:
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", message, *extra)
+    return _git(project, "rev-parse", "HEAD")
+
+
+def _git_project(project: Path, n: int = 2) -> Path:
+    path = _seed_events(project, n)
+    _git(project, "init", "-q")
+    _commit_all(project, "procedencia")
+    return path
+
+
+@requires_git
+@pytest.mark.parametrize("borrado", ["rm", "rm_y_commit"])
+def test_verificar_detecta_la_procedencia_confirmada_borrada(project, git_real, capsys, borrado):
+    """Revisión (ronda 2, bloqueante): `rm -f research/*.jsonl` y `procedencia verificar` daban «íntegra (vacía)»
+    con código 0. También si el borrado se confirma: la versión anterior sigue en el historial de HEAD."""
+    path = _git_project(project)
+    path.unlink()
+    if borrado == "rm_y_commit":
+        _commit_all(project, "sin procedencia")
+    res = provenance.verify_chain(load_config())
+    assert not res["existe"] and not res["integra"] and res["git"]["estado"] == "borrado"
+    assert "se ha borrado la historia confirmada" in res["problemas"][0]
+    capsys.readouterr()
+    assert _code(["procedencia", "verificar"]) == 1
+    out = capsys.readouterr().out
+    assert "NO íntegra" in out and "(vacía)" not in out and "(no existe)" in out
+    assert _code(["--json", "procedencia", "verificar"]) == 1
+    assert json.loads(capsys.readouterr().out)["git"]["estado"] == "borrado"
+
+
+@requires_git
+@pytest.mark.parametrize("reescritura", ["commit", "amend", "reset_soft"])
+def test_verificar_compara_con_todas_las_versiones_confirmadas(project, git_real, reescritura):
+    """Revisión: la referencia era solo HEAD. Truncar y confirmar (un commit nuevo, commit --amend o reset --soft
+    a un commit anterior) daba «íntegra». Ahora el fichero debe ampliar cada versión del historial de HEAD y de las
+    puntas anteriores de la rama (reflog)."""
+    path = _git_project(project, 2)
+    truncated = path.read_bytes()
+    first = _git(project, "rev-parse", "HEAD")
+    for i in range(2):
+        assert _code(["--agente", "director-cientifico", "decision", "registrar", "--entidad", "O-0001",
+                      "--decision", f"más {i}", "--motivo", "m"]) == 0
+    _commit_all(project, "más eventos")
+    assert provenance.verify_chain(load_config())["integra"]
+    path.write_bytes(truncated)                                   # quita los eventos ya confirmados
+    if reescritura == "commit":
+        _commit_all(project, "truncada")
+    elif reescritura == "amend":
+        _commit_all(project, "truncada", "--amend")
+    else:
+        _git(project, "reset", "-q", "--soft", first)
+    res = provenance.verify_chain(load_config())
+    assert not res["alterados"] and not res["cadena_rota"]       # la cadena del fichero truncado es coherente
+    assert not res["integra"] and res["git"]["estado"] == "reescrito"
+    origins = {v["origen"] for v in res["git"]["no_ampliadas"]}
+    if reescritura == "commit":
+        assert origins == {"historial"}
+    else:   # la versión con los eventos quitados ya no está en el historial de HEAD: solo en el reflog de la rama
+        assert all(o.startswith("reflog de") for o in origins)
+        assert any("reflog" in p for p in res["problemas"])
+
+
+@requires_git
+def test_verificar_acepta_la_historia_que_solo_anade_eventos(project, git_real):
+    path = _git_project(project, 1)
+    for i in range(3):
+        assert _code(["--agente", "director-cientifico", "decision", "registrar", "--entidad", "O-0001",
+                      "--decision", f"d{i}", "--motivo", "m"]) == 0
+        _commit_all(project, f"c{i}", *(["--amend"] if i == 1 else []))   # un amend que solo añade eventos
+    assert _code(["--agente", "director-cientifico", "decision", "registrar", "--entidad", "O-0001", "--decision",
+                  "sin confirmar", "--motivo", "m"]) == 0
+    res = provenance.verify_chain(load_config())
+    assert res["integra"] and res["git"]["estado"] == "amplia_lo_confirmado"
+    assert res["git"]["eventos_nuevos"] == 1 and res["git"]["versiones_comprobadas"] == 4
+    # con finales de línea CRLF en la copia de trabajo (Windows) sigue ampliando lo confirmado
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    res = provenance.verify_chain(load_config())
+    assert res["git"]["estado"] == "amplia_lo_confirmado"
+
+
 @requires_git
 def test_el_estado_de_git_marca_cambios_sin_confirmar_fuera_de_research(tmp_path, monkeypatch, git_real):
     (tmp_path / "src").mkdir()

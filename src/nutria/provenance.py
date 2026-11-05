@@ -23,14 +23,19 @@ encadenado anterior. El primer evento encadenado de un fichero ancla todo lo ant
 los bytes previos (el de la cadena vacía si el fichero no existía), así que los eventos de versiones anteriores,
 sin cadena, quedan cubiertos. Las escrituras se serializan con un bloqueo de fichero (POSIX). `verify_chain`
 (orden `nutria procedencia verificar`) detecta líneas corruptas, eventos alterados, la cadena rota, eventos sin
-cadena añadidos después y, si el fichero está en git, la reescritura o el borrado de eventos ya confirmados.
+cadena añadidos después y, si el fichero está en git, la reescritura o el borrado de eventos ya confirmados: el
+fichero (aunque haya desaparecido) debe ampliar cada versión confirmada en el historial de HEAD y en las puntas
+anteriores de la rama actual (su reflog: lo que había antes de un commit --amend, un reset o un rebase).
 
 Límites: una cadena de hashes no autentica. Quien pueda escribir el fichero puede recalcular la cola entera, añadir
 eventos al final o truncar los que aún no estén confirmados en git; lo que detecta es la corrupción, las
-alteraciones parciales y los borrados o inserciones intermedios. La cadena supone un único historial lineal: dos
-ramas de git que añadan eventos por separado la rompen al fusionarse. Los hooks de Claude Code dificultan a los
-agentes escribir el fichero por fuera de nutria, pero son una barrera de texto: no ven un programa escrito en un
-fichero ni una orden construida de forma indirecta.
+alteraciones parciales y los borrados o inserciones intermedios. La referencia es el repositorio local: quien
+reescriba la historia y además borre el reflog (git reflog expire, gc) o cree otra rama elude la comparación; solo
+una copia fuera de su alcance (la rama remota) la cubre. La cadena supone un único historial lineal: dos ramas de
+git que añadan eventos por separado la rompen al fusionarse, y lo que una persona descarte a propósito (reset,
+rebase) se señala mientras siga en el reflog de la rama. Los hooks de Claude Code dificultan a los agentes escribir
+el fichero o la historia de git por fuera de nutria, pero son una barrera de texto: no ven un programa escrito en
+un fichero ni una orden construida de forma indirecta.
 """
 
 from __future__ import annotations
@@ -326,14 +331,16 @@ def execution_context() -> str:
 
 
 # ---------------------------------------------------------------------------- git y entorno
-def _run_git(root: Path, args: list[str], timeout: float, env: Mapping[str, str] | None = None):
-    """Ejecuta `git <args>` en `root` (salida en bytes); None si git no está o no se pudo ejecutar a tiempo.
+def _run_git(root: Path, args: list[str], timeout: float, env: Mapping[str, str] | None = None,
+             input: bytes | None = None):
+    """Ejecuta `git <args>` en `root` (salida en bytes; `input`, la entrada); None si git no está o no se pudo
+    ejecutar a tiempo.
 
     Toda llamada a git de este módulo pasa por aquí: las pruebas lo sustituyen (tests/conftest.py) para no lanzar git
     salvo que lo pidan, porque `subprocess` con `timeout` espera con `time.sleep`, que otras pruebas sustituyen.
     """
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=timeout,
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=timeout, input=input,
                               env=dict(env) if env is not None else None)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -553,18 +560,123 @@ def _lines_text(lines: list[int], limit: int = 10) -> str:
     return text + (f" y {len(lines) - limit} más" if len(lines) > limit else "")
 
 
-def _committed_version(path: Path, root: Path) -> tuple[str | None, bytes | None]:
-    """Versión del fichero confirmada en git (HEAD), o (None, None) si no hay git o el fichero no está confirmado."""
+def _git_lines(out) -> list[str]:
+    if out is None or out.returncode != 0:
+        return []
+    return out.stdout.decode("utf-8", "replace").split()
+
+
+def _committed_versions(path: Path, root: Path) -> dict | None:
+    """Versiones del fichero confirmadas en git, sin leer su contenido: {"head": commit, "versiones": [(commit,
+    origen, blob, tamaño)]}, con la de HEAD primero.
+
+    Son la de HEAD, las de las puntas anteriores de la rama actual (su reflog: lo que había antes de un commit
+    --amend, un reset o un rebase) y las del historial de HEAD. None si no hay git, ni commits, o el fichero está
+    fuera del repositorio. Cuatro llamadas a git, sean cuantas sean las versiones.
+    """
     try:
         rel = Path(os.path.relpath(path, root)).as_posix()
     except ValueError:  # pragma: no cover - otra unidad en Windows
-        return None, None
+        return None
     if rel.startswith(".."):
-        return None, None
-    out = _run_git(root, ["show", f"HEAD:./{rel}"], 10)
+        return None
+    head = _git_lines(_run_git(root, ["rev-parse", "--verify", "-q", "HEAD"], 10))
+    if not head:
+        return None
+    history = _git_lines(_run_git(root, ["rev-list", "HEAD", "--", f"./{rel}"], 60))
+    in_history = set(history)
+    commits: dict[str, str] = {head[0]: "HEAD"}
+    branch = _git_lines(_run_git(root, ["symbolic-ref", "-q", "HEAD"], 10))
+    if branch:   # en HEAD separado no hay rama: su reflog mezclaría las de otras ramas
+        name = branch[0].removeprefix("refs/heads/")
+        for commit in _git_lines(_run_git(root, ["log", "-g", "--format=%H", branch[0], "--"], 60)):
+            commits.setdefault(commit, "historial" if commit in in_history else f"reflog de {name}")
+    for commit in history:
+        commits.setdefault(commit, "historial")
+    query = "".join(f"{commit}:./{rel}\n" for commit in commits).encode()
+    out = _run_git(root, ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"], 60, input=query)
     if out is None or out.returncode != 0:
-        return None, None
-    return git_commit(root), out.stdout
+        return None
+    versions = []
+    for (commit, origin), line in zip(commits.items(), out.stdout.decode("utf-8", "replace").splitlines()):
+        parts = line.split()   # "<blob> blob <tamaño>", o "<consulta> missing" si en ese commit no estaba el fichero
+        if len(parts) == 3 and parts[1] == "blob" and parts[2].isdigit():
+            versions.append((commit, origin, parts[0], int(parts[2])))
+    return {"head": head[0], "versiones": versions}
+
+
+def _git_blob_id(data, object_id_length: int) -> str:
+    """Identificador de git del contenido `data` (SHA-1, o SHA-256 en repositorios con ese formato)."""
+    digest = hashlib.new("sha1" if object_id_length == 40 else "sha256")
+    digest.update(b"blob %d\0" % len(data))
+    digest.update(data)
+    return digest.hexdigest()
+
+
+# Tope de bytes que `verify_chain` resume para comparar con las versiones confirmadas en git (las más recientes
+# primero); lo que no cabe se señala como aviso.
+GIT_VERIFY_BUDGET = 4 << 30
+
+
+def _compare_with_git(data: bytes, exists: bool, path: Path, root: Path, problems: list, warnings_: list) -> dict:
+    """Comprueba que el fichero actual amplía cada versión confirmada en git (ver `_committed_versions`).
+
+    Una versión confirmada queda ampliada si es un prefijo del fichero actual; se comprueba con el identificador del
+    objeto de git (el resumen del prefijo del mismo tamaño), sin leer las versiones. Los finales de línea CRLF de
+    una copia de trabajo en Windows se comparan también normalizados.
+    """
+    found = _committed_versions(path, root)
+    if found is None or not found["versiones"]:
+        return {"estado": "sin_referencia"}
+    normalized = data.replace(b"\r\n", b"\n")
+    variants = [memoryview(normalized)] + ([memoryview(data)] if normalized != data else [])
+    budget, verdicts, unchecked = GIT_VERIFY_BUDGET, {}, []
+    not_extended: list[tuple[str, str]] = []
+    for commit, origin, blob, size in found["versiones"]:
+        if blob not in verdicts:
+            verdict = False
+            for variant in variants:
+                if size > len(variant):
+                    continue
+                if size > budget:
+                    verdict = None
+                    break
+                budget -= size
+                if _git_blob_id(variant[:size], len(blob)) == blob:
+                    verdict = True
+                    break
+            verdicts[blob] = verdict
+        if verdicts[blob] is None:
+            unchecked.append(commit)
+        elif not verdicts[blob]:
+            not_extended.append((commit, origin))
+    head_version = found["versiones"][0] if found["versiones"][0][1] == "HEAD" else None
+    result: dict[str, Any] = {"commit": found["head"],
+                              "versiones_comprobadas": sum(v is not None for v in verdicts.values())}
+    if unchecked:
+        warnings_.append(f"{len(unchecked)} versión(es) confirmada(s) en git sin comparar (tope de lectura de "
+                         f"{GIT_VERIFY_BUDGET >> 20} MiB): las más antiguas")
+    if not not_extended:
+        result["estado"] = "amplia_lo_confirmado"
+        if head_version is not None:
+            result["eventos_nuevos"] = normalized[head_version[3]:].count(b"\n")
+        return result
+    detail = "; ".join(f"commit {commit[:12]} ({origin})" for commit, origin in not_extended[:3])
+    if len(not_extended) > 3:
+        detail += f" y {len(not_extended) - 3} más"
+    result["no_ampliadas"] = [{"commit": commit, "origen": origin} for commit, origin in not_extended]
+    if not exists:
+        result["estado"] = "borrado"
+        problems.append(f"el fichero de procedencia no existe, pero git tiene confirmados eventos suyos ({detail}): "
+                        "se ha borrado la historia confirmada")
+    else:
+        result["estado"] = "reescrito"
+        problems.append(f"el fichero no amplía {len(not_extended)} versión(es) confirmada(s) en git ({detail}): se "
+                        "han modificado o borrado eventos ya confirmados")
+    if any(origin.startswith("reflog") for _, origin in not_extended):
+        problems.append("alguna de esas versiones solo está en el reflog de la rama: la historia se reescribió "
+                        "(commit --amend, reset o rebase) después de quitar eventos confirmados")
+    return result
 
 
 def verify_chain(cfg, use_git: bool = True) -> dict:
@@ -574,7 +686,9 @@ def verify_chain(cfg, use_git: bool = True) -> dict:
     `anteriores_a_la_cadena` (eventos de versiones previas, anclados por el primer evento encadenado),
     `lineas_corruptas`, `corruptas_ancladas` (corruptas anteriores a la cadena y cubiertas por su ancla: aviso),
     `alterados` (el `hash` no corresponde al contenido), `cadena_rota` (`prev` no corresponde al evento
-    anterior), `sin_cadena_tras_inicio` (eventos sin cadena añadidos después de empezar la cadena) y `git`.
+    anterior), `sin_cadena_tras_inicio` (eventos sin cadena añadidos después de empezar la cadena) y `git`
+    (con `use_git`, ver `_compare_with_git`: "amplia_lo_confirmado", "reescrito", "borrado" si el fichero ya no
+    existe pero git tiene eventos suyos confirmados, o "sin_referencia").
     """
     path: Path = cfg.provenance_path
     res: dict[str, Any] = {
@@ -584,7 +698,14 @@ def verify_chain(cfg, use_git: bool = True) -> dict:
         "integra": True,
     }
     if not path.is_file():
-        res["avisos"].append("No hay registro de procedencia todavía")
+        # Que el fichero no exista no lo hace íntegro: si git tiene eventos suyos confirmados, se ha borrado la
+        # historia (revisión: `rm research/*.jsonl` daba «íntegra (vacía)»).
+        if use_git:
+            root = Path(getattr(cfg, "root", None) or path.parent.parent)
+            res["git"] = _compare_with_git(b"", False, path, root, res["problemas"], res["avisos"])
+        if not res["problemas"]:
+            res["avisos"].append("No hay registro de procedencia todavía")
+        res["integra"] = not res["problemas"]
         return res
     data = path.read_bytes()
     corrupt_before: list[int] = []
@@ -652,18 +773,6 @@ def verify_chain(cfg, use_git: bool = True) -> dict:
                              f"ancladas por ella: {_lines_text(res['corruptas_ancladas'])}")
     if use_git:
         root = Path(getattr(cfg, "root", None) or path.parent.parent)
-        commit, committed = _committed_version(path, root)
-        if committed is None:
-            res["git"] = {"estado": "sin_referencia"}
-        else:
-            current = data.replace(b"\r\n", b"\n")
-            reference = committed.replace(b"\r\n", b"\n")
-            if current.startswith(reference):
-                res["git"] = {"estado": "amplia_lo_confirmado", "commit": commit,
-                              "eventos_nuevos": current[len(reference):].count(b"\n")}
-            else:
-                res["git"] = {"estado": "reescrito", "commit": commit}
-                p.append(f"el fichero no amplía la versión confirmada en git (commit {str(commit)[:12]}): se han "
-                         "modificado o borrado eventos ya confirmados")
+        res["git"] = _compare_with_git(data, True, path, root, p, res["avisos"])
     res["integra"] = not p
     return res
