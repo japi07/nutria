@@ -758,6 +758,35 @@ def test_comparar_sistemas_counts_and_reports_failed_agents():
 # ====================================================================================================================
 # P8: workflows, skills y agentes (independencia de los evaluadores, descarte temprano, idempotencia, topes y
 # contenido regulatorio y fisiológico). Utilidades y pruebas de este bloque.
+#
+# Índice (defecto → pruebas test_p8_*):
+#   D1-3, D2-2  evaluar_evaluadores_ciegos_antes_del_informe, evaluador_no_ve_las_decisiones_propuestas,
+#               evaluar|mision1_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas,
+#               evaluar_critica_y_verificacion_eligen_las_afirmaciones, red_team_ningun_paso_lo_hace_el_autor,
+#               red_team_sin_autor_deducible_no_empieza
+#   D1-7, D2-8  evaluar_se_detiene_si_el_registro_ya_tiene_una_compuerta_bloqueada, evaluar_ruta_fuera_de_alcance_*,
+#               evaluar_falla_en_cerrado_*, evaluar_el_registro_manda_tras_el_descarte_rapido,
+#               evaluar_se_detiene_antes_de_puntuar_*, evaluar_relee_el_registro_antes_de_puntuar
+#   D4-3        mision1_no_puntua_las_oportunidades_bloqueadas, mision1_sin_compuertas_legibles_no_puntua
+#   D3-3        evaluar_sin_sello_valido_no_registra_puntuaciones, evaluar_interpreta_la_salida_real_de_informe_sello,
+#               evaluar_no_registra_un_fichero_de_puntuacion_modificado, evaluar_modo_registrar_*,
+#               mision1_firma_de_la_seleccion_segun_el_registro
+#   D1-12       mision1_planes_critica_con_la_lista_y_etica_repropuesta
+#   D2-10       red_team_regla_de_fuentes_en_todas_las_combinaciones, red_team_regla_de_fuentes_documentada_*
+#   D2-15       mision1_paso0_en_cada_fase, mision1_deduplica_contra_el_registro, mision1_nombres_de_fichero_*,
+#               mision1_repetir_la_fase_no_duplica_ni_sobrescribe, mision1_planes_conserva_la_version_anterior,
+#               mision1_minimo_de_rumiantes, mision1_id_de_otra_oportunidad_no_se_puntua
+#   D2-16       red_team_salida_incluye_el_directorio_de_origen, red_team_revisar_plan_e_informe_no_se_pisan,
+#               red_team_no_sobrescribe_una_revision_anterior
+#   D2-17       version_de_claude_code_documentada
+#   D2-18       mision1_novedad_por_el_rol_que_fija_la_skill, evaluar_pregunta_obligatoria_aunque_el_plan_traiga_la_suya
+#   D10-3       evaluar_tope_de_preguntas_*, red_team_tope_*, mision1_n_oportunidades_es_un_tope, *_topes_no_validos_*,
+#               mision1_estimacion_de_las_fases_mapa_y_planes, mision1_entradas_no_validas_no_se_descartan_en_silencio
+#   D10-9       ningun_mensaje_presenta_un_workflow_como_orden_con_barra, siguiente_de_evaluar_lanza_red_team_*
+#   D4-4        adaptacion_de_la_microbiota_ruminal
+#   D5-4        antibioticos_y_moduladores_ruminales_antimicrobianos
+#   D5-13       omg_microorganismos_y_qps
+#   compuertas  compuertas_propuestas_por_su_rol_propietario
 # ====================================================================================================================
 import hashlib  # noqa: E402
 
