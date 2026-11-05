@@ -6,9 +6,10 @@ jurídico**: las conclusiones son preliminares y las revisa un profesional de as
 **Estado de verificación.** "verificada (2026-11-04)" significa que lo que este documento dice de esa norma se
 comprobó por búsqueda web en esa fecha, y solo eso (si una fila verifica solo un artículo, lo indica). "pendiente"
 significa que no se ha comprobado: es una cita de referencia que hay que contrastar antes de usarla en una decisión.
-Ninguna fila registra todavía el número CELEX ni la fecha de la versión consolidada consultada; los enlaces ELI que
-terminan en `/oj` llevan al acto original publicado en el Diario Oficial, no a la versión consolidada. Antes de una
-decisión, consulta el texto consolidado vigente en EUR-Lex y anota su fecha.
+Solo las filas de los Reglamentos (CE) 1831/2003 (CELEX 32003R1831) y 1829/2003 (CELEX 32003R1829) indican su número
+CELEX, y ninguna registra todavía la fecha de la versión consolidada consultada; los enlaces ELI que terminan en `/oj`
+llevan al acto original publicado en el Diario Oficial, no a la versión consolidada. Antes de una decisión, consulta
+el texto consolidado vigente en EUR-Lex y anota su fecha.
 
 En un informe, una norma citada solo con URL cuenta como verificada únicamente si una persona la registró con
 `nutria verificar manual <URL> --firma-humana NOMBRE`; los agentes no pueden hacerlo.
@@ -101,10 +102,20 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   terapéuticas o zootécnicas controladas.
 - [ ] **Restricciones de EET** a las proteínas de origen animal (Reglamento (CE) 999/2001): pendiente de verificar
   el anexo vigente.
-- [ ] **Antibióticos como aditivos o promotores del crecimiento**: base legal pendiente de verificar. La auditoría
-  externa señala el art. 11.2 del Reglamento (CE) 1831/2003 (antibióticos distintos de coccidiostáticos e
-  histomonóstatos) y el art. 107.2 del Reglamento (UE) 2019/6 (uso de antimicrobianos); ninguno se ha comprobado en
-  el texto consolidado.
+- [ ] **Antibióticos distintos de coccidiostáticos e histomonóstatos como aditivos**: no pueden autorizarse como
+  aditivos para piensos (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación
+  en el texto consolidado). La prohibición no se limita a los promotores del crecimiento: vale sea cual sea la
+  finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej. ionóforos
+  como la monensina)** y a los reductores de metano que sean antibióticos. La única excepción es su autorización como
+  coccidiostático o histomonóstato (categoría propia de aditivos, para las especies y condiciones de esa
+  autorización), que no ampara el uso como modulador ruminal (pendiente de verificación). Para esa finalidad no hay
+  vía como pienso ni como aditivo: la compuerta `regulatoria` se propone `bloqueada` salvo rediseño del activo (no
+  basta cambiar la alegación), y la vía del medicamento veterinario queda fuera de alcance. Con otros antimicrobianos (p. ej.
+  extractos vegetales o compuestos de síntesis) propuestos con esa finalidad, hay que comprobar si encajan en la
+  definición de antibiótico del reglamento (antimicrobiano producido por un microorganismo o derivado de él; art. 2,
+  pendiente de verificación) y si son medicamento por función (Reglamento (UE) 2019/6, art. 4); mientras no esté
+  claro, la propuesta es `no_resuelta`, nunca `superada`. La auditoría externa señala además el art. 107.2 del
+  Reglamento (UE) 2019/6 (uso de antimicrobianos en medicamentos veterinarios): pendiente de verificación.
 - [ ] **Sustancias indeseables** (Directiva 2002/32/CE): contenidos máximos; pendiente.
 
 ## Alegaciones (Reglamento (CE) 767/2009, art. 13; verificada (2026-11-04))
@@ -140,7 +151,7 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 |---|---|---|---|
 | [Reglamento (CE) 178/2002](https://eur-lex.europa.eu/eli/reg/2002/178/oj) | Legislación alimentaria general (incluye piensos), EFSA; arts. 32a y 32b añadidos por el Reglamento (UE) 2019/1381 | Siempre; antes de preparar una solicitud | verificada (2026-11-04) solo los arts. 32a y 32b; resto pendiente |
 | [Reglamento (UE) 2019/1381](https://eur-lex.europa.eu/eli/reg/2019/1381/oj) | Transparencia: asesoramiento previo de EFSA (art. 32a del Reglamento (CE) 178/2002) y notificación a EFSA de los estudios encargados para respaldar una solicitud (art. 32b); aplicable desde el 27-03-2021 | Antes de encargar estudios para un dossier | verificada (2026-11-04) |
-| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) | Aditivos: autorización, categorías, etiquetado, protección de datos | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente |
+| [Reglamento (CE) 1831/2003](https://eur-lex.europa.eu/eli/reg/2003/1831/oj) (CELEX 32003R1831) | Aditivos: autorización, categorías, etiquetado, protección de datos; art. 11, apartado 2: los antibióticos distintos de coccidiostáticos e histomonóstatos no pueden autorizarse como aditivos, sea cual sea la finalidad (incluidos los moduladores ruminales antimicrobianos que sean antibióticos, como los ionóforos, salvo su autorización como coccidiostáticos o histomonóstatos, que no ampara ese uso) | Aditivos | verificada (2026-11-04) solo la categoría de aditivos nutricionales del anexo I; resto pendiente, incluido el art. 11, apartado 2 |
 | [Reglamento (CE) 429/2008](https://eur-lex.europa.eu/eli/reg/2008/429/oj) | Preparación y presentación de solicitudes de aditivos | Nuevas autorizaciones | pendiente |
 | [Reglamento (CE) 378/2005](https://eur-lex.europa.eu/eli/reg/2005/378/oj) | Laboratorio de referencia de la UE para aditivos (EURL-FA), según la auditoría externa | Nuevas autorizaciones (método analítico) | pendiente |
 | [Reglamento (UE) 2019/962](https://eur-lex.europa.eu/eli/reg/2019/962/oj) | Grupos funcionales nuevos: estabilizadores de las condiciones fisiológicas (zootécnicos; animales sanos, resiliencia frente a factores de estrés) y otros aditivos tecnológicos | Productos de resiliencia frente al estrés oxidativo o calórico, si no son medicamento por función | verificada (2026-11-04) |
@@ -155,7 +166,7 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 | [Reglamento (UE) 2019/6](https://eur-lex.europa.eu/eli/reg/2019/6/oj) | Medicamentos veterinarios; art. 4: definición por alegación y por función | Frontera con el medicamento | verificada (2026-11-04) solo la definición del art. 4; resto pendiente |
 | [Reglamento (UE) 2019/4](https://eur-lex.europa.eu/eli/reg/2019/4/oj) | Piensos medicamentosos | Frontera | pendiente |
 | [Reglamento (UE) 528/2012](https://eur-lex.europa.eu/eli/reg/2012/528/oj) | Biocidas | Frontera | pendiente |
-| [Reglamento (CE) 1829/2003](https://eur-lex.europa.eu/eli/reg/2003/1829/oj) y [1830/2003](https://eur-lex.europa.eu/eli/reg/2003/1830/oj) | OMG en alimentos y piensos; trazabilidad y etiquetado | Productos de fermentación con cepas modificadas | pendiente |
+| [Reglamento (CE) 1829/2003](https://eur-lex.europa.eu/eli/reg/2003/1829/oj) (CELEX 32003R1829) y [1830/2003](https://eur-lex.europa.eu/eli/reg/2003/1830/oj) | OMG en alimentos y piensos; trazabilidad y etiquetado | Piensos que contienen OMG, consisten en ellos o se producen "a partir de" ellos; no lo producido "con" un OMG (considerando 16). En un producto de fermentación con una cepa modificada, lo determinante es si contiene células viables o ADN recombinante de la cepa de producción (guía de la EFSA sobre la caracterización de microorganismos en la cadena alimentaria) | pendiente (alcance para las cepas de producción pendiente de verificación) |
 | [Reglamento (CE) 396/2005](https://eur-lex.europa.eu/eli/reg/2005/396/oj) | Límites máximos de residuos de plaguicidas | Extractos y materias primas vegetales | pendiente |
 | [Reglamento (CE) 1069/2009](https://eur-lex.europa.eu/eli/reg/2009/1069/oj) y [Reglamento (UE) 142/2011](https://eur-lex.europa.eu/eli/reg/2011/142/oj) | Subproductos animales | Ingredientes de origen animal | pendiente |
 | [Reglamento (CE) 999/2001](https://eur-lex.europa.eu/eli/reg/2001/999/oj) | EET (restricciones de proteínas animales transformadas) | Proteínas de origen animal | pendiente |
@@ -172,6 +183,13 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 - Identidad y caracterización; seguridad para la especie diana; seguridad para el consumidor; seguridad para el
   usuario; seguridad para el medio ambiente; caracterización de microorganismos; renovación de autorizaciones:
   versión vigente pendiente de verificar en EFSA Journal (`nutria buscar efsa "FEEDAP guidance"`).
+- **Microorganismos** (aditivos con microorganismos y productos de fermentación; pendiente de verificación): estatus
+  QPS (presunción cualificada de seguridad) de la especie en la lista vigente de EFSA, genes de resistencia a
+  antimicrobianos adquiridos, toxigenicidad o patogenicidad y, si la cepa de producción está modificada
+  genéticamente, ausencia de células viables y de ADN recombinante en el producto (guía de la EFSA sobre la
+  caracterización de microorganismos en la cadena alimentaria; referencia exacta pendiente). Esto último es también
+  lo que determina si aplica el Reglamento (CE) 1829/2003 (tabla de normativa; alcance para las cepas de producción
+  pendiente de verificación).
 
 ## Implicaciones comerciales que conviene evaluar pronto
 

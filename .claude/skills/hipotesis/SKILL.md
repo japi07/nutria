@@ -15,6 +15,11 @@ description: Procedimiento para generar hipótesis originales y falsables (técn
 3. **Contradicciones** entre estudios: ¿qué diferencia (dieta basal, etapa, dosis, forma) explicaría resultados opuestos?
 4. **Reposicionamiento** desde la nutrición humana, otras especies o la acuicultura, con análisis explícito de la
    transferibilidad (destino digestivo, dosis, coste).
+   - En rumiantes, la microbiota ruminal se adapta a un aditivo que modifica la fermentación en días o semanas
+     `[SUP]` (plazo orientativo: búscalo con fuente para el compuesto concreto), y las incubaciones cortas en lote
+     (24-48 h `[SUP]`) no capturan esa adaptación. Un efecto visto solo ahí es `[HIP]` para el animal: no lo
+     extrapoles y propón como experimento un cultivo continuo (p. ej. RUSITEC) o un ensayo in vivo con periodo de
+     adaptación.
 5. **Combinaciones** con mecanismos complementarios (no redundantes), con riesgo de antagonismo analizado.
 6. **Resultados negativos**: por qué fracasaron productos parecidos y qué lo evitaría.
 

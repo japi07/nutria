@@ -52,8 +52,19 @@ requieren revisión de un profesional de asuntos regulatorios.
      Directivas 2003/74/CE y 2008/97/CE; con excepciones terapéuticas o zootécnicas controladas);
    - [ ] restricciones de EET a las proteínas de origen animal (Reglamento (CE) 999/2001; pendiente de verificar el
      anexo vigente);
-   - [ ] antibióticos como promotores del crecimiento: no autorizados (base legal: verificar artículo en el texto
-     consolidado).
+   - [ ] antibióticos distintos de coccidiostáticos e histomonóstatos como aditivos: no pueden autorizarse
+     (Reglamento (CE) 1831/2003, art. 11, apartado 2; CELEX 32003R1831; pendiente de verificación en el texto
+     consolidado). La prohibición no se limita a los antibióticos como promotores del crecimiento: vale sea cual sea
+     la finalidad, así que alcanza también a los **moduladores ruminales antimicrobianos para vacuno (p. ej.
+     ionóforos como la monensina)** y a los reductores de metano que sean antibióticos. La única excepción es su
+     autorización como coccidiostático o histomonóstato (categoría propia de aditivos, para las especies y condiciones
+     de esa autorización), que no ampara el uso como modulador ruminal (pendiente de verificación). Para esa finalidad
+     no hay vía como pienso ni como aditivo: un "sí" aquí es `bloqueada` salvo rediseño del activo (no basta cambiar la
+     alegación); la vía del medicamento veterinario queda fuera de alcance (paso 2). Con otro antimicrobiano
+     propuesto como modulador ruminal (p. ej. un extracto vegetal o un compuesto de síntesis), comprueba si encaja en
+     la definición de antibiótico del propio reglamento (antimicrobiano producido por un microorganismo o derivado de
+     él; art. 2, pendiente de verificación) y si es medicamento por función (paso 2); mientras no esté claro, la
+     propuesta es `no_resuelta` con revisión de un profesional, nunca `superada`.
 7. **Alegaciones** (Reglamento (CE) 767/2009, art. 13). Redacta la alegación propuesta y comprueba:
    - 13.1: es objetiva, verificable por las autoridades y comprensible, y hay justificación científica que aportar si
      se pide (pruebas científicas públicas o investigación documentada de la empresa);
@@ -61,14 +72,23 @@ requieren revisión de un profesional de asuntos regulatorios.
      no de prevenir, tratar o curar enfermedades;
    - 13.3.a: no es una alegación de enfermedad (prohibidas, con excepciones limitadas).
 8. **Otros marcos**: higiene (183/2005), sustancias indeseables (Directiva 2002/32/CE), Catálogo (68/2013 y
-   modificaciones) y Registro de materias primas, subproductos animales (1069/2009, 142/2011), OMG (1829/2003,
-   1830/2003), plaguicidas (396/2005), normativa nacional (en España, MAPA) y mercados fuera de la UE.
+   modificaciones) y Registro de materias primas, subproductos animales (1069/2009, 142/2011), plaguicidas
+   (396/2005), normativa nacional (en España, MAPA) y mercados fuera de la UE.
+   - **OMG** (Reglamentos (CE) 1829/2003 y 1830/2003; CELEX 32003R1829; pendiente de verificación): no se aplican a
+     todo producto de fermentación con cepas modificadas. El considerando 16 del 1829/2003 excluye lo producido "con"
+     un OMG (frente a lo producido "a partir de" un OMG): en un producto de fermentación, lo determinante es si
+     contiene células viables o ADN recombinante de la cepa de producción (guía de la EFSA sobre la caracterización
+     de microorganismos en la cadena alimentaria; referencia exacta pendiente de verificación). Anota cuál es el caso
+     y con qué análisis se demostraría.
 
 ## Seguridad (esquema FEEDAP)
 
 Especie diana (tolerancia), consumidor (residuos, genotoxicidad), usuario (inhalación, irritación, sensibilización),
-medio ambiente (excreción, persistencia). Lista los datos existentes y los que faltan. La compuerta `seguridad` la
-propone `compuestos-toxicologia`; el triage regulatorio aporta los requisitos.
+medio ambiente (excreción, persistencia). En microorganismos y productos de fermentación, además: identificación de
+la cepa, estatus QPS (presunción cualificada de seguridad) de EFSA (pendiente de verificación de la lista vigente),
+genes de resistencia a antimicrobianos adquiridos, toxigenicidad o patogenicidad y, si la cepa de producción está
+modificada, ausencia de células viables y de ADN recombinante en el producto. Lista los datos existentes y los que
+faltan. La compuerta `seguridad` la propone `compuestos-toxicologia`; el triage regulatorio aporta los requisitos.
 
 ## Salida
 
