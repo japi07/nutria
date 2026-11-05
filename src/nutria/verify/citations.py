@@ -1343,7 +1343,7 @@ def verify_doi(client, doi: str, citation_text: str | None = None) -> Verificati
     full = _copy(rec)
     full.doi = full.doi or normalize_doi(doi)
     full.pmid = pmid
-    full.pmcid = pm_rec.pmcid if pm_rec is not None else None
+    full.pmcid = pm_rec.pmcid if (pm_rec is not None and pmid) else None
     if not full.pmcid and oa_rec is not None and (oa_confirmed or not oa_pmid):
         full.pmcid = oa_rec.pmcid
     if oa_rec is not None and oa_rec is not rec:
