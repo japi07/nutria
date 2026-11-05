@@ -69,9 +69,13 @@ def _firma_solo_de_personas(args) -> None:
     cadena con terminal de control (`provenance.human_terminal_problems`).
 
     Residuo: la firma es una atestación sin autenticar. Excluye a los agentes que usan la CLI desde Claude Code, pero
-    no identifica a la persona; un proceso desvinculado de Claude Code con una pseudoterminal propia, una persona
-    malintencionada o quien escriba directamente en la base de datos pueden falsificarla. Sin /proc (macOS, Windows)
-    solo se comprueba el entorno del propio proceso.
+    no identifica a la persona. La eluden: una orden lanzada desde Claude Code con el entorno vacío dentro de un
+    multiplexor (tmux, screen) o con una pseudoterminal propia, ya desvinculada de Claude Code (en Linux basta una
+    orden; el hook de Bash bloquea esas herramientas por su nombre, no una orden construida con variables ni un
+    programa escrito en un fichero); en Windows, vaciar el entorno (sin /proc ni ps solo se mira el del propio
+    proceso; en macOS los antecesores salen de ps, sin su entorno inicial); una copia modificada de nutria o un
+    programa que escriba en la base de datos; y una persona malintencionada. Por diseño, una persona sin terminal de
+    control (ssh sin -t, cron, CI, un servicio) no puede firmar.
     """
     from .provenance import signature_problems
     firmas = [dest for dest, value in vars(args).items() if dest.startswith("firma") and value not in (None, False)]

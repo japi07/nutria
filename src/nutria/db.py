@@ -718,8 +718,9 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
       con `actor` (--agente) o NUTRIA_AGENT, y nunca sustituye una decisión firmada por una persona;
     - "superada" sin firma queda como propuesta y no cuenta como superada;
     - salir de "bloqueada" exige firma humana y evidencia;
-    - la evidencia (salvo en "bloqueada") no admite elementos vacíos, y los IDs del registro que cite deben existir
-      (que las URL y los ficheros citados existan lo comprueba la CLI, que conoce la raíz del proyecto).
+    - la evidencia (salvo en "bloqueada") no admite elementos vacíos ni la propia oportunidad, y los IDs del registro
+      que cite deben existir (la CLI, que conoce la raíz del proyecto, comprueba además que los ficheros citados sean
+      ficheros regulares dentro del proyecto y que las URL tengan forma de URL).
     """
     if gate not in valid_gates:
         raise RegistryError(f"Compuerta desconocida: {gate}. Válidas: {', '.join(sorted(valid_gates))}")

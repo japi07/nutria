@@ -10,7 +10,12 @@
 - D2-1: cada evaluador registra solo sus puntuaciones y el historial guarda el actor real.
 - D3-11, D3-12 y D9-7: cadena de hashes, `nutria procedencia verificar`, líneas corruptas contadas, contexto, sesión,
   git y entorno en cada evento, decisiones solo de inserción, sobre entidades existentes y con evento.
-- D1-11: autoría inventiva humana firmada. D7-7: hook de WebFetch y WebSearch.
+- D1-11: autoría inventiva humana firmada. D7-7: hook de WebFetch y WebSearch (por defecto solo huellas; la URL,
+  siempre redactada).
+- Revisión de la ronda 1: sin git en las pruebas que no lo piden (test_http.py intermitente), antecesores con `ps`
+  donde no hay /proc, opciones y --agente construidos con variables, multiplexores y ssh -t, git que descarta cambios,
+  mayúsculas en los nombres del registro, falsos positivos del hook, INSERT OR REPLACE, evaluadores normalizados,
+  evidencia (ficheros regulares del proyecto, no la propia oportunidad) y aviso de integridad en el listado.
 
 Las pruebas que firman como una persona llaman a `main()` en el mismo proceso: el fixture automático de conftest.py
 quita las señales de agente (también si pytest corre dentro de Claude Code).
