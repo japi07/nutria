@@ -1,9 +1,11 @@
 """Pruebas del paquete de economía, conversión de dosis, ranking y rúbrica.
 
 Cada prueba fija una corrección de la reauditoría: D1-10, D4-2, D4-11, D8-1, D8-4, D8-7, D8-11, D8-12, D8-13, D8-14 y
-la parte de D9-7 del ranking (procedencia reproducible). Las oportunidades y puntuaciones se construyen a partir de
-`ejemplos/*.json`; los modelos económicos, de `ejemplos/econ_*.toml` o de fragmentos TOML mínimos cuando la prueba
-comprueba una cuenta exacta.
+la parte de D9-7 del ranking (procedencia reproducible), incluidas las variantes del escéptico (compuerta crítica sin
+resolver con puntuación alta, P(top-k) dentro del subgrupo, rúbrica propia sin compuertas, menos de 3 evaluadores,
+entradas de la ración que no se usarían, fuentes [PUB] o [DER] que no se pueden rastrear). Las oportunidades y
+puntuaciones se construyen a partir de `ejemplos/*.json`; los modelos económicos, de `ejemplos/econ_*.toml` o de
+fragmentos TOML mínimos cuando la prueba comprueba una cuenta exacta.
 """
 
 from __future__ import annotations
