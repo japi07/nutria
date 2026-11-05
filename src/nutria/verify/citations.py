@@ -972,7 +972,8 @@ def _apply_citation(result: Verification, rec: Record | None, citation_text: str
             reasons.append("la entrada solo trae el identificador: escribe autores, año, título y revista para poder "
                            "comprobar que corresponde a la cita")
         if check.title_ok is False:
-            detail = [f"similitud {check.title_score:.2f}" if check.title_score is not None else "no encontrado"]
+            detail = [] if (check.text_before_title and not check.title_missing and not check.title_extra) else \
+                [f"similitud {check.title_score:.2f}" if check.title_score is not None else "no encontrado"]
             if check.title_missing:
                 detail.append("faltan: " + ", ".join(check.title_missing[:6]))
             if check.title_extra:
