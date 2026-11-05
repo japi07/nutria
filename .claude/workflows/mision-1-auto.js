@@ -221,7 +221,7 @@ const contarRumiantes = (lista) => lista.filter((o) => esRumiante(o.especie)).le
 
 // Paso 0 de la skill: nutria doctor (fuentes accesibles), nutria estado (oportunidades ya registradas), la fecha y los
 // ficheros que ya existen (para elegir nombres que no pisen los de ejecuciones anteriores).
-const DIRECTORIOS = ['research/revisiones', 'research/oportunidades', 'research/hipotesis']
+const DIRECTORIOS = ['research/revisiones', 'research/oportunidades', 'research/hipotesis', 'research/planes']
 const prepararPaso0 = async () => {
   phase('Preparación')
   const r = await lanzar(
@@ -251,9 +251,25 @@ const prepararPaso0 = async () => {
   }
   const f = esObjeto(r.fecha) ? String(r.fecha.salida || '').trim() : ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(f)) p0.fecha = f
-  // ls -1 de varios directorios: cabeceras "dir:" y un nombre por línea (un directorio que no exista solo da error en stderr).
+  // ls -1 de varios directorios: cabecera "dir:" y un nombre por línea (un directorio que no exista solo da error en
+  // stderr). Sin cabeceras reconocibles, cada nombre cuenta como ocupado en todos los directorios (falla en cerrado).
   if (esObjeto(r.ficheros) && typeof r.ficheros.salida === 'string') {
-    p0.ficheros = new Set(r.ficheros.salida.split('\n').map((l) => l.trim()).filter((l) => l && !l.endsWith(':')).map((l) => l.split('/').pop()))
+    p0.ficheros = new Map(DIRECTORIOS.map((dir) => [dir, new Set()]))
+    const sueltos = []
+    let actual = null
+    let cabeceras = 0
+    for (const linea of r.ficheros.salida.split('\n').map((l) => l.trim()).filter(Boolean)) {
+      if (linea.endsWith(':')) {
+        const dir = linea.slice(0, -1).replace(/^\.\//, '').replace(/\/+$/, '')
+        actual = p0.ficheros.has(dir) ? dir : null
+        cabeceras += 1
+        continue
+      }
+      const nombre = linea.split('/').pop()
+      if (actual) p0.ficheros.get(actual).add(nombre)
+      else sueltos.push(nombre)
+    }
+    if (!cabeceras) sueltos.forEach((nombre) => DIRECTORIOS.forEach((dir) => p0.ficheros.get(dir).add(nombre)))
   } else {
     p0.avisos.push('no se pudo leer qué ficheros existen: los nombres se eligen con la fecha y el título, y los agentes no sobrescriben ficheros existentes')
   }
@@ -271,16 +287,20 @@ const fechaDe = (p0) => {
   return 'sin-fecha'
 }
 // Nombres de fichero que no pisan los existentes (según el paso 0) ni los ya asignados en esta ejecución:
-// <base><ext>, y si existe, <base>-2<ext>, <base>-3<ext>... Con varias extensiones, todas deben estar libres
-// (p. ej. la oportunidad <base>.json y su primera hipótesis <base>_H1.json).
+// <base><ext>, y si existe, <base>-2<ext>, <base>-3<ext>... Cada destino es [directorio, sufijo] y todos deben estar
+// libres (p. ej. la oportunidad research/oportunidades/<base>.json y su primera hipótesis research/hipotesis/<base>_H1.json).
 const asignados = new Set()
-const nombreLibre = (p0, base, extensiones) => {
-  const ocupado = (nombre) => asignados.has(nombre) || Boolean(p0.ficheros && p0.ficheros.has(nombre))
+const nombreLibre = (p0, base, destinos) => {
+  const ocupado = ([dir, sufijo], candidato) => {
+    const nombre = `${candidato}${sufijo}`
+    return asignados.has(`${dir}/${nombre}`) || Boolean(p0.ficheros && p0.ficheros.get(dir) && p0.ficheros.get(dir).has(nombre))
+  }
   let candidato = base
-  for (let n = 2; extensiones.some((x) => ocupado(`${candidato}${x}`)); n += 1) candidato = `${base}-${n}`
-  extensiones.forEach((x) => asignados.add(`${candidato}${x}`))
+  for (let n = 2; destinos.some((d) => ocupado(d, candidato)); n += 1) candidato = `${base}-${n}`
+  destinos.forEach(([dir, sufijo]) => asignados.add(`${dir}/${candidato}${sufijo}`))
   return candidato
 }
+const REVISIONES = 'research/revisiones'
 
 // Compuertas efectivas de una oportunidad, leídas de la salida literal de nutria oportunidad ver (falla en cerrado).
 const leerRegistro = async (id, etiqueta, fase) => {
@@ -362,7 +382,7 @@ if (FASE === 'mapa') {
   if (!mapas.length) return { fase: FASE, error: 'Ningún enfoque devolvió problemas', preparacion: resumenPaso0(p0), fallos: resumenFallos() }
 
   const faltan = LENTES.filter((l) => !mapas.some((m) => m.enfoque === l.agente)).map((l) => l.agente)
-  const rutaMapa = `research/revisiones/${nombreLibre(p0, `M1a_mapa_problemas_${FECHA}`, ['.md'])}.md`
+  const rutaMapa = `${REVISIONES}/${nombreLibre(p0, `M1a_mapa_problemas_${FECHA}`, [[REVISIONES, '.md']])}.md`
   const mapa = await lanzar(
     `${REGLAS}\nConsolida estos mapas de problemas de especialistas independientes. Une duplicados, prioriza por carga × necesidad no cubierta con justificación ` +
     'y conserva los desacuerdos. Conserva para cada problema sus soluciones actuales y su eficacia documentada, con fuentes: los generadores de oportunidades las necesitan. ' +
@@ -571,7 +591,9 @@ if (FASE === 'oportunidades') {
 
   // Ficheros que no se pisan entre ejecuciones: fecha + título normalizado, con sufijo -2, -3... si ya existe un fichero
   // con ese nombre (según el paso 0) o se asignó en esta ejecución.
-  for (const o of seleccion) o.base_fichero = nombreLibre(p0, `M1_${FECHA}_${slugTitulo(o.titulo)}`, ['.json', '_H1.json'])
+  for (const o of seleccion) {
+    o.base_fichero = nombreLibre(p0, `M1_${FECHA}_${slugTitulo(o.titulo)}`, [['research/oportunidades', '.json'], ['research/hipotesis', '_H1.json']])
+  }
   if (presupuestoBajo()) {
     const motivo = `quedan ${Math.round(budget.remaining())} tokens de presupuesto (< ${UMBRAL_TOKENS}): no se registra ni se evalúa ninguna oportunidad para no dejar la misión a medias`
     log(`Fase detenida: ${motivo}`)
@@ -654,7 +676,7 @@ if (FASE === 'oportunidades') {
   const bloqueadas = registradas.filter((o) => o.bloqueada)
 
   phase('Ranking')
-  const rutaRanking = `research/revisiones/${nombreLibre(p0, `M1_ranking_${FECHA}`, ['.md'])}.md`
+  const rutaRanking = `${REVISIONES}/${nombreLibre(p0, `M1_ranking_${FECHA}`, [[REVISIONES, '.md']])}.md`
   const ranking = await lanzar(
     `${REGLAS}\nEjecuta nutria --agente director-cientifico puntuar ranking --perfil recomendado --sim 5000 --semilla 42 --min-evaluadores 3 --alfa 50 y también con --perfil original. ` +
     `Escribe ${rutaRanking} (es un fichero nuevo: si ya existiera, no lo sobrescribas; añade -2, -3... y devuelve la ruta real) con ambas salidas e interpretación: estado de cada oportunidad ` +
@@ -717,6 +739,13 @@ log(`Fase "planes": ${SELECCION.length} oportunidades elegidas. Estimación: ${1
   `compuertas del registro, plan, crítica, revisión, compuerta ética sobre el diseño y verificación de citas)${textoPresupuesto()}`)
 const p0 = await prepararPaso0()
 const FECHA = fechaDe(p0)
+// Nombres asignados antes del pipeline, en el orden de la selección (no dependen de qué agente termine antes): la
+// versión anterior de cada plan, si existe, se conserva en vez de sobrescribirse, y el análisis ético no pisa otro.
+const RUTAS_PLAN = Object.fromEntries(SELECCION.map((id) => [id, {
+  anterior: `research/planes/${nombreLibre(p0, `${id}_anterior_${FECHA}`, [['research/planes', '.md']])}.md`,
+  etica: `${REVISIONES}/${nombreLibre(p0, `${id}_etica_plan_${FECHA}`, [[REVISIONES, '.md']])}.md`,
+}]))
+const planExiste = (id) => (p0.ficheros && p0.ficheros.get('research/planes') ? p0.ficheros.get('research/planes').has(`${id}.md`) : null)
 phase('Planes')
 const planes = await pipeline(
   SELECCION,
@@ -733,7 +762,9 @@ const planes = await pipeline(
       `y los análisis de research/revisiones/ sobre ${id}. Incluye: pregunta PECO; protocolo de revisión sistemática (PRISMA 2020); datos a extraer (doble extracción); ` +
       'análisis estadísticos; modelos y simulaciones justificados por la decisión que informan; evaluación regulatoria y económica; criterios de descarte fijados de antemano; ' +
       `plan de validación in vitro → ex vivo → in vivo (solo diseño) con TODOS los puntos de tu lista de validación: ${textoLista}; cronograma y agentes responsables. ` +
-      `Comprueba con nutria decision listar --entidad ${id} si la selección tiene firma humana y dilo en el plan (sin ella, el plan es provisional).`,
+      `Comprueba con nutria decision listar --entidad ${id} si la selección tiene firma humana y dilo en el plan (sin ella, el plan es provisional).` +
+      (planExiste(id) === false ? '' : ` Si research/planes/${id}.md ya existe, no se pierde: antes de escribir, cópialo sin cambios a ${RUTAS_PLAN[id].anterior} ` +
+        '(es un fichero nuevo) y cita esa versión anterior en el plan nuevo.'),
       { label: `plan:${id}`, phase: 'Planes', agentType: 'director-cientifico', schema: PLAN },
     ).then((plan) => ({ ...r, plan }))
   },
@@ -759,7 +790,7 @@ const planes = await pipeline(
         'validación: 3R; Directiva 2010/63/UE y, en España, Real Decreto 53/2013 (procedimientos con animales, incluidos los donantes de líquido ruminal; la técnica ' +
         'in situ es in vivo); alternativas (líquido de matadero, métodos in vitro) y bienestar. VUELVE A PROPONER la compuerta "etica" con este diseño y regístrala como ' +
         `propuesta, sin --firma-humana: nutria --agente sostenibilidad-bienestar puntuar compuerta ${id} etica <superada|no_resuelta|bloqueada> --motivo "...". ` +
-        `Devuelve el mismo estado que registres. Guarda tu análisis en research/revisiones/${nombreLibre(p0, `${id}_etica_plan_${FECHA}`, ['.md'])}.md. No modifiques el plan.`,
+        `Devuelve el mismo estado que registres. Guarda tu análisis en ${RUTAS_PLAN[id].etica}. No modifiques el plan.`,
         { label: `etica-plan:${id}`, phase: 'Planes', agentType: 'sostenibilidad-bienestar', schema: COMPUERTA },
       ),
       () => verificarCitas((r.plan_revisado || r.plan).archivo, `plan:${id}`, 'Planes'),

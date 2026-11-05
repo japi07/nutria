@@ -831,7 +831,7 @@ def _regla_registro(project, capsys, opp_id: str, etiqueta: str = "compuertas-re
 def _ls(project) -> str:
     """Salida de `ls -1` de los directorios que lee el paso 0 de la misión 1."""
     bloques = []
-    for d in ("research/revisiones", "research/oportunidades", "research/hipotesis"):
+    for d in ("research/planes", "research/revisiones", "research/oportunidades", "research/hipotesis"):
         nombres = sorted(p.name for p in (project / d).iterdir()) if (project / d).is_dir() else []
         bloques.append(f"{d}:\n" + "".join(f"{n}\n" for n in nombres))
     return "\n".join(bloques)
@@ -847,7 +847,7 @@ def _regla_paso0(project, capsys, fecha: str = "2026-11-04", ficheros: str | Non
         "doctor": DOCTOR_SIN_RED,
         "estado": _salida(capsys, "--agente", "orquestador", "--json", "estado"),
         "fecha": {"orden": "date -u +%F", "codigo_salida": 0, "salida": f"{fecha}\n"},
-        "ficheros": {"orden": "ls -1 research/revisiones research/oportunidades research/hipotesis", "codigo_salida": 0,
+        "ficheros": {"orden": "ls -1 research/revisiones research/oportunidades research/hipotesis research/planes", "codigo_salida": 0,
                      "salida": _ls(project) if ficheros is None else ficheros}}}
 
 
@@ -1357,7 +1357,7 @@ def test_p8_mision1_paso0_en_cada_fase(args, project, capsys):  # D2-15
     paso0 = out["llamadas"][0]
     assert paso0["label"] == "paso0" and out["fases"][0] == "Preparación"
     for orden in ("nutria --agente orquestador --json doctor", "nutria --agente orquestador --json estado", "date -u +%F",
-                  "ls -1 research/revisiones research/oportunidades research/hipotesis"):
+                  "ls -1 research/revisiones research/oportunidades research/hipotesis research/planes"):
         assert orden in paso0["prompt"], orden
     assert out["resultado"]["preparacion"]["fuentes_no_accesibles"] == ["PubMed (NCBI E-utilities): BLOQUEADO por proxy/política de red"]
     assert out["resultado"]["fecha"] == "2026-11-04"  # la del sistema (paso 0) si no se indica args.fecha
@@ -1684,3 +1684,49 @@ def test_p8_version_de_claude_code_documentada():  # D2-17
         texto = _norm(_skill(nombre))
         assert "2.1.318" in texto and "herramienta Workflow" in texto, nombre
     assert "2.1.42" in _norm(_skill("mision-1"))
+
+
+# ------------------------------------------------------------------ P8: nada se sobrescribe entre ejecuciones
+@requires_node
+@pytest.mark.parametrize("declarada,esperada", [
+    ("research/revisiones/informes_O-0001_redteam-2.md", "research/revisiones/informes_O-0001_redteam-2.md"),
+    ("research/revisiones/otro_fichero.md", "research/revisiones/informes_O-0001_redteam.md"),  # ruta ajena: no se acepta
+    (None, "research/revisiones/informes_O-0001_redteam.md"),
+])
+def test_p8_red_team_no_sobrescribe_una_revision_anterior(declarada, esperada):  # D2-16
+    reglas = [{"label": "consolidacion", "respuesta": None if declarada is None else {"archivo": declarada}}]
+    out = run_workflow("red-team-auto", "research/informes/O-0001.md", reglas)
+    prompt = call(out, "consolidacion")["prompt"]
+    assert "no la sobrescribas" in prompt and "research/revisiones/informes_O-0001_redteam-2.md" in prompt
+    assert out["resultado"]["informe"] == esperada
+
+
+@requires_node
+def test_p8_mision1_planes_conserva_la_version_anterior(project, capsys):  # D2-15
+    _registrar_oportunidades(project, capsys, 2)
+    (project / "research" / "planes").mkdir(exist_ok=True)
+    (project / "research" / "planes" / "O-0001.md").write_text("# plan anterior\n", "utf-8")
+    (project / "research" / "planes" / "O-0001_anterior_2026-11-04.md").write_text("# otro\n", "utf-8")
+    reglas = [_regla_paso0(project, capsys), *[{"label": f"compuertas-registro:planes:{i}", "respuesta": _ver(capsys, i)}
+                                                for i in ("O-0001", "O-0002")]]
+    out = run_workflow("mision-1-auto", {"fase": "planes", "seleccion": ["O-0001", "O-0002"]}, reglas)
+    plan1 = _norm(call(out, "plan:O-0001")["prompt"])
+    assert "Si research/planes/O-0001.md ya existe, no se pierde" in plan1
+    assert "research/planes/O-0001_anterior_2026-11-04-2.md" in plan1  # el nombre libre según el paso 0
+    assert "ya existe, no se pierde" not in _norm(call(out, "plan:O-0002")["prompt"])  # el paso 0 dice que no existe
+    assert "research/revisiones/O-0001_etica_plan_2026-11-04.md" in call(out, "etica-plan:O-0001")["prompt"]
+
+
+@requires_node
+def test_p8_mision1_ficheros_por_directorio_y_sin_cabeceras(project, capsys):  # D2-15
+    # el mismo nombre en otro directorio no ocupa el de research/oportunidades
+    (project / "research" / "revisiones" / "M1_2026-11-04_oportunidad-a.json").write_text("{}", "utf-8")
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}},
+              *_reglas_novedad(), *_registro_secuencial(1)]
+    args = {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}
+    out = run_workflow("mision-1-auto", args, reglas)
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a.json " in call(out, "registro:1")["prompt"]
+    # sin cabeceras reconocibles, cada nombre cuenta como ocupado en todos los directorios (falla en cerrado)
+    sin_cabeceras = _regla_paso0(project, capsys, ficheros="M1_2026-11-04_oportunidad-a.json\n")
+    out = run_workflow("mision-1-auto", args, [sin_cabeceras, *reglas[1:]])
+    assert "research/oportunidades/M1_2026-11-04_oportunidad-a-2.json" in call(out, "registro:1")["prompt"]

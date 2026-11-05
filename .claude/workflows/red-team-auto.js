@@ -89,6 +89,7 @@ const ROL_CONSOLIDACION = ROL_EXTRACCION
 
 // Fichero de salida: incluye el directorio de origen, para que revisar research/planes/O-0001.md y
 // research/informes/O-0001.md no escriba en el mismo fichero (planes_O-0001_redteam.md frente a informes_O-0001_redteam.md).
+// Una revisión anterior del mismo documento tampoco se sobrescribe: la nueva va a <nombre>_redteam-2.md, -3.md...
 const rutaRedTeam = (archivo) => {
   const segs = String(archivo).replace(/\\/g, '/').split('/').filter((s) => s && s !== '.')
   const k = segs.lastIndexOf('research')
@@ -97,6 +98,11 @@ const rutaRedTeam = (archivo) => {
   return `research/revisiones/${nombre}_redteam.md`
 }
 const DESTINO = rutaRedTeam(ARCHIVO)
+const BASE_DESTINO = DESTINO.replace(/\.md$/, '')
+// Ruta real que declara el agente de consolidación: solo vale si es DESTINO o una variante -N de DESTINO.
+const rutaDeclarada = (r) => (r && typeof r.archivo === 'string' &&
+  (r.archivo === DESTINO || new RegExp(`^${BASE_DESTINO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+\\.md$`).test(r.archivo))
+  ? r.archivo : DESTINO)
 
 // ---------------------------------------------------------------- fallos y presupuesto
 // Los fallos de agentes se cuentan y se informan; nunca se descartan en silencio.
@@ -130,6 +136,7 @@ const VEREDICTOS = ['sostenida', 'debilitada', 'refutada', 'no_verificable']
 
 const AFIRMACIONES = S({ afirmaciones: { type: 'array', maxItems: MAX_AFIRMACIONES, items: S({ id: STR, texto: STR, importancia: STR }, ['id', 'texto']) } }, ['afirmaciones'])
 const VEREDICTO = S({ veredicto: { type: 'string', enum: VEREDICTOS }, motivo: STR, fuentes: STRS, accion: STR }, ['veredicto', 'motivo'])
+const CONSOLIDADO = S({ archivo: STR, resumen: STR }, ['archivo'])
 const OTRA_FAMILIA = S({
   ejecutado: { type: 'boolean' },
   modelos_utilizables: STRS,
@@ -236,7 +243,8 @@ const segundaOpinion = await otraFamilia
 phase('Consolidación')
 const sinQuorum = resultados.filter((j) => j.resultado === 'sin_quorum').map((j) => j.id)
 const consolidado = await lanzar(
-  `Escribe ${DESTINO} (crea solo ese fichero; no modifiques ${ARCHIVO} ni ningún otro) con una tabla "afirmación | resultado | motivos por enfoque | acción propuesta" ` +
+  `Escribe ${DESTINO} (crea solo ese fichero; no modifiques ${ARCHIVO} ni ningún otro; si ya existe una revisión anterior con ese nombre, no la ` +
+  `sobrescribas: usa ${BASE_DESTINO}-2.md, -3.md... y devuelve la ruta real en "archivo") con una tabla "afirmación | resultado | motivos por enfoque | acción propuesta" ` +
   'y un resumen de las tres debilidades más graves. No escribiste el documento revisado. Los resultados ya están agregados con quórum y con la regla de fuentes ' +
   '(si el enfoque "fuentes" no pudo comprobarlas, nunca "sostenida"): no los cambies. Las afirmaciones "sin_quorum" no tienen veredicto (menos de 2 veredictos ' +
   `válidos): dilo y propone repetir su revisión.${noRevisadas.length ? ` Las afirmaciones ${noRevisadas.map((af) => af.id).join(', ')} quedaron sin revisar por el límite de ${MAX_AFIRMACIONES}: dilo.` : ''} ` +
@@ -246,7 +254,7 @@ const consolidado = await lanzar(
   'las decide una persona).' +
   (fallos.length ? `\nAgentes que fallaron (decláralo en el documento): ${fallos.map((f) => f.agente).join(', ')}` : '') +
   `\nResultados: ${JSON.stringify(resultados)}\nSegunda opinión de otra familia: ${JSON.stringify(segundaOpinion)}`,
-  { label: 'consolidacion', phase: 'Consolidación', agentType: ROL_CONSOLIDACION },
+  { label: 'consolidacion', phase: 'Consolidación', agentType: ROL_CONSOLIDACION, schema: CONSOLIDADO },
 )
 
 return {
@@ -260,7 +268,7 @@ return {
   no_revisadas: noRevisadas.map((af) => af.id),
   otra_familia: { ejecutado: Boolean(segundaOpinion && segundaOpinion.ejecutado), motivo: segundaOpinion ? segundaOpinion.motivo : null,
     modelos: segundaOpinion && segundaOpinion.modelos_utilizables ? segundaOpinion.modelos_utilizables : [] },
-  informe: DESTINO,
+  informe: rutaDeclarada(consolidado),
   nota: consolidado ? 'Consolidado escrito' : 'No se pudo escribir el consolidado',
   fallos: resumenFallos(),
 }

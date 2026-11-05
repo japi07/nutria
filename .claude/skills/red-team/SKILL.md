@@ -35,7 +35,8 @@ herramienta Workflow) ejecuta este procedimiento.
    no confidencial. La opinión de un modelo no es evidencia.
 5. El mismo rol que extrajo las afirmaciones consolida en `research/revisiones/<directorio>_<nombre>_redteam.md` (el nombre incluye el
    directorio de origen: `research/informes/O-0001.md` → `informes_O-0001_redteam.md` y `research/planes/O-0001.md` →
-   `planes_O-0001_redteam.md`) una tabla `afirmación | veredicto | motivo | acción` sin cambiar los veredictos
+   `planes_O-0001_redteam.md`; una revisión anterior del mismo documento no se sobrescribe: la nueva va a
+   `..._redteam-2.md`, `-3.md`...) una tabla `afirmación | veredicto | motivo | acción` sin cambiar los veredictos
    agregados, e integra la segunda opinión, si la hubo, señalando coincidencias y discrepancias.
 6. Registra las acciones que resulten como propuestas (`nutria --agente <rol que consolida> decision registrar`,
    cambios de estado con motivo; sin firma: las decide una persona).
