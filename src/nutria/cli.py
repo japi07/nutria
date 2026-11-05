@@ -42,6 +42,25 @@ def _es_evaluador(args) -> bool:
     return declared_agent(getattr(args, "agente", None)).lower().startswith("evaluador")
 
 
+# Campos que pueden anticipar la conclusión esperada (el motivo del último cambio de estado: «seleccionada: mejor del
+# ranking») y que un evaluador independiente no ve (regla 9; revisión final de P8, residuo de D1-3).
+_OCULTOS_A_EVALUADORES = ("status_reason",)
+
+
+def _sin_conclusion(args, rows):
+    """`rows` (una fila o una lista) sin los campos que un evaluador no debe ver, si quien consulta es un evaluador."""
+    if not _es_evaluador(args):
+        return rows
+    def limpia(row):
+        if not isinstance(row, dict):
+            return row
+        out = {k: v for k, v in row.items() if k not in _OCULTOS_A_EVALUADORES}
+        if isinstance(out.get("hipotesis"), list):
+            out["hipotesis"] = [limpia(h) for h in out["hipotesis"]]
+        return out
+    return [limpia(r) for r in rows] if isinstance(rows, list) else limpia(rows)
+
+
 def _no_para_evaluadores(args, what: str) -> None:
     if _es_evaluador(args):
         raise SystemExit(f"Los evaluadores independientes no pueden {what}: puntúan a ciegas "
@@ -516,7 +535,7 @@ def cmd_estado(args, cfg) -> int:
              f"Compuertas 'superada' pendientes de firma humana: {data['compuertas_sin_firmar']}"]
     for o in opps:
         lines.append(f"  {o['id']} [{o['status']}] {o['title']}")
-    _emit(args, {**data, "lista_oportunidades": opps}, "\n".join(lines))
+    _emit(args, {**data, "lista_oportunidades": _sin_conclusion(args, opps)}, "\n".join(lines))
     return 0
 
 
@@ -1615,7 +1634,8 @@ def _entity_cmd(args, cfg, kind: str) -> int:
         _emit(args, {"ids": ids}, f"Registradas: {', '.join(ids)}")
     elif args.accion == "listar":
         rows = lst(conn, status=args.estado)
-        _emit(args, rows, "\n".join(f"{r['id']} [{r['status']}] {r['title']}" for r in rows) or "(vacío)")
+        _emit(args, _sin_conclusion(args, rows), "\n".join(f"{r['id']} [{r['status']}] {r['title']}" for r in rows)
+              or "(vacío)")
     elif args.accion == "ver":
         row = get(conn, args.id)
         if not row:
@@ -1628,7 +1648,7 @@ def _entity_cmd(args, cfg, kind: str) -> int:
             if not getattr(args, "sin_puntuaciones", False) and not _es_evaluador(args):
                 row["puntuaciones"] = registry.list_scores(conn, args.id)
             row["hipotesis"] = registry.list_hypotheses(conn, opportunity_id=args.id)
-        _emit(args, row)
+        _emit(args, _sin_conclusion(args, row))
     else:
         gate_ids = _rubric(cfg).gate_ids if kind == "oportunidad" else None
         set_status(conn, args.id, args.nuevo_estado, args.motivo, args.agente, args.firma_humana, gate_ids)

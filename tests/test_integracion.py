@@ -336,3 +336,38 @@ def test_ceguera_de_los_evaluadores_tambien_con_nutria_agent(project, capsys, mo
         code, out, err = _run(capsys, [*quien, *argv])
         assert code == 2 and "Los evaluadores independientes no pueden" in err, argv
         assert "propuesta: la mejor candidata" not in out
+
+
+# ============================================================================ fase de coordinación
+@pytest.mark.parametrize("identidad", ["agente", "variable"])
+def test_coord_status_reason_no_llega_a_los_evaluadores(project, capsys, monkeypatch, identidad):
+    """Revisión final de P8 (residuo de D1-3): el motivo del último cambio de estado de una oportunidad o de una
+    hipótesis («seleccionada: mejor del ranking») anticipa la conclusión esperada; un evaluador no lo ve en oportunidad
+    ver, oportunidad listar, hipotesis listar ni estado, se identifique con --agente o con NUTRIA_AGENT."""
+    _oportunidad(project)
+    code, _, _ = _run(capsys, ["--agente", "director-cientifico", "oportunidad", "estado", "O-0001", "en_evaluacion",
+                               "--motivo", "MOTIVO-ESTADO-3: mejor del ranking"])
+    assert code == 0
+    hip = json.loads((ROOT / "ejemplos" / "hipotesis_ejemplo.json").read_text("utf-8"))
+    hip = hip[0] if isinstance(hip, list) else hip
+    hip["oportunidad"] = "O-0001"
+    (project / "h.json").write_text(json.dumps(hip, ensure_ascii=False), "utf-8")
+    code, out, err = _run(capsys, ["--agente", "director-cientifico", "--json", "hipotesis", "nueva", "--datos",
+                                   str(project / "h.json")])
+    assert code == 0, err
+    hid = json.loads(out)["ids"][0]
+    code, _, err = _run(capsys, ["--agente", "director-cientifico", "hipotesis", "estado", hid, "en_revision", "--motivo",
+                                 "MOTIVO-ESTADO-3: la más prometedora"])
+    assert code == 0, err
+    code, out, _ = _run(capsys, ["--agente", "director-cientifico", "--json", "oportunidad", "ver", "O-0001"])
+    assert code == 0 and json.loads(out)["status_reason"].startswith("MOTIVO-ESTADO-3")      # control
+    if identidad == "variable":
+        monkeypatch.setenv("NUTRIA_AGENT", "evaluador-1")
+        quien = []
+    else:
+        quien = ["--agente", "evaluador-1"]
+    for argv in (["--json", "oportunidad", "ver", "O-0001", "--sin-puntuaciones"], ["--json", "oportunidad", "ver", "O-0001"],
+                 ["oportunidad", "ver", "O-0001"], ["--json", "oportunidad", "listar"], ["--json", "estado"],
+                 ["--json", "hipotesis", "listar"]):
+        code, out, _ = _run(capsys, [*quien, *argv])
+        assert code == 0 and "MOTIVO-ESTADO-3" not in out and "status_reason" not in out, argv
