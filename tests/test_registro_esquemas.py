@@ -291,7 +291,10 @@ def test_doble_extraccion_exige_dos_copias_independientes_y_depositadas(project,
         distinta[0]["media_tratamiento"] = 30.0
         b = _deposit(project, "x_B.json", distinta, "extractor-datos-B")
         _write(project / "x_B.json", recs, indent=2)
-    assert _code([*COMPARADOR, "extraccion", "comparar", a, b, "--registrar"]) not in (0, 1)
+    # Código 1 es solo «comparación registrada con discrepancias» (lo que lee el flujo automático para conciliar): un
+    # error de entrada sale con 2 (A y B son el mismo fichero) y uno del registro con 3 (fase de coordinación)
+    code = _code([*COMPARADOR, "extraccion", "comparar", a, b, "--registrar"])
+    assert code == (2 if caso == "mismo_fichero" else 3), (caso, code)
     assert db.list_extractions(_conn()) == []
     assert db.list_extraction_comparisons(_conn()) == []
 

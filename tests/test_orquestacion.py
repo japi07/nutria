@@ -580,8 +580,12 @@ def test_evaluar_stops_when_quick_discard_proposes_blocked(analisis, agente, pro
     assert res["motivo"] == f'propuesta "bloqueada" en el descarte rápido: {analisis} ({agente})'
     assert res["bloqueos"] == [{"analisis": analisis, "agente": agente, "motivo": "MOTIVO-BLOQUEO",
                                 "archivo": f"research/revisiones/O-0003_descarte_{analisis}.md"}]
-    assert "nutria destino ruminal" in call(out, "descarte:destino_digestivo")["prompt"]
-    assert "nutria econ ganadero research/datos/O-0003/econ_ganadero.toml" in call(out, "descarte:modelo_ganadero")["prompt"]
+    assert "nutria --agente fisiologia-bioquimica destino ruminal" in call(out, "descarte:destino_digestivo")["prompt"]
+    assert ("nutria --agente economia-mercado-pi econ ganadero research/datos/O-0003/econ_ganadero.toml --exigir-fuentes"
+            in call(out, "descarte:modelo_ganadero")["prompt"])
+    regulatoria = call(out, "descarte:regulatoria")["prompt"]
+    assert "nutria --agente regulacion-seguridad oportunidad clasificar O-0003 --ruta <ruta>" in regulatoria
+    assert "nutria --agente regulacion-seguridad normativa eurlex <CELEX>" in regulatoria
     assert "nutria --agente regulacion-seguridad puntuar compuerta O-0003 regulatoria" in call(out, "descarte:regulatoria")["prompt"]
 
 
@@ -599,8 +603,9 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring(project, cap
             {"agente": "nutricion-formulacion", "pregunta": "dieta basal", "entregable": "e"}]}},
         {"label": "bibliografia:O-0003", "respuesta": {"archivo": "research/revisiones/O-0003_busqueda.md", "estudios": estudios}},
         {"label": "extraccion:B:doi:10.1000/e4", "respuesta": None},
-        {"labelPrefix": "conciliacion:", "respuesta": {"discrepancias": 0, "registrada": True,
-                                                       "estado_verificacion": "doble_concordante"}},
+        # doble extracción con el registro: salidas literales de depositar, comparar --registrar y conciliar
+        *_reglas_doble_extraccion(project, capsys, "O-0003", [f"doi:10.1000/e{i}" for i in range(1, 5)],
+                                  con_discrepancias={"doi:10.1000/e2"}, sin_copia_b={"doi:10.1000/e4"}),
         {"label": "puntuacion:evaluador-2", "lanzar": "error terminal simulado"},
         *_reglas_puntuacion_emitida(project, capsys, "O-0003"),
         {"label": "informe:O-0003", "respuesta": {"archivo": "research/informes/O-0003.md", "decision_propuesta": "continuar"}},
@@ -617,10 +622,16 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring(project, cap
     assert extraccion_a["agentType"] == "extractor-datos"
     assert "research/datos/O-0003/extraccion_doi_10.1000_e1_A.json" in extraccion_a["prompt"]
     assert "NO la registres" in extraccion_a["prompt"]
-    assert ("extraccion comparar research/datos/O-0003/extraccion_doi_10.1000_e1_A.json "
-            "research/datos/O-0003/extraccion_doi_10.1000_e1_B.json") in call(out, "conciliacion:doi:10.1000/e1")["prompt"]
+    assert ("nutria --agente extractor-datos-A-O-0003-r1 --json extraccion depositar --datos "
+            "research/datos/O-0003/extraccion_doi_10.1000_e1_A.json") in extraccion_a["prompt"]
+    concilia = call(out, "conciliacion:doi:10.1000/e1")["prompt"]
+    assert ("nutria --agente extractor-datos-C-O-0003-r1 --json extraccion comparar research/datos/O-0003/extraccion_doi_10.1000_e1_A.json "
+            "research/datos/O-0003/extraccion_doi_10.1000_e1_B.json --registrar") in concilia
+    assert "extraccion conciliar <CE-xxxx>" in concilia and "No uses nutria extraccion agregar" in concilia
     assert "conciliacion:doi:10.1000/e4" not in ls  # sin copia B no se concilia ni se registra
-    assert call(out, "metaanalisis:O-0003")["agentType"] == "estadistico"  # 3 estudios comparables
+    meta = call(out, "metaanalisis:O-0003")
+    assert meta["agentType"] == "estadistico"  # 3 estudios comparables
+    assert 'nutria --agente estadistico extraccion exportar --variable "leche_kg_d" --especie "vacuno lechero"' in meta["prompt"]
     enum = call(out, "plan:O-0003")["schema"]["properties"]["preguntas"]["items"]["properties"]["agente"]["enum"]
     assert {"investigador-bibliografico", "estadistico"} <= set(enum)
     especialistas = [c for c in out["llamadas"] if c["phase"] == "Especialistas"]
@@ -647,6 +658,8 @@ def test_evaluar_full_flow_double_extraction_meta_and_blind_scoring(project, cap
     assert {f["agente"] for f in res["fallos"]["detalle"]} == {"extraccion:B:doi:10.1000/e4", "puntuacion:evaluador-2"}
     assert res["evidencia"]["doble_extraccion_registrada"] == 3
     assert [s["fuente"] for s in res["evidencia"]["sin_registrar"]] == ["doi:10.1000/e4"]
+    estados = {c["fuente"]: c["estado_verificacion"] for c in res["evidencia"]["comparaciones"]}
+    assert estados == {"doi:10.1000/e1": "doble_concordante", "doi:10.1000/e2": "resuelta", "doi:10.1000/e3": "doble_concordante"}
     assert next(e for e in res["evaluadores"] if e["id"] == "evaluador-2") == {
         "id": "evaluador-2", "modelo": "opus", "reintento": True, "emitida": True, "registrado": True, "fallo": None,
         "alerta": None}
@@ -2256,3 +2269,128 @@ def test_p8_mision1_id_de_otra_oportunidad_no_se_puntua(project, capsys):  # D2-
     assert 'comprueba que el título registrado de O-0001 es "Oportunidad A"' in triage
     sin_puntuar = out["resultado"]["oportunidades"][0]["sin_puntuar"]
     assert "no corresponde a la oportunidad generada" in sin_puntuar and "Otra oportunidad ya registrada" in sin_puntuar
+
+
+
+# ============================================================================ fase de coordinación: doble extracción
+# Petición de P7 a P8 (nota 11 del director): la doble extracción del workflow usa las órdenes del registro (depositar,
+# comparar --registrar y conciliar) con identidades por extractor, oportunidad y ejecución, y el workflow decide con
+# las salidas literales de nutria (no con el booleano que declare el agente de conciliación).
+def _reglas_doble_extraccion(project, capsys, opp_id: str, fuentes, con_discrepancias=(), sin_copia_b=(),
+                             ejecucion: int = 1) -> list[dict]:
+    """Reglas del arnés: cada extractor escribe su copia (del ejemplo de ejemplos/) y la deposita con la CLI real; el
+    tercer agente compara con --registrar y, si hay discrepancias, concilia. Las respuestas son salidas literales."""
+    import copy
+
+    from nutria import db
+    from nutria.config import load_config
+    conn = db.connect(load_config().db_path)
+    try:
+        for fuente in fuentes:
+            db.upsert_source(conn, {"doi": fuente.split(":", 1)[1], "title": f"Ensayo {fuente}", "year": 2020,
+                                    "verified": True, "retracted": False, "verified_via": "prueba"})
+    finally:
+        conn.close()
+    base = json.loads((EJEMPLOS / "extraccion_ejemplo.json").read_text("utf-8"))
+
+    def slug(f):
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", f).strip("_")
+
+    def ident(c):
+        return f"extractor-datos-{c}-{opp_id}-r{ejecucion}"
+    reglas = []
+    for fuente in fuentes:
+        recs = [dict(r, fuente=fuente, notas="registro de prueba") for r in base]
+        rel = {c: f"research/datos/{opp_id}/extraccion_{slug(fuente)}_{c}.json" for c in "AB"}
+        (project / rel["A"]).parent.mkdir(parents=True, exist_ok=True)
+        (project / rel["A"]).write_text(json.dumps(recs, ensure_ascii=False), "utf-8")
+        recs_b = copy.deepcopy(recs)
+        if fuente in con_discrepancias:
+            recs_b[0]["media_tratamiento"] = 30.0
+        (project / rel["B"]).write_text(json.dumps(recs_b, ensure_ascii=False, indent=1), "utf-8")
+        for c in "AB":
+            if c == "B" and fuente in sin_copia_b:
+                continue
+            dep = _salida(capsys, "--agente", ident(c), "--json", "extraccion", "depositar", "--datos", rel[c])
+            assert dep["codigo_salida"] == 0, dep
+            reglas.append({"label": f"extraccion:{c}:{fuente}",
+                           "respuesta": {"archivo": rel[c], "registros": len(recs), "deposito": dep}})
+        if fuente in sin_copia_b:
+            continue
+        cmp = _salida(capsys, "--agente", ident("C"), "--json", "extraccion", "comparar", rel["A"], rel["B"], "--registrar")
+        respuesta = {"comparar": cmp}
+        if cmp["codigo_salida"] == 1:
+            ce = json.loads(cmp["salida"])["id"]
+            conc = {"conciliacion": [{"a": 1, "b": 1, "resoluciones": [{"campo": "media_tratamiento", "origen_valor": "A",
+                                                                        "motivo": "Tabla 3, fila 2 (prueba)"}]},
+                                     {"a": 2, "b": 2, "resoluciones": []}], "no_resueltos": []}
+            ruta_c = f"research/datos/{opp_id}/conciliacion_{slug(fuente)}.json"
+            (project / ruta_c).write_text(json.dumps(conc, ensure_ascii=False), "utf-8")
+            respuesta["conciliar"] = _salida(capsys, "--agente", ident("C"), "--json", "extraccion", "conciliar", ce,
+                                             "--datos", ruta_c)
+            assert respuesta["conciliar"]["codigo_salida"] == 0, respuesta["conciliar"]
+        reglas.append({"label": f"conciliacion:{fuente}", "respuesta": respuesta})
+    return reglas
+
+
+def _estudios(n: int) -> list[dict]:
+    return [{"fuente": f"doi:10.1000/e{i}", "especie": "vacuno lechero", "tipo_estudio": "ensayo controlado",
+             "datos_cuantitativos": True, "comparable": True} for i in range(1, n + 1)]
+
+
+@requires_node
+def test_coord_doble_extraccion_decide_con_las_salidas_literales(project, capsys):
+    reglas = [_regla_registro(project, capsys, "O-0003"),
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "research/revisiones/O-0003_busqueda.md",
+                                                             "estudios": _estudios(4)}},
+              *_reglas_doble_extraccion(project, capsys, "O-0003", ["doi:10.1000/e1", "doi:10.1000/e2"],
+                                        con_discrepancias={"doi:10.1000/e2"})]
+    # e3: el agente de conciliación declara que todo fue bien, pero la comparación terminó con error (código 3)
+    error = _salida(capsys, "--agente", "extractor-datos-C-O-0003-r1", "--json", "extraccion", "comparar",
+                    "research/datos/O-0003/no_existe_A.json", "research/datos/O-0003/no_existe_B.json", "--registrar")
+    assert error["codigo_salida"] != 0
+    for copia in "AB":
+        reglas.append({"label": f"extraccion:{copia}:doi:10.1000/e3", "respuesta": next(
+            r["respuesta"] for r in reglas if r.get("label") == f"extraccion:{copia}:doi:10.1000/e1")})
+    reglas.append({"label": "conciliacion:doi:10.1000/e3", "respuesta": {
+        "comparar": error, "registrada": True, "estado_verificacion": "doble_concordante"}})
+    # e4: la copia A la depositó otra identidad (no la de esta ejecución)
+    otra = dict(next(r["respuesta"] for r in reglas if r.get("label") == "extraccion:A:doi:10.1000/e1"))
+    otra["deposito"] = dict(otra["deposito"], salida=otra["deposito"]["salida"].replace(
+        "extractor-datos-A-O-0003-r1", "extractor-datos-A-O-0003-r7"))
+    reglas += [{"label": "extraccion:A:doi:10.1000/e4", "respuesta": otra},
+               {"label": "extraccion:B:doi:10.1000/e4", "respuesta": next(
+                   r["respuesta"] for r in reglas if r.get("label") == "extraccion:B:doi:10.1000/e1")}]
+    out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003"}, reglas)
+    ev = out["resultado"]["evidencia"]
+    assert ev["doble_extraccion_registrada"] == 2
+    motivos = {s["fuente"]: s["motivo"] for s in ev["sin_registrar"]}
+    assert "no registró la comparación (código" in motivos["doi:10.1000/e3"]
+    assert "depositada por" in motivos["doi:10.1000/e4"]
+    assert "conciliacion:doi:10.1000/e4" not in labels(out)
+    assert "metaanalisis:O-0003" not in labels(out)    # 2 < 3 comparables
+    assert any("Metaanálisis no lanzado: 2 estudio(s)" in m for m in out["logs"])
+
+
+@requires_node
+def test_coord_discrepancias_sin_conciliacion_no_cuentan(project, capsys):
+    reglas = [_regla_registro(project, capsys, "O-0003"),
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "research/revisiones/O-0003_busqueda.md",
+                                                             "estudios": _estudios(1)}},
+              *_reglas_doble_extraccion(project, capsys, "O-0003", ["doi:10.1000/e1"], con_discrepancias={"doi:10.1000/e1"})]
+    conciliacion = next(r for r in reglas if r.get("label") == "conciliacion:doi:10.1000/e1")
+    del conciliacion["respuesta"]["conciliar"]
+    out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003"}, reglas)
+    ev = out["resultado"]["evidencia"]
+    assert ev["doble_extraccion_registrada"] == 0
+    assert "sin conciliación registrada" in ev["sin_registrar"][0]["motivo"]
+
+
+@requires_node
+def test_coord_ejecucion_da_identidades_nuevas_a_los_extractores(project, capsys):
+    reglas = [_regla_registro(project, capsys, "O-0003"),
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "a.md", "estudios": _estudios(1)}}]
+    out = run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "ejecucion": 2}, reglas)
+    assert "nutria --agente extractor-datos-B-O-0003-r2 --json extraccion depositar" in call(
+        out, "extraccion:B:doi:10.1000/e1")["prompt"]
+    assert run_workflow("evaluar-oportunidad-auto", {"id": "O-0003", "ejecucion": 0})["resultado"]["error"]

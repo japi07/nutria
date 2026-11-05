@@ -1,7 +1,7 @@
 export const meta = {
   name: 'evaluar-oportunidad-auto',
   description: 'Evaluación en profundidad de una oportunidad: compuertas efectivas leídas del registro, descarte rápido en paralelo (regulación, toxicología, destino digestivo y modelo del ganadero), evidencia con doble extracción y metaanálisis si hay al menos 3 estudios comparables, especialistas con crítica y verificación, puntuación ciega por 3 evaluadores independientes antes de la síntesis, informe con Anexo A y comprobación literal del sello; las puntuaciones solo se registran con sello válido',
-  whenToUse: 'Cuando una oportunidad registrada (O-xxxx) necesita una evaluación completa. Argumento: el ID, p. ej. "O-0003", o {"id": "O-0003", "max_estudios": 10, "max_preguntas": 10}. Se detiene antes de gastar más si alguna compuerta está bloqueada en el registro o alguien la propone "bloqueada". Con {"id": "O-0003", "registrar_puntuaciones": [...]} solo comprueba el sello y registra las puntuaciones que quedaron pendientes. El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución. Consume muchos tokens.',
+  whenToUse: 'Cuando una oportunidad registrada (O-xxxx) necesita una evaluación completa. Argumento: el ID, p. ej. "O-0003", o {"id": "O-0003", "max_estudios": 10, "max_preguntas": 10, "ejecucion": 1} ("ejecucion" da identidades nuevas a los extractores: súbelo si una ejecución anterior quedó interrumpida tras depositar copias o con discrepancias). Se detiene antes de gastar más si alguna compuerta está bloqueada en el registro o alguien la propone "bloqueada". Con {"id": "O-0003", "registrar_puntuaciones": [...]} solo comprueba el sello y registra las puntuaciones que quedaron pendientes. El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución. Consume muchos tokens.',
   phases: [
     { title: 'Compuertas del registro', detail: 'compuertas efectivas (salida literal de nutria oportunidad ver) al empezar, tras el descarte rápido y antes de puntuar, y eventos de puntuación de la procedencia antes de puntuar' },
     { title: 'Descarte rápido', detail: 'regulación, toxicología, destino digestivo y modelo del ganadero en paralelo' },
@@ -35,7 +35,7 @@ if (!/^O-\d{4}$/.test(ID)) {
 // Preguntas que se lanzan siempre (sus agentes proponen compuertas); cuentan dentro del tope de preguntas.
 const OBLIGATORIAS = [
   { agente: 'desarrollo-industrial', pregunta: 'Viabilidad de fabricación, estabilidad y método analítico para identificar y cuantificar el activo (o un marcador) en el producto, la premezcla y el pienso.', entregable: 'ficha industrial y propuesta de la compuerta analitica' },
-  { agente: 'economia-mercado-pi', pregunta: 'Valor para la empresa (nutria econ desarrollador, entradas con fuente o [SUP]), mercado, productos competidores, patentes y libertad de operación preliminar (la novedad frente a productos y patentes es tuya; la de la literatura, de investigador-bibliografico).', entregable: 'rNPV, mercado, novedad en productos y patentes y propuesta de la compuerta propiedad_intelectual' },
+  { agente: 'economia-mercado-pi', pregunta: `Valor para la empresa con la skill evaluacion-economica: nutria --agente economia-mercado-pi econ desarrollador research/datos/${ID}/econ_desarrollador.toml --ganadero research/datos/${ID}/econ_ganadero.toml --exigir-fuentes (entradas con fuente o [SUP]; distribución del VPN realizado y P(pérdida > umbral), no solo P(rNPV > 0)) y nutria --agente economia-mercado-pi econ coherencia research/datos/${ID}/econ_ganadero.toml research/datos/${ID}/econ_desarrollador.toml sin aviso antes de puntuar (si avisa, decláralo); mercado, productos competidores, patentes y libertad de operación preliminar (la novedad frente a productos y patentes es tuya, con nutria --agente economia-mercado-pi patentes y buscar --sensibilidad confidencial; la de la literatura, de investigador-bibliografico).`, entregable: 'rNPV con distribución del VPN realizado, coherencia con el modelo del ganadero, mercado, novedad en productos y patentes y propuesta de la compuerta propiedad_intelectual' },
   { agente: 'sostenibilidad-bienestar', pregunta: 'Impacto ambiental, bienestar y ética de la validación futura (3R, Directiva 2010/63/UE).', entregable: 'propuesta de la compuerta etica' },
 ]
 
@@ -51,11 +51,13 @@ const opcionEntera = (nombre, min, max, defecto) => {
 const OPCIONES = {
   max_estudios: opcionEntera('max_estudios', 1, 30, 10),
   max_preguntas: opcionEntera('max_preguntas', OBLIGATORIAS.length, 15, 10),
+  ejecucion: opcionEntera('ejecucion', 1, 99, 1),
 }
 const erroresOpciones = Object.values(OPCIONES).filter((o) => o.error).map((o) => o.error)
 if (erroresOpciones.length) return { id: ID, error: erroresOpciones.join('; ') }
 const MAX_ESTUDIOS = OPCIONES.max_estudios.valor
 const MAX_PREGUNTAS = OPCIONES.max_preguntas.valor
+const EJECUCION = OPCIONES.ejecucion.valor
 const MIN_COMPARABLES = 3
 const DIR = `research/datos/${ID}`
 const RUTA_INFORME = `research/informes/${ID}.md`
@@ -155,11 +157,10 @@ const ESTUDIOS = S({
   }, ['fuente', 'especie', 'tipo_estudio', 'datos_cuantitativos', 'comparable']) },
   evidencia_contraria: STRS, lagunas: STRS,
 }, ['archivo', 'estudios'])
-const EXTRACCION = S({ archivo: STR, registros: NUM, no_consta: STRS }, ['archivo', 'registros'])
-const CONCILIACION = S({
-  archivo: STR, discrepancias: NUM, resueltas: NUM, registrada: BOOL,
-  estado_verificacion: { type: 'string', enum: ['doble_concordante', 'resuelta', 'discrepancia'] }, ids: STRS, motivo: STR,
-}, ['discrepancias', 'registrada', 'estado_verificacion'])
+const EXTRACCION = S({ archivo: STR, registros: NUM, no_consta: STRS, deposito: SALIDA_ORDEN }, ['archivo', 'registros', 'deposito'])
+// Comparación y conciliación de la doble extracción: salidas literales de nutria extraccion comparar --registrar y, si
+// hubo discrepancias, de nutria extraccion conciliar (el workflow las interpreta: no se fía de lo que declare el agente).
+const CONCILIACION = S({ comparar: SALIDA_ORDEN, conciliar: SALIDA_ORDEN, archivo: STR }, ['comparar'])
 const META = S({ archivo: STR, csv: STR, k: NUM, orden: STR, resumen: STR, certeza: STR }, ['archivo', 'k', 'resumen'])
 const APORTACION = S({
   archivo: STR, resumen: STR,
@@ -221,7 +222,8 @@ const interpretarRegistro = (r) => {
       firmada: Boolean(fila && fila.human_signoff),
     }
   })
-  return { ok: true, estado: o.status || null, ruta: o.regulatory_route || null, efectivas: ef, bloqueadas }
+  return { ok: true, estado: o.status || null, ruta: o.regulatory_route || null, efectivas: ef, bloqueadas,
+    especie: typeof o.species === 'string' && o.species.trim() ? o.species.trim() : null }
 }
 const leerRegistro = async (momento) => interpretarRegistro(await lanzar(
   `Lectura del registro de ${ID} (${momento}). Ejecuta exactamente esta orden y ninguna otra: ${ordenRegistro}\n` +
@@ -414,6 +416,7 @@ const detener = (fase, extra, siguiente) => ({ id: ID, detenida_en: fase, ...ext
 // ================================================================ compuertas del registro (antes de gastar)
 phase('Compuertas del registro')
 const registroInicial = await leerRegistro('inicio')
+const ESPECIE = registroInicial && registroInicial.ok ? registroInicial.especie : null
 const bloqueoInicial = bloqueoDeRegistro(registroInicial)
 if (bloqueoInicial) {
   log(`Evaluación detenida antes de empezar: ${bloqueoInicial.motivo}`)
@@ -425,13 +428,16 @@ if (bloqueoInicial) {
 phase('Descarte rápido')
 const DESCARTE_RAPIDO = [
   { agente: 'regulacion-seguridad', analisis: 'regulatoria', registrable: true,
-    tarea: 'clasificación y vía regulatoria con la skill triage-regulatorio (primero pienso dietético, después medicamento por alegación y por función, sustancias prohibidas o restringidas, incluidos los moduladores ruminales antimicrobianos, y alegaciones)' },
+    tarea: 'clasificación y vía regulatoria con la skill triage-regulatorio (primero pienso dietético, después medicamento por alegación y por función, sustancias prohibidas o restringidas, incluidos los moduladores ruminales antimicrobianos, y alegaciones); ' +
+      'comprueba cada acto con nutria --agente regulacion-seguridad normativa eurlex <CELEX> (sin red, la base legal queda pendiente de verificación) y ' +
+      `registra la clasificación con nutria --agente regulacion-seguridad oportunidad clasificar ${ID} --ruta <ruta> [--grupo-funcional <categoria.grupo>, obligatorio con una ruta aditivo_*] ` +
+      '[--situacion <situación>] --motivo "..." (sin --firma-humana; una ruta fuera_de_alcance_* bloquea la compuerta regulatoria)' },
   { agente: 'compuestos-toxicologia', analisis: 'seguridad', registrable: true,
-    tarea: 'identidad del candidato y señales de seguridad para la especie diana, el consumidor, el usuario y el medio ambiente a la dosis prevista' },
+    tarea: 'identidad del candidato y señales de seguridad para la especie diana, el consumidor, el usuario y el medio ambiente a la dosis prevista (nutria --agente compuestos-toxicologia molecula pubchem "<nombre>" --peligros: «clasificado_sin_frases_H» no equivale a «sin peligro» y «sin_clasificacion» es que PubChem no tiene datos)' },
   { agente: 'fisiologia-bioquimica', analisis: 'destino_digestivo', registrable: true,
-    tarea: '¿llega el activo a la diana en cantidad relevante a una dosis viable? En rumiantes, calcula la degradabilidad efectiva y la fracción que escapa con nutria destino ruminal (a, b y kd con fuente; kp con fuente o [SUP]) o con una fracción de escape publicada, y ten en cuenta la adaptación de la microbiota ruminal (las incubaciones cortas en lote no la capturan)' },
+    tarea: '¿llega el activo a la diana en cantidad relevante a una dosis viable? En rumiantes, calcula la degradabilidad efectiva y la fracción que escapa con nutria --agente fisiologia-bioquimica destino ruminal (a, b y kd con fuente; kp con fuente o [SUP]) o con una fracción de escape publicada, y ten en cuenta la adaptación de la microbiota ruminal (las incubaciones cortas en lote no la capturan)' },
   { agente: 'economia-mercado-pi', analisis: 'modelo_ganadero', registrable: false,
-    tarea: `presupuesto parcial del ganadero con nutria econ ganadero ${DIR}/econ_ganadero.toml (cada entrada con fuente o [SUP]): coste por animal y día, respuesta umbral, P(beneficio neto > 0) y escenarios P10/P50/P90` },
+    tarea: `presupuesto parcial del ganadero con la skill evaluacion-economica: nutria --agente economia-mercado-pi econ ganadero ${DIR}/econ_ganadero.toml --exigir-fuentes (cada entrada con fuente o [SUP]): coste por animal y día y por tonelada de pienso, respuesta umbral, P(beneficio neto > 0) y escenarios P10/P50/P90` },
 ]
 const promptDescarte = (d) => `${REGLAS}\nDescarte rápido de ${ID} (nutria --agente ${d.agente} oportunidad ver ${ID} --sin-puntuaciones --json). Tu análisis: ${d.tarea}. ` +
   `Guarda tu análisis en research/revisiones/${ID}_descarte_${d.analisis}.md. ` +
@@ -513,26 +519,84 @@ log(`Evidencia: ${estudios.length} estudios incluidos, ${candidatos.length} con 
 
 const slug = (f) => String(f).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')
 const rutaExtraccion = (e, copia) => `${DIR}/extraccion_${slug(e.fuente)}_${copia}.json`
+const rutaConciliacion = (e) => `${DIR}/conciliacion_${slug(e.fuente)}.json`
+// Doble extracción con el registro: cada copia la deposita su extractor con una identidad propia de esta oportunidad y de
+// esta ejecución (una copia depositada es definitiva y quien vio las discrepancias de una fuente no vuelve a
+// extraerla: con identidades fijas, una ejecución interrumpida o una discrepancia anterior bloquearían la fuente).
+// Un tercer agente, con otra identidad, compara las dos copias registrando la comparación y, si hay discrepancias,
+// registra la conciliación. El workflow decide con las salidas literales de nutria, no con lo que declare el agente.
+const identidadExtractor = (copia) => `extractor-datos-${copia}-${ID}-r${EJECUCION}`
+const ordenDeposito = (e, copia) => `nutria --agente ${identidadExtractor(copia)} --json extraccion depositar --datos ${rutaExtraccion(e, copia)}`
+const ordenComparar = (e) => `nutria --agente ${identidadExtractor('C')} --json extraccion comparar ${rutaExtraccion(e, 'A')} ${rutaExtraccion(e, 'B')} --registrar`
 const extraer = (e, copia) => lanzar(
   `${REGLAS}\nExtracción ${copia} (independiente) de la fuente ${e.fuente} para ${ID}. Variables: ${VARIABLES.join('; ') || VARIABLE}. ` +
   'Sigue .claude/skills/extraccion-datos/SKILL.md y el esquema src/nutria/data/schemas/extraccion.schema.json. ' +
   `Escribe la lista de registros en ${rutaExtraccion(e, copia)} (un registro por comparación y variable, en el orden en que aparecen en la fuente). ` +
-  'NO la registres con nutria extraccion agregar y no leas la otra copia ni otros ficheros extraccion_*: la comparación es posterior y ciega.',
+  'No leas la otra copia ni otros ficheros extraccion_*: la comparación es posterior y ciega. NO la registres con nutria extraccion agregar. ' +
+  `Cuando la copia esté completa, deposítala (una copia depositada es definitiva: no la cambies después) con exactamente esta orden: ${ordenDeposito(e, copia)}\n` +
+  'Devuelve en "deposito" la orden ejecutada, su código de salida y su salida estándar literal y completa (sin resumir ni corregir).',
   { label: `extraccion:${copia}:${e.fuente}`, phase: 'Evidencia', agentType: 'extractor-datos', schema: EXTRACCION },
 )
 const conciliar = (e) => lanzar(
-  `${REGLAS}\nConcilia la doble extracción de ${e.fuente} (${ID}): ejecuta nutria --agente extractor-datos extraccion comparar ${rutaExtraccion(e, 'A')} ${rutaExtraccion(e, 'B')} ` +
-  '(código de salida 1 si hay discrepancias). Si coinciden, marca los registros "doble_concordante". Si no, resuelve cada discrepancia releyendo la fuente ' +
-  '(nunca promediando ni eligiendo al azar) y márcala "resuelta"; un registro que no puedas resolver queda como "discrepancia" en el fichero y NO se registra. ' +
-  `Escribe la versión conciliada en ${DIR}/extraccion_${slug(e.fuente)}_conciliada.json y regístrala con nutria --agente extractor-datos extraccion agregar --datos <fichero>.`,
+  `${REGLAS}\nComparación y conciliación de la doble extracción de ${e.fuente} (${ID}). Tu identidad es ${identidadExtractor('C')}: no eres ninguno de los dos extractores. ` +
+  `1) Ejecuta exactamente esta orden: ${ordenComparar(e)} (código 0: copias concordantes, ya registradas como doble_concordante; código 1: comparación CE-xxxx ` +
+  'registrada con discrepancias; otro código: error, no sigas). 2) Solo con código 1: resuelve cada discrepancia releyendo la fuente (nunca promediando ni eligiendo al ' +
+  `azar), escribe la conciliación en ${rutaConciliacion(e)} con el formato de ejemplos/conciliacion_ejemplo.json (para cada par de registros, el origen de cada valor: ` +
+  '"A", "B" o "fuente" con el valor y el motivo; para un dato que la fuente no publica, "fuente" con valor null; lo que no puedas resolver va en "no_resueltos" y no se ' +
+  `registra) y regístrala con exactamente: nutria --agente ${identidadExtractor('C')} --json extraccion conciliar <CE-xxxx> --datos ${rutaConciliacion(e)}\n` +
+  'Devuelve en "comparar" y, si concilias, en "conciliar" la orden ejecutada, su código de salida y su salida estándar literal y completa. No uses nutria extraccion agregar.',
   { label: `conciliacion:${e.fuente}`, phase: 'Evidencia', agentType: 'extractor-datos', schema: CONCILIACION },
 )
+const interpretarDeposito = (r, copia) => {
+  if (!r || !esObjeto(r.deposito)) return { ok: false, motivo: `copia ${copia}: sin la salida de nutria extraccion depositar (fallo de agente)` }
+  const d = r.deposito
+  if (d.codigo_salida !== 0) return { ok: false, motivo: `copia ${copia}: nutria extraccion depositar terminó con código ${d.codigo_salida}: ${recorte(d.salida)}` }
+  const p = parsear(d.salida)
+  const v = p.ok && esObjeto(p.valor) ? p.valor : null
+  if (!v || !Number.isInteger(v.id) || typeof v.sha256 !== 'string') return { ok: false, motivo: `copia ${copia}: la salida no es el JSON de nutria extraccion depositar` }
+  if (v.extractor !== identidadExtractor(copia)) return { ok: false, motivo: `copia ${copia}: depositada por "${recorte(v.extractor)}", no por ${identidadExtractor(copia)}` }
+  return { ok: true, id: v.id, sha256: v.sha256 }
+}
+// Doble extracción registrada según las salidas literales: comparación concordante (código 0) o con discrepancias
+// (código 1) y su conciliación registrada (código 0) con al menos un registro.
+const interpretarDoble = (c) => {
+  if (!c || !esObjeto(c.comparar)) return { registrada: false, motivo: 'sin la salida de nutria extraccion comparar (fallo de agente)' }
+  const cmp = c.comparar
+  const p = parsear(cmp.salida)
+  const v = p.ok && esObjeto(p.valor) ? p.valor : null
+  if (!v || typeof v.id !== 'string' || !/^CE-\d+$/.test(v.id)) {
+    return { registrada: false, motivo: `nutria extraccion comparar no registró la comparación (código ${cmp.codigo_salida}): ${recorte(cmp.salida)}` }
+  }
+  const ids = (x) => (Array.isArray(x) ? x.filter((i) => Number.isInteger(i)) : [])
+  if (cmp.codigo_salida === 0 && v.resultado === 'concordante' && ids(v.ids).length) {
+    return { registrada: true, comparacion: v.id, estado_verificacion: 'doble_concordante', ids: ids(v.ids), discrepancias: 0 }
+  }
+  if (cmp.codigo_salida !== 1 || v.resultado !== 'con_discrepancias') {
+    return { registrada: false, comparacion: v.id, motivo: `salida incoherente de nutria extraccion comparar (código ${cmp.codigo_salida}, resultado ${recorte(v.resultado)})` }
+  }
+  const discrepancias = Array.isArray(v.discrepancias) ? v.discrepancias.length : 0
+  const con = esObjeto(c.conciliar) ? c.conciliar : null
+  if (!con) return { registrada: false, comparacion: v.id, discrepancias, motivo: `comparación ${v.id} con ${discrepancias} discrepancia(s) sin conciliación registrada` }
+  const q = parsear(con.salida)
+  const w = q.ok && esObjeto(q.valor) ? q.valor : null
+  if (con.codigo_salida !== 0 || !w || w.id !== v.id || !Array.isArray(w.ids)) {
+    return { registrada: false, comparacion: v.id, discrepancias, motivo: `la conciliación de ${v.id} no se registró (código ${con.codigo_salida}): ${recorte(con.salida)}` }
+  }
+  const noResueltos = Array.isArray(w.no_resueltos) ? w.no_resueltos.length : 0
+  if (!ids(w.ids).length) return { registrada: false, comparacion: v.id, discrepancias, no_resueltos: noResueltos, motivo: `conciliación de ${v.id} sin ningún registro resuelto` }
+  return { registrada: true, comparacion: v.id, estado_verificacion: 'resuelta', ids: ids(w.ids), discrepancias, no_resueltos: noResueltos }
+}
 const extracciones = await pipeline(
   aExtraer,
   (e) => parallel([() => extraer(e, 'A'), () => extraer(e, 'B')]),
-  (ab, e) => (ab && ab[0] && ab[1]
-    ? conciliar(e).then((c) => (c ? { fuente: e.fuente, ...c } : { fuente: e.fuente, registrada: false, motivo: 'conciliación fallida (fallo de agente)' }))
-    : { fuente: e.fuente, registrada: false, motivo: 'doble extracción incompleta (fallo de agente): no se registra una extracción simple' }),
+  (ab, e) => {
+    const copias = [interpretarDeposito(ab && ab[0], 'A'), interpretarDeposito(ab && ab[1], 'B')]
+    const fallidas = copias.filter((d) => !d.ok)
+    if (fallidas.length) {
+      return { fuente: e.fuente, registrada: false, motivo: `doble extracción incompleta (${fallidas.map((d) => d.motivo).join('; ')}): no se registra una extracción simple` }
+    }
+    return conciliar(e).then((c) => ({ fuente: e.fuente, ...interpretarDoble(c) }))
+  },
 )
 const conciliadas = extracciones.filter((x) => x && x.registrada)
 const comparables = conciliadas.length
@@ -540,8 +604,9 @@ const sinRegistrar = extracciones.filter((x) => x && !x.registrada).map((x) => (
 let metaanalisis = null
 if (comparables >= MIN_COMPARABLES) {
   metaanalisis = await lanzar(
-    `${REGLAS}\nMetaanálisis de "${VARIABLE}" para ${ID} con .claude/skills/metaanalisis/SKILL.md: nutria extraccion exportar --variable "${VARIABLE}" --csv ${DIR}/${slug(VARIABLE)}.csv; ` +
-    'nutria meta analizar <csv> (REML, ajuste hksj por defecto; --agregar-estudio --rho 0.5 si hay comparaciones dependientes); sensibilidad, sesgo de publicación solo si k ≥ 10 ' +
+    `${REGLAS}\nMetaanálisis de "${VARIABLE}" para ${ID} con .claude/skills/metaanalisis/SKILL.md: nutria --agente estadistico extraccion exportar --variable "${VARIABLE}" ` +
+    `${ESPECIE ? `--especie "${ESPECIE}" ` : ''}--csv ${DIR}/${slug(VARIABLE)}.csv (solo pasan las extracciones con doble extracción registrada; lee los avisos); ` +
+    'nutria --agente estadistico meta analizar <csv> (REML, ajuste HKSJ modificado por defecto; --agregar-estudio --rho 0.5 si hay comparaciones dependientes); sensibilidad, sesgo de publicación solo si k ≥ 10 ' +
     `y certeza. Separa especies, unidades o diseños no combinables y explica por qué. Guarda órdenes y salidas en ${DIR}/ y registra las afirmaciones [DER] con la orden usada.`,
     { label: `metaanalisis:${ID}`, phase: 'Evidencia', agentType: 'estadistico', schema: META },
   )
@@ -557,6 +622,8 @@ const resumenEvidencia = {
   estudios_incluidos: estudios.length,
   comparables_con_datos: candidatos.length,
   doble_extraccion_registrada: comparables,
+  comparaciones: conciliadas.map((x) => ({ fuente: x.fuente, comparacion: x.comparacion, estado_verificacion: x.estado_verificacion,
+    ids: x.ids, discrepancias: x.discrepancias || 0, no_resueltos: x.no_resueltos || 0 })),
   sin_registrar: sinRegistrar,
   omitidos_por_limite: omitidos,
   metaanalisis: metaanalisis ? { archivo: archivoMeta, k: metaanalisis.k, resumen: metaanalisis.resumen } : null,
