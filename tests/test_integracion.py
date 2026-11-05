@@ -302,3 +302,37 @@ def test_clasificar_con_firma_desde_un_agente_se_rechaza_tambien_por_la_api(proj
         assert db.get_opportunity(conn, "O-0001")["regulatory_route"] == "materia_prima"
     finally:
         conn.close()
+
+
+# ============================================================================ P1 + P8: ceguera de los evaluadores
+@pytest.mark.parametrize("identidad", ["agente", "variable"])
+def test_ceguera_de_los_evaluadores_tambien_con_nutria_agent(project, capsys, monkeypatch, identidad):
+    """P8 oculta a los evaluadores las decisiones propuestas (la conclusión esperada) y las puntuaciones ajenas; P1
+    reconoce al evaluador por --agente o, sin él, por NUTRIA_AGENT. Con las dos ramas, un evaluador que solo declara la
+    variable tampoco ve nada de eso."""
+    _oportunidad(project)
+    for n in (1, 2, 3):
+        evaluador = f"evaluador-{n}"
+        code, _, _ = _run(capsys, ["--agente", evaluador, "puntuar", "registrar", "--datos",
+                                   str(_puntuaciones(project, evaluador))])
+        assert code == 0
+    code, _, _ = _run(capsys, ["--agente", "director-cientifico", "decision", "registrar", "--entidad", "O-0001",
+                               "--decision", "propuesta: la mejor candidata del ranking", "--motivo", "m"])
+    assert code == 0
+    # Control: quien no es evaluador sí ve decisiones y puntuaciones
+    code, out, _ = _run(capsys, ["--agente", "director-cientifico", "--json", "oportunidad", "ver", "O-0001"])
+    fila = json.loads(out)
+    assert code == 0 and fila["decisiones"] and fila["puntuaciones"]
+    if identidad == "variable":
+        monkeypatch.setenv("NUTRIA_AGENT", "evaluador-2")
+        quien = []
+    else:
+        quien = ["--agente", "evaluador-2"]
+    code, out, _ = _run(capsys, [*quien, "--json", "oportunidad", "ver", "O-0001"])
+    fila = json.loads(out)
+    assert code == 0 and "decisiones" not in fila and "puntuaciones" not in fila
+    for argv in (["decision", "listar"], ["decision", "listar", "--entidad", "O-0001"], ["puntuar", "ranking"],
+                 ["procedencia"]):
+        code, out, err = _run(capsys, [*quien, *argv])
+        assert code == 2 and "Los evaluadores independientes no pueden" in err, argv
+        assert "propuesta: la mejor candidata" not in out
