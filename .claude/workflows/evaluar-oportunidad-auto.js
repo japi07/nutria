@@ -184,6 +184,18 @@ const parsear = (texto) => {
 }
 const esObjeto = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x)
 const recorte = (t) => String(t === undefined || t === null ? '' : t).slice(0, 300)
+// Rutas de evidencia: solo análisis de esta oportunidad en research/revisiones/ o salidas en research/datos/<ID>/.
+// Una ruta que declare un agente fuera de ahí (un informe, un plan, una revisión de red team, puntuaciones) no se
+// usa: se toma la ruta esperada, para que nadie cuele en la evidencia de los evaluadores la conclusión esperada.
+const RUTA_EVIDENCIA_RE = new RegExp(`^(research/revisiones/${ID}_[^/]+\\.md|research/datos/${ID}/[^\\s]+)$`)
+const PROHIBIDO_EN_EVIDENCIA_RE = /redteam|puntuacion|informe|ranking|(^|\/)\.\.(\/|$)/i
+const rutaEvidencia = (declarada, esperada, quien) => {
+  const r = typeof declarada === 'string' ? declarada.trim().replace(/^\.\//, '') : ''
+  if (!r || r === esperada) return esperada
+  if (RUTA_EVIDENCIA_RE.test(r) && !PROHIBIDO_EN_EVIDENCIA_RE.test(r)) return r
+  log(`${quien} declaró su análisis en "${recorte(r)}", fuera de las rutas de evidencia de ${ID}: se usa ${esperada}`)
+  return esperada
+}
 
 // Compuertas efectivas del registro, leídas de la salida literal de nutria oportunidad ver (falla en cerrado).
 const ordenRegistro = `nutria --agente orquestador --json oportunidad ver ${ID} --sin-puntuaciones`
@@ -381,7 +393,7 @@ const descarte = await parallel(DESCARTE_RAPIDO.map((d) => () => lanzar(promptDe
 const resumenDescarte = DESCARTE_RAPIDO.map((d, i) => {
   const r = descarte[i]
   return { analisis: d.analisis, agente: d.agente, estado: r ? r.estado : 'sin_resultado', motivo: r ? r.motivo : 'el agente no devolvió resultado',
-    archivo: r && r.archivo ? r.archivo : `research/revisiones/${ID}_descarte_${d.analisis}.md` }
+    archivo: rutaEvidencia(r && r.archivo, `research/revisiones/${ID}_descarte_${d.analisis}.md`, `descarte:${d.analisis}`) }
 })
 const bloqueos = resumenDescarte.filter((d) => d.estado === 'bloqueada')
 if (bloqueos.length) {
@@ -480,14 +492,18 @@ if (comparables >= MIN_COMPARABLES) {
 } else {
   log(`Metaanálisis no lanzado: ${comparables} estudio(s) comparable(s) con doble extracción registrada (mínimo ${MIN_COMPARABLES})`)
 }
+const archivoBiblio = biblio ? rutaEvidencia(biblio.archivo, `research/revisiones/${ID}_busqueda.md`, `bibliografia:${ID}`) : null
+const archivoMeta = metaanalisis && typeof metaanalisis.archivo === 'string' && RUTA_EVIDENCIA_RE.test(metaanalisis.archivo) &&
+  !PROHIBIDO_EN_EVIDENCIA_RE.test(metaanalisis.archivo) ? metaanalisis.archivo : null
+if (metaanalisis && !archivoMeta) log(`El metaanálisis declaró su salida fuera de ${DIR}/: los evaluadores leen solo ${DIR}/`)
 const resumenEvidencia = {
-  revision: biblio ? biblio.archivo : null,
+  revision: archivoBiblio,
   estudios_incluidos: estudios.length,
   comparables_con_datos: candidatos.length,
   doble_extraccion_registrada: comparables,
   sin_registrar: sinRegistrar,
   omitidos_por_limite: omitidos,
-  metaanalisis: metaanalisis ? { archivo: metaanalisis.archivo, k: metaanalisis.k, resumen: metaanalisis.resumen } : null,
+  metaanalisis: metaanalisis ? { archivo: archivoMeta, k: metaanalisis.k, resumen: metaanalisis.resumen } : null,
   evidencia_contraria: biblio && biblio.evidencia_contraria ? biblio.evidencia_contraria : [],
 }
 
@@ -513,7 +529,7 @@ if (sinLanzar.length) {
 log(`Especialistas: ${preguntas.length} preguntas (hasta ${preguntas.length * 3} agentes con crítica y verificación); después, 1 lectura del registro, ` +
   `${EVALUADORES.length} evaluadores, informe, su verificación, sello y ${EVALUADORES.length} registros de puntuación`)
 const contextoEvidencia = `Evidencia disponible: revisión ${resumenEvidencia.revision || 'no disponible (fallo de agente)'}; ${comparables} estudio(s) con doble extracción registrada en ${DIR}/; ` +
-  `metaanálisis: ${metaanalisis ? metaanalisis.archivo : 'no realizado'}; análisis del descarte rápido: ${resumenDescarte.map((d) => `${d.analisis}=${d.archivo}`).join(', ')}.`
+  `metaanálisis: ${metaanalisis ? archivoMeta || `${DIR}/` : 'no realizado'}; análisis del descarte rápido: ${resumenDescarte.map((d) => `${d.analisis}=${d.archivo}`).join(', ')}.`
 const promptEspecialista = (q, i) => {
   const compuerta = COMPUERTA_DE[q.agente]
   const yaPropuesta = DESCARTE_RAPIDO.some((d) => d.agente === q.agente && d.registrable)
@@ -539,7 +555,7 @@ const aportaciones = await pipeline(
   (q, _orig, i) => lanzar(promptEspecialista(q, i), { label: `${q.agente}:${i + 1}`, phase: 'Especialistas', agentType: q.agente, schema: APORTACION }),
   (ap, q, i) => {
     if (!ap) return { agente: q.agente, pregunta: q.pregunta, fallo: true }
-    const archivo = ap.archivo || `research/revisiones/${ID}_${String(i + 1).padStart(2, '0')}_${q.agente}.md`
+    const archivo = rutaEvidencia(ap.archivo, `research/revisiones/${ID}_${String(i + 1).padStart(2, '0')}_${q.agente}.md`, `${q.agente}:${i + 1}`)
     return parallel([
       () => lanzar(`${REGLAS}\nIntenta refutar el análisis de ${q.agente} sobre ${ID}. Lee completo ${archivo} (no lo escribiste) e identifica tú las afirmaciones ` +
         'que sostienen su conclusión; no te limites a las que el autor declara como clave (abajo, solo como guía). Para cada una que no resista, di por qué; ' +
@@ -584,9 +600,9 @@ phase('Puntuación')
 // propuesta ni puntuaciones. Emiten su puntuación sin registrarla: se registra solo si el informe obtiene un sello válido.
 const archivosEvidencia = [...new Set([
   ...resumenDescarte.map((d) => d.archivo),
-  ...(biblio && biblio.archivo ? [biblio.archivo] : []),
+  ...(archivoBiblio ? [archivoBiblio] : []),
   ...aportacionesValidas.map((a) => a.archivo).filter(Boolean),
-  ...(metaanalisis && metaanalisis.archivo ? [metaanalisis.archivo] : []),
+  ...(archivoMeta ? [archivoMeta] : []),
 ])]
 const criticasYVerificacion = aportacionesValidas.map((a) => ({
   agente: a.agente, archivo: a.archivo,
@@ -596,7 +612,7 @@ const criticasYVerificacion = aportacionesValidas.map((a) => ({
 const promptEvaluador = (ev) =>
   `Eres el evaluador independiente "${ev.id}". Puntúa la oportunidad ${ID} con los 9 criterios de docs/RUBRICA.md siguiendo .claude/skills/puntuacion/SKILL.md, ` +
   'a ciegas: puntúas antes de que se redacten la síntesis, el informe y la decisión propuesta. ' +
-  `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${ID} --sin-puntuaciones --json (ignora su campo "decisiones": no es evidencia) ` +
+  `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${ID} --sin-puntuaciones --json (si incluye un campo "decisiones", ignóralo: no es evidencia) ` +
   `y solo esta evidencia: ${archivosEvidencia.join(', ')}; las salidas de ${DIR}/ (extracciones, metaanálisis, nutria econ y nutria destino ruminal); ` +
   'y las críticas y la verificación de fuentes de abajo. No leas nada más de research/: ni research/informes/ (ningún informe ni decisión propuesta, tampoco ' +
   'de evaluaciones anteriores), ni research/planes/, ni revisiones de red team (*redteam*), ni rankings, ni puntuaciones o ficheros *_puntuacion_* de otros ' +

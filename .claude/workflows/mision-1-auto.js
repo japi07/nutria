@@ -615,7 +615,7 @@ if (FASE === 'oportunidades') {
     `con nutria --agente ${o.generador} hipotesis nueva --datos <fichero>. Devuelve el ID asignado, el fichero y los IDs de las hipótesis.\n` + JSON.stringify(o)
   const promptEvaluador = (ev, o) =>
     `Eres el evaluador independiente "${ev.id}". Puntúa la oportunidad ${o.id} con los 9 criterios de docs/RUBRICA.md siguiendo .claude/skills/puntuacion/SKILL.md. ` +
-    `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${o.id} --sin-puntuaciones --json (ignora su campo "decisiones": no es evidencia) y la ` +
+    `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${o.id} --sin-puntuaciones --json (si incluye un campo "decisiones", ignóralo: no es evidencia) y la ` +
     `evidencia de abajo (análisis de triage, modelo del ganadero en research/datos/${o.id}/ y crítica). No ejecutes nutria puntuar ranking ni leas puntuaciones o ` +
     'ficheros de otros evaluadores, rankings, informes (research/informes/) ni planes (research/planes/). ' +
     `Guarda research/oportunidades/${o.id}_puntuacion_${ev.id}.json con "evaluador": "${ev.id}" y regístralo con nutria --agente ${ev.id} puntuar registrar --datos <fichero>.\n` +

@@ -1730,3 +1730,30 @@ def test_p8_mision1_ficheros_por_directorio_y_sin_cabeceras(project, capsys):  #
     sin_cabeceras = _regla_paso0(project, capsys, ficheros="M1_2026-11-04_oportunidad-a.json\n")
     out = run_workflow("mision-1-auto", args, [sin_cabeceras, *reglas[1:]])
     assert "research/oportunidades/M1_2026-11-04_oportunidad-a-2.json" in call(out, "registro:1")["prompt"]
+
+
+@requires_node
+def test_p8_evaluar_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas(project, capsys):  # D1-3, D2-2
+    reglas = [_regla_registro(project, capsys, "O-0003"), {"label": "plan:O-0003", "respuesta": _plan_evaluar(1)},
+              {"label": "descarte:seguridad", "respuesta": {"analisis": "seguridad", "estado": "no_resuelta", "motivo": "m", "resumen": "r",
+                                                            "archivo": "research/informes/O-0003.md"}},
+              {"labelPrefix": "desarrollo-industrial:", "respuesta": {"archivo": "research/revisiones/informes_O-0003_redteam.md",
+                                                                       "resumen": "r", "afirmaciones": []}},
+              {"labelPrefix": "economia-mercado-pi:", "respuesta": {"archivo": "research/datos/O-0003/../../planes/O-0003.md",
+                                                                     "resumen": "r", "afirmaciones": []}},
+              {"labelPrefix": "sostenibilidad-bienestar:", "respuesta": {"archivo": "research/revisiones/O-0003_huella.md",
+                                                                          "resumen": "r", "afirmaciones": []}},
+              {"label": "bibliografia:O-0003", "respuesta": {"archivo": "research/oportunidades/O-0003_puntuacion_evaluador-1.json", "estudios": []}}]
+    out = run_workflow("evaluar-oportunidad-auto", "O-0003", reglas)
+    for n in (1, 2, 3):
+        prompt = call(out, f"puntuacion:evaluador-{n}")["prompt"]
+        for ajena in ("research/informes/O-0003.md", "redteam.md", "planes/O-0003.md", "_puntuacion_evaluador-1.json"):
+            assert ajena not in prompt.split("No leas nada más")[0], ajena
+        for esperada in ("research/revisiones/O-0003_descarte_seguridad.md", "research/revisiones/O-0003_01_desarrollo-industrial.md",
+                         "research/revisiones/O-0003_02_economia-mercado-pi.md", "research/revisiones/O-0003_huella.md",
+                         "research/revisiones/O-0003_busqueda.md"):
+            assert esperada in prompt, esperada
+    assert call(out, "critica:desarrollo-industrial:1")["prompt"].count("research/revisiones/O-0003_01_desarrollo-industrial.md") == 1
+    rechazadas = [m.split(" declaró")[0] for m in out["logs"] if "fuera de las rutas de evidencia" in m]
+    assert {"descarte:seguridad", "desarrollo-industrial:1", "economia-mercado-pi:2", "bibliografia:O-0003"} <= set(rechazadas)
+    assert "sostenibilidad-bienestar:3" not in rechazadas  # su ruta es válida aunque no sea la esperada
