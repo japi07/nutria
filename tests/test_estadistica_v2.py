@@ -682,6 +682,12 @@ def test_cli_stpierre_por_defecto_y_procedencia(project, capsys):
         assert _eventos("meta_stpierre")[-1]["inputs"]["ponderar_sem"] == "sem"
         assert _json(capsys, "meta", "stpierre", str(path), "--respuesta", "y", "--dosis", "dosis", "--estudio",
                      "estudio", "--ponderar-sem", "sem")[0] == 2
+        # Diseños mezclados en el CSV de St-Pierre: aviso al principio
+        mezclado = [dict(r, diseno="cuadrado_latino" if r["estudio"] in ("S0", "S1") else "paralelo")
+                    for r in _datos_dosis(np.random.default_rng(5), de_pendiente=0.8)]
+        code, out, _ = _json(capsys, "meta", "stpierre", str(_csv(project / "mezcla_dosis.csv", mezclado)),
+                             "--respuesta", "y", "--dosis", "dosis", "--estudio", "estudio")
+        assert code == 0 and out["avisos"][0].startswith("El CSV combina diseños distintos (cuadrado_latino, paralelo)")
     with pytest.raises(SystemExit):
         main(["meta", "stpierre", str(path), "--respuesta", "y", "--dosis", "dosis", "--estudio", "estudio",
               "--pendiente-aleatoria", "--sin-pendiente-aleatoria"])

@@ -805,6 +805,30 @@ def _resumen_disenos(rows: list[dict], measure: str, labels: list[str]) -> tuple
     return info, mensajes
 
 
+def _avisos_mezcla_stpierre(rows: list[dict]) -> list[str]:
+    """Avisos de `meta stpierre` si el CSV declara diseños o unidades experimentales distintos."""
+    from .stats import effect_sizes as es
+
+    def seguro(norm, value):
+        try:
+            return norm(value)
+        except ValueError:
+            return str(value).strip().lower()
+
+    avisos = []
+    columnas = set().union(*(r.keys() for r in rows))
+    for col, norm, nombre in (("diseno", es.normalize_design, "diseños"),
+                              ("unidad_experimental", es.normalize_unit, "unidades experimentales")):
+        if col in columnas:
+            valores = sorted({seguro(norm, r.get(col)) for r in rows} - {None})
+            if len(valores) > 1:
+                avisos.append(f"El CSV combina {nombre} distintos ({', '.join(valores)}): las medias de tratamiento de "
+                              "crossovers o cuadrados latinos y de paralelos, o de corrales y de animales, no tienen "
+                              "la misma varianza residual. Analízalos por separado o añade el diseño como covariable "
+                              "(indicadora 0/1) y compruébalo.")
+    return avisos
+
+
 def _referencias(items) -> dict[str, str]:
     """--referencia COLUMNA=CATEGORIA (repetible) -> {columna: categoría}."""
     refs: dict[str, str] = {}
@@ -837,6 +861,7 @@ def cmd_meta(args, cfg) -> int:
         res = st_pierre(rows, args.respuesta, args.dosis, args.estudio, args.covariable,
                         {"si": True, "no": False, "auto": "auto"}[modo], descomponer=not args.sin_descomponer,
                         sem=args.ponderar_sem)
+        res["avisos"] = [*_avisos_mezcla_stpierre(rows), *res["avisos"]]
         log_event(cfg, "meta_stpierre", inputs={**entrada, "respuesta": args.respuesta, "dosis": args.dosis,
                                                 "estudio": args.estudio, "covariables": args.covariable,
                                                 "pendiente_aleatoria": modo, "descomponer": not args.sin_descomponer,

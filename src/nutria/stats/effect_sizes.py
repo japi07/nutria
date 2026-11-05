@@ -179,7 +179,9 @@ def paired_hedges_g(m_t: float, m_c: float, s_within: float, n: float, r: float)
     """SMD de grupos emparejados (Borenstein et al. 2009, cap. 4): d = (m_t - m_c)/S_within, con S_within
     la DE entre animales (la misma escala que la SMD de un diseño paralelo);
     V_d = (1/n + d²/(2n))·2·(1 - r); J = 1 - 3/(4·gl - 1), gl = n - 1; g = J·d; V_g = J²·V_d.
-    n es el número de animales (pares) y r la correlación intrasujeto, obligatoria."""
+    n es el número de unidades experimentales con ambos tratamientos (pares) y r la correlación
+    intrasujeto, obligatoria. V_d es una aproximación de muestras grandes: otras (p. ej. la de metafor
+    para el cambio medio estandarizado) difieren solo en el término de d², que pesa con efectos grandes."""
     if r is None:
         raise ValueError("La SMD de grupos emparejados necesita la correlación intrasujeto r")
     if n < 3:
