@@ -1803,6 +1803,9 @@ def test_constraints_pin_every_project_dependency_within_pyproject_bounds():
         key = re.sub(r"[-_.]+", "-", req.name).lower()
         assert key in pins, req.name
         assert req.specifier.contains(pins[key], prereleases=True), (req, pins[key])
+    # Ninguna versión preliminar (pueden desaparecer de PyPI y no reproducir el entorno).
+    from packaging.version import Version
+    assert not [f"{name}=={version}" for name, version in pins.items() if Version(version).is_prerelease]
 
 
 # ============================================================================ validación de respuestas (D5-15, D3-16)

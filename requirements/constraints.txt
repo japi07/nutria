@@ -4,8 +4,9 @@
 # versiones desde PyPI y la suite pasa con ellas.
 # Incluye las dependencias del proyecto (pyproject.toml), los extras `mixto` (statsmodels, pandas) y `dev`
 # (pytest), y sus dependencias transitivas; generado a partir de los paquetes instalados (importlib.metadata).
-# wrapt es una versión preliminar (2.6.0.dev1) porque formulaic (dependencia de statsmodels) la pide con
-# `wrapt>=1.17.0rc1`, una cota que admite versiones preliminares, y pip elige la más reciente publicada.
+# wrapt se fija en la última versión estable (2.5.2): formulaic (dependencia de statsmodels) la pide en Python >= 3.13
+# con `wrapt>=1.17.0rc1`, una cota que admite versiones preliminares, y sin este fichero pip elige la más reciente
+# publicada aunque sea preliminar (2.6.0.dev1 el 2026-11-05), que puede desaparecer de PyPI.
 # Uso, para reproducir el entorno de las pruebas:
 #   python -m venv .venv && source .venv/bin/activate
 #   pip install -e ".[dev,mixto]" -c requirements/constraints.txt
@@ -38,4 +39,4 @@ six==1.17.0
 statsmodels==0.15.0
 typing_extensions==4.16.0
 urllib3==2.8.0
-wrapt==2.6.0.dev1
+wrapt==2.5.2
