@@ -143,8 +143,21 @@ def report(*entries):
     return f"# Informe\n\nTexto [PUB] [R1].\n\n## 20. Bibliografía\n\n{bib}\n"
 
 
+_OPEN: list = []
+
+
+@pytest.fixture(autouse=True)
+def _close_connections():
+    """Cierra al terminar cada prueba las conexiones que abrió (sin ResourceWarning en pruebas posteriores)."""
+    yield
+    while _OPEN:
+        _OPEN.pop().close()
+
+
 def _conn():
-    return db.connect(load_config().db_path)
+    conn = db.connect(load_config().db_path)
+    _OPEN.append(conn)
+    return conn
 
 
 def _example(name: str, fallback: dict) -> dict:
@@ -1006,6 +1019,7 @@ def test_migracion_anade_la_columna_de_licencia_a_una_base_existente(tmp_path):
     old.commit()
     old.close()
     conn = db.connect(path)
+    _OPEN.append(conn)
     assert "license" in {r[1] for r in conn.execute("PRAGMA table_info(sources)")}
     assert db.get_source(conn, "doi:10.5555/viejo")["title"] == "Fuente antigua"
     sid = db.upsert_source(conn, {"doi": "10.5555/nuevo", "title": "Nueva", "verified": True, "retracted": False,
