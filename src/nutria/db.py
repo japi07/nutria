@@ -474,7 +474,8 @@ to be determined|defined|confirmed
 # Palabras que, solas o juntas, no identifican una especie, una etapa ni un estado (español e inglés).
 _GENERIC_TEMPLATES = """
 tod{o,a,os,as,es,xs}|vari{os,as,es,xs}|divers{o,a,os,as,es,xs}|distint{o,a,os,as,es,xs}|diferente{,s}|multiple{,s}
-cualquier{,a}|cualesquiera|ambos|ambas|otr{o,a,os,as,es,xs}|demas|resto|general{,es,mente}|generic{o,a,os,as}|mixt{o,a,os,as}|indistint{o,a,os,as}
+cualquier{,a}|cualesquiera|ambos|ambas|otr{o,a,os,as,es,xs}|demas|resto|general{,es,mente}|generic{o,a,os,as}
+mixt{o,a,os,as}|indistint{o,a,os,as}
 indistintamente|indiferente{,s}|global{,es}|comun{,es}|habitual{,es}|tipic{o,a,os,as}|estandar|normal{,es}
 complet{o,a,os,as}|enter{o,a,os,as}|total{,es}|multiespecie{,s}|pluriespecie{,s}|polivalente{,s}|particular{,es}
 cada|ciert{o,a,os,as}|algun{,o,a,os,as}|much{o,a,os,as}|numeros{o,a,os,as}|principal{,es}|relevante{,s}|posible{,s}
@@ -797,9 +798,9 @@ def extraction_problems(data: dict) -> list[str]:
         # las dos bases de la PDR deben cuadrar: PDR (% MS) = PDR (% PB) × PB (% MS) / 100
         expected = rdp_cp * cp / 100
         if abs(expected - rdp) > max(1.0, 0.1 * expected):
-            problems.append(f"pdr_pct_pb ({rdp_cp} % de la PB) y pdr_pct_ms ({rdp} % de la MS) no cuadran con pb_pct_ms "
-                            f"({cp} % de la MS): {rdp_cp} × {cp} / 100 = {expected:.1f} % de la MS. Comprueba la base de "
-                            "cada valor (¿una cifra en % de la PB anotada como % de la MS?)")
+            problems.append(f"pdr_pct_pb ({rdp_cp} % de la PB) y pdr_pct_ms ({rdp} % de la MS) no cuadran con "
+                            f"pb_pct_ms ({cp} % de la MS): {rdp_cp} × {cp} / 100 = {expected:.1f} % de la MS. "
+                            "Comprueba la base de cada valor (¿una cifra en % de la PB anotada como % de la MS?)")
     for events, n in (("eventos_control", "n_control"), ("eventos_tratamiento", "n_tratamiento")):
         if _is_number(data.get(events)) and _is_number(data.get(n)) and data[events] > data[n]:
             problems.append(f"{events} ({data[events]}) supera {n} ({data[n]}): los eventos son animales (o unidades) "
@@ -935,7 +936,8 @@ def _row_matches(conn: sqlite3.Connection, row: sqlite3.Row, record: dict) -> bo
         if not same_value(_norm_value(key, row[col]), _norm_value(key, record.get(key))):
             return False
     stored = json.loads(row["not_reported"]) if row["not_reported"] else None
-    if not same_value(_norm_value("no_consta", stored or None), _norm_value("no_consta", record.get("no_consta") or None)):
+    declared = record.get("no_consta") or None
+    if not same_value(_norm_value("no_consta", stored or None), _norm_value("no_consta", declared)):
         return False
     return record.get("fuente") in _source_aliases(conn, row["source_id"])
 
@@ -1141,10 +1143,10 @@ def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha25
             shared = sorted(sid for sid in sources if aliases[sid] & listed)
             if shared:
                 raise RegistryError(
-                    f"'{who}' ya depositó la copia #{row['id']} con registros de {', '.join(shared)}, aún sin comparar: "
-                    "una copia depositada es definitiva y no se sustituye por otra corregida. Compárala con la del otro "
-                    "extractor (`nutria extraccion comparar A.json B.json --registrar`) y, si hay discrepancias, "
-                    "concíliala releyendo la fuente (`nutria extraccion conciliar`)")
+                    f"'{who}' ya depositó la copia #{row['id']} con registros de {', '.join(shared)}, aún sin "
+                    "comparar: una copia depositada es definitiva y no se sustituye por otra corregida. Compárala con "
+                    "la del otro extractor (`nutria extraccion comparar A.json B.json --registrar`) y, si hay "
+                    "discrepancias, concíliala releyendo la fuente (`nutria extraccion conciliar`)")
         cur = conn.execute(
             "INSERT INTO extraction_copies (sha256, path, records, n_records, source_ids, deposited_by, deposited_at) "
             "VALUES (?,?,?,?,?,?,?)", (sha256, path, _dumps(records), len(records), _dumps(sources), who, utc_now()))
@@ -1190,8 +1192,8 @@ def _pick_copies(conn: sqlite3.Connection, sha_a: str, sha_b: str) -> tuple[sqli
                 return a, b
     actors = sorted({r["deposited_by"] for r in found["A"] + found["B"]})
     raise RegistryError(f"Las dos copias las depositó el mismo extractor ({', '.join(actors)}; una identidad se "
-                        "compara sin mayúsculas, tildes ni signos): la doble extracción exige dos extractores distintos "
-                        "que trabajen de forma independiente")
+                        "compara sin mayúsculas, tildes ni signos): la doble extracción exige dos extractores "
+                        "distintos que trabajen de forma independiente")
 
 
 def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: str, actor: str | None = None,
