@@ -1422,7 +1422,8 @@ def build_parser() -> argparse.ArgumentParser:
         if kind == "oportunidad":
             x = ks.add_parser("clasificar", parents=[common],
                               help="sustituye la clasificación regulatoria (ruta, grupo funcional y situación) por el "
-                                   "resultado del triage")
+                                   "resultado del triage (sin firma, solo --agente regulacion-seguridad; una ruta "
+                                   "fuera_de_alcance_* la propone cualquiera y bloquea la compuerta regulatoria)")
             x.add_argument("id")
             x.add_argument("--ruta", required=True, choices=_opciones_esquema("oportunidad", "ruta_regulatoria_preliminar"))
             x.add_argument("--grupo-funcional", dest="grupo_funcional", metavar="CATEGORIA.GRUPO",
@@ -1433,7 +1434,7 @@ def build_parser() -> argparse.ArgumentParser:
             x.add_argument("--situacion", choices=_opciones_esquema("oportunidad", "situacion"))
             x.add_argument("--motivo", required=True, help="resultado del triage que justifica la clasificación")
             x.add_argument("--firma-humana", dest="firma_humana",
-                           help="persona que valida salir de una ruta fuera_de_alcance_* (solo personas)")
+                           help="persona que clasifica o que valida salir de una ruta fuera_de_alcance_* (solo personas)")
         s.set_defaults(func=func)
 
     s = sub.add_parser("puntuar", parents=[common], help="priorización con rúbrica y compuertas")
