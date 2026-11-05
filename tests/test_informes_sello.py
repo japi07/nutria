@@ -342,6 +342,24 @@ def test_unreadable_status_fails_closed(front):
     assert info.problem and info.strict
 
 
+@pytest.mark.parametrize("text", [
+    "---\nestado: borrador\n---\n# x\n\n**Estado:** final\n",                       # el cuerpo dice otra cosa
+    "---\nestado: borrador\n---\n# x\n\n- _Estado_: 'revisado' (pendiente de sello)\n",
+    "---\n<!--\nestado: final\n-->\nestado: borrador\n---\n# x\n",                  # comentario HTML en el front matter
+    "---\nestado: borrador <!--\n---\nestado: final\n-->\n---\n# x\n",
+])
+def test_ambiguous_status_fails_closed(text):
+    info = chk.status_info(text)
+    assert info.strict and info.problem
+    assert any(info.problem in e for e in _errors(text, require_sections=False))
+
+
+def test_body_mentions_of_the_word_estado_are_not_statuses():
+    for line in ("Estado: final de la gestación (preparto).", "El estado: final del ensayo se decidirá después."):
+        info = chk.status_info(f"---\nestado: borrador\n---\n# x\n\n{line}\n")
+        assert info.value == "borrador" and not info.strict and info.problem is None, line
+
+
 def test_status_outside_front_matter_and_missing_status_in_reports(tmp_path):
     assert chk.status_info("# x\nestado: final\n").strict
     report = tmp_path / "research" / "informes" / "sub" / "E.md"
@@ -608,13 +626,65 @@ def test_a_row_that_fits_two_claims_equally_counts_for_none_unless_negative():
 
 def test_repeated_claim_and_second_claim_of_a_sentence():
     body = ("La colina aumentó la leche en vacas [PUB] [R1].\n\n"
-            "Resumen: la colina aumentó la leche en vacas [PUB] [R1].")
+            "La colina aumentó la leche en vacas [PUB] [R1].")
     assert _annex_errors(body, "| R1 | La colina aumentó la leche en vacas | respalda | y |") == []
+    # «Resumen:» forma parte de la segunda afirmación («:» no cierra la frase): ya no es idéntica a la primera y
+    # necesita su propia fila, copiada tal como aparece.
+    body = ("La colina aumentó la leche en vacas [PUB] [R1].\n\n"
+            "Resumen: la colina aumentó la leche en vacas [PUB] [R1].")
+    row = "| R1 | La colina aumentó la leche en vacas | respalda | y |"
+    assert any("línea 8" in e for e in _annex_errors(body, row))
+    assert _annex_errors(body, row + "\n| R1 | Resumen: la colina aumentó la leche en vacas | respalda | y |") == []
     body = "La colina aumentó la leche [PUB] [R1] y redujo la cetosis [PUB] [R1]."
     rows = "| R1 | La colina aumentó la leche | respalda | y |\n| R1 | La colina ... redujo la cetosis | respalda | z |"
     assert _annex_errors(body, rows) == []
     errors = _annex_errors(body, rows.replace("La colina ... redujo", "La colina redujo"))
     assert any("«redujo la cetosis»" in e for e in errors)        # el mensaje dice qué texto reproducir
+
+
+@pytest.mark.parametrize("body, row", [
+    # «;» o «:» no cierran la afirmación: la parte sustantiva antes de ellos sigue siendo de la [PUB]
+    ("La colina aumentó la leche 1,2 kg/d en vacas en transición; así [PUB] [R1].", "así"),
+    ("La colina aumentó la leche 1,2 kg/d en vacas en transición: así lo publicaron [PUB] [R1].",
+     "así lo publicaron"),
+    # la etiqueta antes de la parte sustantiva no la deja fuera
+    ("Según el ensayo de campo publicado [R1] [PUB], la colina aumentó la leche 1,2 kg/d en vacas en transición.",
+     "Según el ensayo de campo publicado"),
+    ("Según [R1] [PUB]: la colina aumentó la leche 1,2 kg/d en vacas en transición.", "Según"),
+])
+def test_claim_is_not_shrunk_by_punctuation_or_label_position(body, row):
+    # D3-3: una fila que solo reproduce una muletilla no respalda la afirmación sustantiva de la frase
+    errors = _annex_errors(body, f"| R1 | {row} | respalda | x |")
+    assert any("Sin comprobación de respaldo de R1" in e for e in errors), errors
+    whole = "| R1 | la colina aumentó la leche 1,2 kg/d en vacas en transición | respalda | x |"
+    assert _annex_errors(body, whole) == []
+
+
+def test_trailing_qualifiers_belong_to_the_last_claim_of_the_sentence():
+    body = "La colina protegida aumentó la leche [PUB] [R1] en vacas multíparas Holstein durante la transición."
+    errors = _annex_errors(body, "| R1 | La colina protegida aumentó la leche | respalda | x |")
+    assert any("Sin comprobación de respaldo de R1" in e for e in errors)
+    assert _annex_errors(body, "| R1 | La colina protegida aumentó la leche ... en vacas multíparas Holstein | "
+                               "respalda | x |") == []
+    # con la etiqueta delante, cada afirmación es lo que sigue hasta la etiqueta siguiente
+    body = "[PUB] [R1] La colina protegida aumentó la leche en vacas y [HIP] la grasa también."
+    assert _annex_errors(body, "| R1 | La colina protegida aumentó la leche en vacas | respalda | x |") == []
+
+
+def test_negative_rows_without_a_claim_or_reference_are_errors_even_in_drafts():
+    body = "La colina aumentó la leche en vacas [PUB] [R1]."
+    rows = ("| R1 | La colina aumentó la leche en vacas | respalda | y |\n"
+            "| R1 | La colina redujo la mortalidad de los terneros | no_respalda | no lo dice |\n"
+            "| sin ref | La colina aumentó la leche en vacas | no_verificable | z |\n"
+            "| R1 | | no_respalda | vacía |")
+    draft = _strict_doc(body, rows).replace("estado: final", "estado: borrador")
+    errors = _errors(draft, require_sections=False)
+    assert any("no corresponde a ninguna afirmación" in e for e in errors)
+    assert any("sin referencia [Rn] reconocible" in e for e in errors)
+    assert any("la columna Afirmación está vacía" in e for e in errors)
+    positive = _strict_doc(body, rows.split("\n")[0] + "\n| R1 | Otra afirmación que ya no está | respalda | w |")
+    warnings = chk.check_report(positive.replace("estado: final", "estado: borrador"), require_sections=False)
+    assert any("no corresponde a ninguna afirmación" in str(i) and i.severity == "aviso" for i in warnings)
 
 
 def test_rows_separated_from_the_table_or_before_its_header_are_not_ignored():
@@ -712,6 +782,7 @@ def test_skeleton_stamp_does_not_look_like_a_guarantee(project, online, capsys):
     assert "Sello válido" in _out(capsys)
     ok, msg = chk.stamp_status(plan)
     assert ok and "no había referencias que verificar" in msg and "documento sin estructura de informe" in msg
+    assert "sin revisión humana" in msg                       # un borrador sellado no parece un informe revisado
     final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
     errors = _errors(final, conn=_conn(), path=path)
     assert any("[POR COMPLETAR]" in e for e in errors)
@@ -905,6 +976,43 @@ def test_section_14_gate_states_must_match_the_registry(project):
                          "Ruta regulatoria preliminar: `aditivo_zootecnico` [SUP].", final)
     assert any("no recoge la ruta regulatoria que el registro tiene para O-0001 («indeterminada»)" in e
                for e in _errors(other_route, conn=_conn(), path=path))
+
+
+def test_section_14_gate_states_in_any_wording_are_checked_against_the_registry(project):
+    # D5-11: sin tabla y sin la palabra «compuerta», «- seguridad: superada» también se contrasta con el registro
+    path = _filled_report(project)
+    text = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    section14 = text.split("## 14.")[1].split("## 15.")[0]
+    table = "\n".join(line for line in section14.split("\n") if line.startswith("|"))
+    gates = chk.gate_ids_for(path)
+    listed = text.replace(table, "\n".join(f"- {g}: superada" for g in gates))
+    errors = _errors(listed, conn=_conn(), path=path)
+    assert sum("dice «superada» para la compuerta" in e for e in errors) == len(gates)
+    honest = text.replace(table, "\n".join(f"- {g}: no resuelta" for g in gates))
+    assert not any("compuerta" in e for e in _errors(honest, conn=_conn(), path=path))
+    # el estado de una compuerta no se toma de la mención de la siguiente
+    mixed = text.replace(table, "Seguridad (pendiente de evaluar) y etica bloqueada; "
+                         + "; ".join(f"{g} no resuelta" for g in gates if g not in ("seguridad", "etica")) + ".")
+    errors = _errors(mixed, conn=_conn(), path=path)
+    assert any("no recoge el estado" in e and "seguridad" in e for e in errors)
+    assert any("dice «bloqueada» para la compuerta etica" in e for e in errors)
+    assert not any("para la compuerta seguridad" in e for e in errors)
+
+
+def test_unverifiable_identifiers_are_errors_in_reports_even_in_draft(project):
+    # D3-13 / D10-1: una entrada con identificador fuera de la bibliografía no se verifica; en un informe en borrador
+    # tampoco puede acabar en un «Sello válido» que diga que se verificaron todas las referencias
+    path = _filled_report(project)
+    text = path.read_text("utf-8")
+    shadow = text.replace("## 10. Estudios favorables", f"[R1] Inventado. 2021. DOI: {FAKE}\n\n## 10. Estudios favorables")
+    assert any("fuera de la bibliografía" in e for e in _errors(shadow, conn=_conn(), path=path))
+    stray = text.replace(f"[R1] Autor A", f"DOI: {FAKE}\n[R1] Autor A")
+    assert any("fuera de una entrada" in e for e in _errors(stray, conn=_conn(), path=path))
+    plan = project / "research" / "planes" / "P.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    note = _draft("Dato [HIP] [R1].\n\n[R2] Otra. 2021. DOI: 10.1234/otra")
+    assert any("fuera de la bibliografía" in str(i) and i.severity == "aviso"
+               for i in chk.check_report(note, require_sections=False, path=plan))
 
 
 def test_project_rubric_gates_are_used_everywhere(project, online):

@@ -3,7 +3,8 @@
 Sin red (`check_report`):
 - Estado: se lee del front matter YAML (primer bloque `---` del documento; lo que va dentro de comentarios HTML
   no cuenta, tampoco antes del front matter). Admite comillas y comentarios `#` de YAML. Un estado ilegible,
-  duplicado, desconocido o fuera del front matter es un error y se trata como estricto; en un informe (documento
+  duplicado, desconocido o fuera del front matter, un comentario HTML dentro del front matter o un «Estado: final»
+  del cuerpo distinto del front matter es un error y se trata como estricto; en un informe (documento
   bajo research/informes del proyecto, también en subcarpetas; fuera de un proyecto, bajo cualquier carpeta
   `informes`) el estado es obligatorio. Lo leen igual `check_report`, `stamp_status` y el hook (`status_info`).
 - Estructura: las 20 secciones numeradas (sin duplicados), marcadores `[POR COMPLETAR]` y secciones vacías (error
@@ -21,10 +22,13 @@ Sin red (`check_report`):
   los anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
 - Bibliografía: la sección 20 o, si no existe, la última sección de nivel 2 titulada Bibliografía o Referencias.
   Una entrada puede ocupar varias líneas (hasta la siguiente entrada, una línea en blanco o un encabezado). Un
-  `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía no se verifica: aviso
-  (error en estricto).
-- Anexo A, por afirmación: la afirmación de una `[PUB]` son las palabras de su frase anteriores a la etiqueta,
-  desde el inicio de la frase o desde la etiqueta o `[Rn]` anterior (ver `_claims`). Necesita una fila de su `[Rn]`
+  `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía (o un identificador de la
+  bibliografía fuera de una entrada) no se verifica: error en los informes y en revisado o final; aviso en otros
+  documentos en borrador.
+- Anexo A, por afirmación: la afirmación de una `[PUB]` son las palabras de su frase (hasta «.», «!» o «?») que le
+  corresponden: las anteriores a la etiqueta desde el inicio de la frase o desde la etiqueta anterior y, si es la
+  última etiqueta de la frase, también las que la siguen; si la frase empieza con la etiqueta, las que la siguen hasta
+  la etiqueta siguiente (ver `_claims`). Necesita una fila de su `[Rn]`
   cuya columna Afirmación la reproduzca y cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar
   (minúsculas, sin acentos, sin etiquetas ni `[Rn]`, sin formato ni puntuación), el texto de la fila debe aparecer
   literalmente en el párrafo de la afirmación (`...` o `…` separan fragmentos de al menos 2 palabras que deben
@@ -286,6 +290,7 @@ class _Doc:
     fm_start: int | None = None               # delimitador inicial del front matter
     fm_end: int | None = None                 # delimitador final (None si no se cerró)
     issues: list[Issue] = field(default_factory=list)
+    fm_html_comment: int | None = None        # línea del front matter con un comentario HTML (YAML no lo admite)
 
     @property
     def fm_lines(self) -> range:
@@ -324,6 +329,10 @@ def _parse(text: str) -> _Doc:
         doc.fm_end = next((j for j in range(first + 1, len(lines)) if lines[j].rstrip() in ("---", "...")), None)
         if doc.fm_end is None:
             doc.issues.append(Issue("error", "El front matter (bloque --- del principio) no está cerrado", first + 1))
+        # En YAML «<!--» no es un comentario: un comentario HTML dentro del front matter (o que entra o sale de él)
+        # haría que esta comprobación y un lector de YAML leyeran campos distintos (p. ej. dos estados).
+        last = doc.fm_end if doc.fm_end is not None else len(raw) - 1
+        doc.fm_html_comment = next((j for j in range(first, last + 1) if "<!--" in raw[j] or "-->" in raw[j]), None)
     fence = None
     for i, line in enumerate(lines):
         if doc.in_front_matter(i):
@@ -402,14 +411,18 @@ class StatusInfo:
     line: int | None = None
 
 
+# «Estado: final», «**Estado:** revisado.», «- _estado_: 'final' (sellado)»; no «Estado: final de la gestación».
+_BODY_STATUS_RE = re.compile(r"^\s*(?:[-+*>#]\s*|\d+[.)]\s*)*estado\s*:\s*[\"']?(revisado|final)\b"
+                             r"(?!\s+(?:de|del|en|of)\b)", re.IGNORECASE)
+
+
 def _status_in_body(doc: _Doc) -> StatusInfo | None:
     """Un 'estado: revisado|final' fuera del front matter: falla en cerrado (estricto y error)."""
     for i, line in enumerate(doc.lines):
         if doc.fence[i] or doc.in_front_matter(i):
             continue
         # Sin énfasis ni marcas de lista o cita: «**Estado:** final» o «- _estado_: final» también cuentan.
-        plain = re.sub(r"[*_`]", "", line)
-        m = re.match(r"^\s*(?:[-+*>#]\s*|\d+[.)]\s*)*estado\s*:\s*[\"']?(revisado|final)\b", plain, re.IGNORECASE)
+        m = _BODY_STATUS_RE.match(re.sub(r"[*_`]", "", line))
         if m:
             return StatusInfo(m.group(1).lower(), True, "El estado debe ir en el front matter (bloque --- al principio "
                                                         "del documento), no en el cuerpo", i + 1)
@@ -417,10 +430,28 @@ def _status_in_body(doc: _Doc) -> StatusInfo | None:
 
 
 def _status_of(doc: _Doc) -> StatusInfo:
+    info = _status_from_front_matter(doc)
+    if info.problem:
+        return info
+    # Un «Estado: final» visible en el cuerpo que no coincide con el del front matter: quien lee el documento y la
+    # comprobación verían estados distintos. Falla en cerrado.
+    body = _status_in_body(doc) if doc.fm_start is not None else None
+    if body is not None and body.value != info.value:
+        strictest = next(s for s in ("final", "revisado") if s in (body.value, info.value))
+        return StatusInfo(strictest, True, f"El cuerpo declara «estado: {body.value}» pero el front matter dice "
+                          f"«{info.value or 'sin estado'}»: el estado va solo en el front matter", body.line)
+    return info
+
+
+def _status_from_front_matter(doc: _Doc) -> StatusInfo:
     if doc.fm_start is None:
         return _status_in_body(doc) or StatusInfo(None, False)
     if doc.fm_end is None:
         return StatusInfo(None, True, "Front matter sin cerrar: no se puede leer el estado", doc.fm_start + 1)
+    if doc.fm_html_comment is not None:
+        return StatusInfo(None, True, "Comentario HTML (<!-- -->) dentro del front matter: YAML no lo admite y los "
+                                      "campos (p. ej. el estado) no se pueden leer con seguridad; usa # para comentar",
+                          doc.fm_html_comment + 1)
     fields, unread = _fm_fields(doc)
     for i in unread:
         if re.search(r"estado", doc.lines[i], re.IGNORECASE):
@@ -890,7 +921,11 @@ def _support_rows(doc: _Doc) -> _Support:
                 return cells[k] if k is not None and k < len(cells) else ""
             refs = list(dict.fromkeys(re.findall(r"\bR\d+\b", cell("ref"))))
             if not refs:
-                issues.append(Issue("aviso", "Fila del Anexo A sin referencia [Rn] reconocible", i + 1))
+                # Una valoración negativa sin referencia no puede quedar sin efecto: error; las demás, aviso.
+                negative = _support_value(cell("value")) in ("no_respalda", "no_verificable")
+                issues.append(Issue("error" if negative else "aviso",
+                                    "Fila del Anexo A sin referencia [Rn] reconocible"
+                                    + (" (declara no_respalda o no_verificable)" if negative else ""), i + 1))
                 continue
             rows.append(SupportRow(i + 1, refs, cell("claim"), _support_value(cell("value")), cell("value"),
                                    cell("reason")))
@@ -942,10 +977,17 @@ _LEADING_CONNECTORS = {"y", "e", "o", "u", "ni", "pero", "and", "or", "but"}
 
 def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, list[list[str] | None]]
             ) -> list[_Claim]:
-    """Afirmaciones [PUB] de un párrafo. La afirmación de una [PUB] son las palabras de su frase que van antes de la
-    etiqueta, desde el inicio de la frase o desde la etiqueta o [Rn] anterior (sin un conector inicial como «y»); si
-    son menos de MIN_ROW_WORDS se añaden las que siguen hasta el final de la frase (o hasta su [Rn]); si la etiqueta
-    abre la frase, son las que siguen. Sin palabras, la frase entera y, si tampoco las hay, el párrafo."""
+    """Afirmaciones [PUB] de un párrafo. Las palabras de cada frase (hasta «.», «!» o «?»; «;», «:» y las iniciales no
+    la cierran) se reparten entre sus etiquetas, sin solaparse:
+    - si la frase empieza con texto (lo habitual: «afirmación [PUB] [R1]»), cada etiqueta se queda con las palabras
+      que la preceden desde el inicio de la frase o desde la etiqueta anterior (sin un conector inicial como «y»), y
+      la última, también con las que la siguen hasta el final de la frase (los calificativos: «..., en vacas
+      multíparas»);
+    - si la frase empieza con una etiqueta («[PUB] [R1] afirmación»), cada etiqueta se queda con las palabras que la
+      siguen hasta la etiqueta siguiente.
+    Así «La colina aumentó la leche 5 kg/d; así [PUB] [R1]» o «Según el ensayo [R1] [PUB], la colina aumentó la leche»
+    tienen por afirmación la frase entera, no «así» ni «según el ensayo». Sin palabras propias, la afirmación es la
+    frase entera y, si tampoco las hay, el párrafo."""
     words: list[str] = []
     events: list[tuple[str, str, int, int]] = []        # (tipo, valor, línea, posición en `words` o índice)
     for j in paragraph:
@@ -957,8 +999,10 @@ def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, l
             elif kind == "label":
                 events.append(("label", value, j, label_no))
                 label_no += 1
-            elif kind != "istop":
-                events.append((kind, value, j, -1))
+            elif kind == "ref":
+                events.append(("ref", value, j, -1))
+            elif kind == "stop" and value in ".!?":
+                events.append(("stop", value, j, -1))
     sentences: list[list[tuple[str, str, int, int]]] = [[]]
     for ev in events:
         if ev[0] == "stop":
@@ -967,39 +1011,33 @@ def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, l
             sentences[-1].append(ev)
     out: list[_Claim] = []
     for sent in sentences:
-        for k, (kind, value, line, label_no) in enumerate(sent):
-            if kind != "label" or value != "PUB":
+        labels = [k for k, ev in enumerate(sent) if ev[0] == "label"]
+        if not labels:
+            continue
+
+        def words_between(a: int, b: int) -> list[int]:
+            return [sent[x][3] for x in range(a + 1, b) if sent[x][0] == "word"]
+        pre = words_between(-1, labels[0])
+        gaps = [words_between(labels[n], labels[n + 1]) for n in range(len(labels) - 1)]
+        post = words_between(labels[-1], len(sent))
+        sentence_words = [ev[3] for ev in sent if ev[0] == "word"]
+        for n, k in enumerate(labels):
+            _kind, value, line, label_no = sent[k]
+            if value != "PUB":
                 continue
             refs_by_label = pub_refs.get(line) or []
             refs = refs_by_label[label_no] if label_no < len(refs_by_label) else None
             if not refs:
                 continue          # [PUB] sin [Rn]: ya es un error; no hay respaldo que buscar
-            back: list[int] = []
-            b = k - 1
-            while b >= 0 and sent[b][0] in ("label", "ref"):
-                b -= 1
-            while b >= 0 and sent[b][0] == "word":
-                back.append(sent[b][3])
-                b -= 1
-            while len(back) > 1 and words[back[-1]] in _LEADING_CONNECTORS:
-                back.pop()
-            f = k + 1
-            while f < len(sent) and sent[f][0] in ("label", "ref"):
-                f += 1
-            forward: list[int] = []
-            while f < len(sent) and sent[f][0] == "word":
-                forward.append(sent[f][3])
-                f += 1
-            # Lo que sigue solo es de esta afirmación si lo que lo cierra no es otra etiqueta (otra afirmación).
-            closed_by_label = False
-            while f < len(sent) and sent[f][0] in ("label", "ref"):
-                closed_by_label = closed_by_label or sent[f][0] == "label"
-                f += 1
-            span = set(back)
-            if len(span) < MIN_ROW_WORDS and not closed_by_label:
-                span |= set(forward)
-            if not span:
-                span = {ev[3] for ev in sent if ev[0] == "word"} or set(range(len(words)))
+            if pre:
+                own = list(pre if n == 0 else gaps[n - 1])
+                while len(own) > 1 and words[own[0]] in _LEADING_CONNECTORS:
+                    own.pop(0)
+                if n == len(labels) - 1:
+                    own += post
+            else:
+                own = list(gaps[n] if n < len(labels) - 1 else post)
+            span = set(own) or set(sentence_words) or set(range(len(words)))
             out.append(_Claim(line, refs, words, span))
     return out
 
@@ -1167,17 +1205,15 @@ def is_ruminant(species: str | None) -> bool:
     return not _NON_RUMINANT_RE.search(plain)
 
 
-def _mentions_gate(gate: str, plain_line: str) -> bool:
-    return re.search(rf"\b{re.escape(_plain(gate))}\b", plain_line) is not None
-
-
 _GATE_STATE_RE = re.compile(r"\b(superada|bloqueada|no resuelta)\b")
 
 
 def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[str, str, int]]:
-    """Estados de compuerta que declara la sección 14: [(compuerta, estado, línea)]. Se leen de las filas de tabla
-    cuya primera celda es la compuerta (el estado es el primero que aparece después, como en la tabla que genera
-    `nutria informe nuevo`) y de las líneas que dicen «compuerta» (el primer estado tras el nombre)."""
+    """Estados de compuerta que declara la sección 14: [(compuerta, estado, línea)]. En las filas de tabla cuya
+    primera celda es una compuerta, el estado es el primero que aparece después (como en la tabla que genera
+    `nutria informe nuevo`); en cualquier otra línea, el primer estado que sigue a cada mención de una compuerta, antes
+    de la mención siguiente («seguridad: superada; etica: bloqueada»). Las mismas líneas sirven para comprobar que la
+    sección recoge el estado de cada compuerta y para contrastarlo con el registro."""
     out = []
     for idx, line in lines:
         stripped = line.strip().lstrip(">").strip()
@@ -1188,16 +1224,15 @@ def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[st
                 m = _GATE_STATE_RE.search(" | ".join(cells[1:]))
                 if m:
                     out.append((gate, m.group(1).replace(" ", "_"), idx))
-            continue
+                continue
         plain = _plain(line)
-        if "compuerta" not in plain:
-            continue
-        for gate in gate_ids:
-            gm = re.search(rf"\b{re.escape(_plain(gate))}\b", plain)
-            if gm:
-                m = _GATE_STATE_RE.search(plain, gm.end())
-                if m:
-                    out.append((gate, m.group(1).replace(" ", "_"), idx))
+        mentions = sorted((gm.start(), gm.end(), gate) for gate in gate_ids
+                          for gm in re.finditer(rf"\b{re.escape(_plain(gate))}\b", plain))
+        for n, (_start, end, gate) in enumerate(mentions):
+            stop = mentions[n + 1][0] if n + 1 < len(mentions) else len(plain)
+            m = _GATE_STATE_RE.search(plain, end, stop)
+            if m:
+                out.append((gate, m.group(1).replace(" ", "_"), idx))
     return out
 
 
@@ -1320,6 +1355,9 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     if strict is None:
         strict = st.strict or (is_report and st.value is None)
     sev_strict = "error" if strict else "aviso"
+    # Un identificador que no se verifica (fuera de las entradas de la bibliografía) es error en los informes aunque
+    # estén en borrador: el sello diría «N de N referencias verificadas» sin haberlo comprobado.
+    sev_unverified = "error" if strict or is_report else "aviso"
     gate_ids = list(gate_ids) if gate_ids else gate_ids_for(path)
 
     # ---- secciones numeradas
@@ -1429,8 +1467,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("error", "Cita autor-año sin referencia [Rn] verificable", i + 1))
         m = ENTRY_RE.match(line)
         if m and ID_HINT_RE.search(m.group(2)):
-            issues.append(Issue(sev_strict, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no se "
-                                            "verifica; muévela a la sección 20", i + 1))
+            issues.append(Issue(sev_unverified, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no "
+                                                "se verifica; muévela a la sección 20", i + 1))
             stray_entries.add(i)
     # Cifras con unidades y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?») puede ocupar varias
     # líneas de un párrafo, y una línea puede tener varias frases; cada frase con una cifra necesita una etiqueta o
@@ -1505,8 +1543,8 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 if other != ref:
                     issues.append(Issue("aviso", f"{ref} y {other} citan el mismo trabajo ({ident})", entry.line))
     for line_no in (bib.stray if bib else []):
-        issues.append(Issue(sev_strict, "Identificador en la bibliografía fuera de una entrada [Rn]: no se verifica",
-                            line_no))
+        issues.append(Issue(sev_unverified, "Identificador en la bibliografía fuera de una entrada [Rn]: no se "
+                                            "verifica", line_no))
 
     # ---- Anexo A: respaldo por afirmación
     rows = support.rows
@@ -1525,9 +1563,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("error", f"Anexo A: respaldo '{row.raw_value}' no válido para {', '.join(row.refs)} "
                                          f"(usa {', '.join(SUPPORT_VALUES)})", row.line))
     frags_of = {r.line: _fragments(r.claim) for r in rows}
+
+    def row_sev(row: SupportRow) -> str:
+        """Una fila no_respalda o no_verificable que no se puede asignar es siempre un error (nada se enmascara)."""
+        return sev_strict if row.value in SUPPORT_OK else "error"
     for r in rows:
         if r.value in SUPPORT_VALUES and frags_of[r.line] is None:
-            issues.append(Issue(sev_strict, f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}): la columna Afirmación "
+            issues.append(Issue(row_sev(r), f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}): la columna Afirmación "
                                             f"está vacía o tiene fragmentos de menos de {MIN_FRAGMENT_WORDS} palabras "
                                             "entre «...»: no reproduce ninguna afirmación", r.line))
     claims: list[_Claim] = []
@@ -1598,7 +1640,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     for r in rows:
         if r.line in handled or r.value not in SUPPORT_VALUES or frags_of[r.line] is None:
             continue
-        issues.append(Issue(sev_strict, f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}) que no corresponde a "
+        issues.append(Issue(row_sev(r), f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}) que no corresponde a "
                                         "ninguna afirmación [PUB] actual con esa referencia: si la afirmación se "
                                         "reformuló, actualiza la fila y comprueba la nueva versión", r.line))
 
@@ -1624,14 +1666,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                             "art. 13)", start + 1))
         if not re.search(r"(ruta|via|clasificacion) (regulatoria|de autorizacion)", joined):
             issues.append(Issue(sev_strict, "La sección 14 no recoge la ruta o clasificación regulatoria", start + 1))
-        missing = [g for g in gate_ids
-                   if not any(_mentions_gate(g, _plain(c))
-                              and re.search(r"\b(superada|bloqueada|no resuelta)\b", _plain(c)) for c in content)]
+        numbered_content = [(j, doc.lines[j]) for j in range(start + 1, doc.section_end(start, 2))]
+        stated = {gate for gate, _state, _idx in _stated_gate_states(numbered_content, gate_ids)}
+        missing = [g for g in gate_ids if g not in stated]
         if missing:
             issues.append(Issue(sev_strict, "La sección 14 no recoge el estado (superada, bloqueada o no_resuelta) de "
                                             f"las compuertas: {', '.join(missing)}", start + 1))
         if conn is not None:
-            numbered_content = [(j, doc.lines[j]) for j in range(start + 1, doc.section_end(start, 2))]
             issues += _gate_registry_issues(conn, doc, reg, numbered_content, gate_ids, sev_strict)
     # Rumiante si lo dice el front matter o la oportunidad del registro (o si ninguno declara la especie).
     ruminant = is_ruminant(_species(doc)) or (reg is not None and reg.opp is not None
@@ -2004,5 +2045,7 @@ def stamp_status(report: Path | str, conn=None) -> tuple[bool, str]:
              "estructura de informe comprobada" if structure else "documento sin estructura de informe"]
     if info.strict:
         parts.append(f"revisión humana registrada de {human_reviewer(current)}")
+    else:
+        parts.append("sin revisión humana (un borrador no vale como informe revisado ni final)")
     return True, (f"Sello válido ({data.get('fecha')}): " + "; ".join(parts) + f"; {data.get('avisos', 0)} aviso(s). "
                   "No certifica que las fuentes respalden las afirmaciones (Anexo A, revisado por una persona)")
