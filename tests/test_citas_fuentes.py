@@ -262,7 +262,6 @@ def _bad(check) -> bool:
     f"Pérez J, García A, on behalf of the XYZ Study Group. 2020. {TITLE}. J Dairy Sci 103:1-10.",
     f"Pérez J, Garsia A, Lopes L. 2020. {TITLE}. J Dairy Sci 103:1-10.",     # coautores escritos de otra forma
     f"Juan A. Pérez, Ana B. García, and Luis López. 2020. {TITLE}. Journal of Dairy Science 103:1–10.",
-    "Pérez J, García A. 2020. J Dairy Sci 103:1-10.",                        # sin título: no se compara
 ])
 def test_cita_legitima_sin_discrepancia(cite):
     check = c.compare_citation(cite, **REC)
@@ -295,11 +294,41 @@ def test_cita_legitima_sin_discrepancia(cite):
     (f"Pérez J, García A. 2020. {TITLE}. 103:1-10. Animal.", "journal"),
     (f"Pérez J, García A. 2020. {TITLE}. Vol 103, pp 1-10, Animal.", "journal"),
     (f"Pérez J, García A. 2020. {TITLE}. Comment. Animal 14:1-10.", "journal"),
-    ("Pérez J, García A. J Anim Sci. 2020;103:1-10.", "journal"),            # sin título, otra revista
+    # sin título: T8 por omisión (mismo primer autor, año y revista sirven para cualquier trabajo suyo)
+    ("Pérez J, García A. 2020. J Dairy Sci 103:1-10.", "title"),
+    ("Pérez J, García A. J Anim Sci. 2020;103:1-10.", "title"),
+    ("Pérez J.", "title"),
+    ("Pérez J, García A, López L. 2020.", "title"),
 ])
 def test_cita_que_no_corresponde_da_discrepancia(cite, motivo):
     check = c.compare_citation(cite, **REC)
     assert getattr(check, f"{motivo}_ok") is False, check
+
+
+def test_cita_sin_titulo_es_discrepancia_y_no_se_sella(net):
+    # Regresión de la ronda 1: quitar el título de una entrada que da «NO corresponde (título)» la convertía en
+    # verificada. La base la rechazaba (cobertura del título < 0,6) y ahora vuelve a ser discrepancia.
+    published(net)
+    for entry in (f"Pérez J, García A. 2020. J Dairy Sci 103:1-10. DOI: {DOI}", f"Pérez J. DOI: {DOI}",
+                  f"Pérez J, García A, López L. 2020. Journal of Dairy Science. https://doi.org/{DOI}"):
+        res = c.verify_entry(Client(), entry)[0]
+        assert res.status == "verificada" and res.mismatch and not res.ok and res.title_ok is False, entry
+        assert "no trae el título" in res.message and "revista" not in " ".join(res.mismatch_reasons), entry
+        issues, details, summary = check_report_online(Client(), report(entry))
+        assert summary["con_error"] == 1 and summary["verificadas"] == 0 and not summary["completa"], entry
+    # con el título del trabajo pasa; con el de otro trabajo del mismo tema, no
+    assert c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {TITLE}. J Dairy Sci 103:1-10.").ok
+    assert not c.verify_doi(Client(), DOI, f"Pérez J, García A. 2020. {SAME_TOPIC}. J Dairy Sci 103:1-10.").ok
+
+
+def test_registro_sin_titulo_compara_autor_ano_y_revista():
+    # Sin título en el registro no hay nada que exigir: se comparan el primer autor, el año y la revista (tras los
+    # autores), y la nota lo dice.
+    rec = dict(titles=[], authors=REC["authors"], families=REC["families"], journals=REC["journals"])
+    good = c.compare_citation("Pérez J, García A. 2020. J Dairy Sci 103:1-10.", **rec)
+    assert good.title_ok is None and good.journal_ok and good.author_ok and not good.title_absent
+    assert any("no trae título" in n for n in good.notes)
+    assert c.compare_citation("Pérez J, García A. J Anim Sci. 2020;103:1-10.", **rec).journal_ok is False
 
 
 def test_umbral_del_titulo_mas_exigente_que_el_anterior():
@@ -311,6 +340,76 @@ def test_umbral_del_titulo_mas_exigente_que_el_anterior():
     assert c.compare_titles(TITLE, TITLE.replace("transition ", "")).ok          # una palabra de doce omitida
     assert not c.compare_titles("Rumen microbiome of yaks", "Rumen microbiome of yaks and goats").ok
     assert not c.compare_titles(TITLE, SAME_TOPIC).ok                            # sustitución: nunca
+
+
+@pytest.mark.parametrize("real, cited", [
+    ("Effects of feeding 50 g/d of rumen-protected choline on milk yield and liver health of transition dairy cows",
+     "Effects of feeding 100 g/d of rumen-protected choline on milk yield and liver health of transition dairy cows"),
+    ("Production responses of dairy cows to rumen-protected choline in the transition period. Experiment 1",
+     "Production responses of dairy cows to rumen-protected choline in the transition period. Experiment 2"),
+    ("Rumen-protected choline in transition dairy cows: effects on milk production and liver triglycerides. Part I",
+     "Rumen-protected choline in transition dairy cows: effects on milk production and liver triglycerides. Part II"),
+    ("Effects of vitamin E supplementation on mastitis and somatic cell count in grazing dairy cows",
+     "Effects of vitamin D supplementation on mastitis and somatic cell count in grazing dairy cows"),
+    # una cifra o una negación que falta también cuenta, aunque el resto del título (largo) coincida
+    ("Effects of feeding 50 g/d of rumen-protected choline on milk yield and liver health of transition dairy cows",
+     "Effects of feeding rumen-protected choline on milk yield and liver health of transition dairy cows"),
+    ("Supplementation with rumen-protected choline does not improve milk yield or liver health in transition cows",
+     "Supplementation with rumen-protected choline improves milk yield or liver health in transition cows"),
+])
+def test_titulos_que_solo_difieren_en_cifras_letras_o_negaciones_son_distintos(real, cited):
+    assert not c.compare_titles(real, cited).ok
+    check = c.compare_citation(f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10.", titles=[real],
+                               **{k: v for k, v in REC.items() if k != "titles"})
+    assert check.title_ok is False and check.year_in_citation == 2020, check
+    assert c.compare_titles(real, real).ok
+
+
+def test_ano_dentro_del_titulo_real_no_es_el_de_la_cita(net):
+    # T10: un año que forma parte del título real no se lee como el año de la cita, en ningún estilo.
+    quota = "Milk production and herd structure of dairy farms after the 2015 milk quota abolition in Ireland"
+    published(net, title=quota)
+    for cite in (f"Pérez J, García A. {quota}. J Dairy Sci. 2020;103:1-10.",
+                 f"Pérez, J., and A. García. 2020. {quota}. J. Dairy Sci. 103:1–10.",
+                 f"Pérez J, García A (2020) {quota}. J Dairy Sci 103:1-10"):
+        res = c.verify_doi(Client(), DOI, cite)
+        assert res.year_in_citation == 2020 and res.ok and res.title_ok, (cite, res.message)
+    wrong = c.verify_doi(Client(), DOI, f"Pérez J, García A. {quota}. J Dairy Sci. 2012;103:1-10.")
+    assert wrong.year_in_citation == 2012 and wrong.mismatch
+
+
+def test_citas_legitimas_que_daban_falso_error():
+    # Nombres de pila completos (Chicago) frente a un registro de PubMed que solo da iniciales
+    pubmed_rec = dict(titles=[TITLE], authors=["Pérez J", "García A", "López L"], journals=["Journal of dairy science"])
+    chicago = f"Pérez, Juan, Ana García, and Luis López. 2020. “{TITLE}.” Journal of Dairy Science 103 (1): 1–10."
+    assert not _bad(c.compare_citation(chicago, **pubmed_rec))
+    assert not _bad(c.compare_citation(f"Juan Carlos Pérez, Ana García. 2020. {TITLE}. J Dairy Sci 103:1-10.",
+                                       **dict(pubmed_rec, authors=["Pérez JC", "García A"])))
+    # ...pero un título inventado delante sigue detectándose, también con nombres de pila
+    for cite in (f"Pérez J, García A. Monensin and laminitis in heifers. {TITLE}. J Dairy Sci. 2020;103:1-10.",
+                 f"Pérez, Juan, Ana García. 2020. Avocado laminitis in heifers. {TITLE}. J Dairy Sci 103:1-10.",
+                 f"Pérez, Juan, Laminitis Avocado García. 2020. {TITLE}. J Dairy Sci 103:1-10."):
+        assert c.compare_citation(cite, **pubmed_rec).title_ok is False, cite
+    # Cabecera de sección de J Anim Sci ("Special topics—") que la cita no copia
+    hristov = ("Special topics—Mitigation of methane and nitrous oxide emissions from animal operations: I. A review "
+               "of enteric methane mitigation options")
+    check = c.compare_citation("Hristov AN, Oh J, Firkins JL. 2013. Mitigation of methane and nitrous oxide emissions "
+                               "from animal operations: I. A review of enteric methane mitigation options. J Anim Sci "
+                               "91:5045-69.", titles=[hristov], authors=["Hristov A N", "Oh J"],
+                               families=["Hristov", "Oh"], journals=["Journal of Animal Science"])
+    assert not _bad(check), check
+    # PNAS con y sin el calificativo de país; sigla delante de una coma
+    for cited, full in (("Proceedings of the National Academy of Sciences of the USA",
+                         "Proceedings of the National Academy of Sciences"),
+                        ("Proc Natl Acad Sci U S A", "Proceedings of the National Academy of Sciences"),
+                        ("Proc. Natl. Acad. Sci. USA",
+                         "Proceedings of the National Academy of Sciences of the United States of America"),
+                        ("ITEA", "ITEA, informacion tecnica economica agraria"),
+                        ("J. S. Afr. Vet. Assoc.", "Journal of the South African Veterinary Association")):
+        assert c.journal_matches(cited, full), (cited, full)
+    for cited, full in (("J Dairy Res", "Journal of Dairy Science"), ("Animal", "Animals"),
+                        ("ITEA", "Animal"), ("Nature", "Nature Communications")):
+        assert not c.journal_matches(cited, full), (cited, full)
 
 
 def test_variantes_sistematicas_del_titulo_y_metadatos_con_etiquetas():
