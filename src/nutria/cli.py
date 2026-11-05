@@ -506,17 +506,19 @@ def _texto_discrepancias(diffs: list[dict]) -> str:
     return "\n".join(f"registro {d['registro']} | {d['campo']}: A={d['a']!r}  B={d['b']!r}" for d in diffs)
 
 
+def _leer_bytes(path: str) -> bytes:
+    """Bytes de un fichero o, con '-', de la entrada estándar."""
+    if path != "-":
+        return Path(path).read_bytes()
+    stdin = getattr(sys.stdin, "buffer", None)
+    return stdin.read() if stdin is not None else sys.stdin.read().encode("utf-8")
+
+
 def _comparar_extracciones(args, cfg) -> int:
     if not args.registrar:
         if args.a == "-" and args.b == "-":
             raise SystemExit("Solo una de las dos copias puede leerse de la entrada estándar")
-        def leer(p: str) -> bytes:
-            if p != "-":
-                return Path(p).read_bytes()
-            stdin = getattr(sys.stdin, "buffer", None)
-            return stdin.read() if stdin is not None else sys.stdin.read().encode("utf-8")
-
-        raw = {"a": leer(args.a), "b": leer(args.b)}
+        raw = {"a": _leer_bytes(args.a), "b": _leer_bytes(args.b)}
         if cfg.db_path.is_file():
             # Ver las discrepancias con una copia depositada antes de depositar la propia permitiría corregirla.
             shas = {k: sha256_text(v) for k, v in raw.items()}
