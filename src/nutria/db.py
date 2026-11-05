@@ -816,13 +816,14 @@ def _field_diffs(x: dict, y: dict) -> list[dict]:
     return out
 
 
-# Campos que identifican una misma comparación de un estudio (sin sus valores): dos registros que coinciden en todos
-# ellos son el mismo dato, aunque sus medias, n o eventos difieran (sería una segunda extracción del mismo dato).
-EXTRACTION_IDENTITY = ("fuente", "experimento", "especie", "raza", "sexo", "paridad", "estado_fisiologico", "variable",
-                       "unidad", "intervencion", "comparador", "dosis", "dosis_unidad", "dosis_base", "forma_producto",
-                       "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias", "definicion_caso")
+# Valores medidos y metadatos de un registro; el resto de campos (estudio, animales, dieta basal, intervención, dosis,
+# variable, ventanas, definición de caso...) identifican la comparación: dos registros que coinciden en todos ellos son
+# el mismo dato aunque sus medias, n o eventos difieran (sería una segunda extracción del mismo dato). Un diseño
+# factorial (dos dietas basales o dos dosis) da registros distintos.
 EXTRACTION_VALUES = ("n_control", "n_tratamiento", "media_control", "media_tratamiento", "tipo_dispersion",
-                     "dispersion_control", "dispersion_tratamiento", "eventos_control", "eventos_tratamiento")
+                     "dispersion_control", "dispersion_tratamiento", "eventos_control", "eventos_tratamiento", "p_valor")
+EXTRACTION_IDENTITY = tuple(k for k in EXTRACTION_FIELDS if k not in EXTRACTION_VALUES and k not in (
+    "ubicacion", "financiacion", "conflictos", "notas", *EXTRACTION_SYSTEM_FIELDS))
 
 
 def _identity_value(value: Any) -> Any:
@@ -862,8 +863,8 @@ def _insert_double_extracted(conn: sqlite3.Connection, record: dict, actor: str 
             f"comparación que la extracción #{duplicate['id']}, ya registrada por doble extracción "
             f"({duplicate['comparison_id']})" + (f", con otros valores ({'; '.join(changed)})" if changed else "")
             + ": no se registra dos veces el mismo dato. Si es otro dato del mismo estudio (otro experimento, subgrupo, "
-            "momento, dosis o definición de caso), distínguelo en experimento, paridad, estado_fisiologico, "
-            "ventana_inicio_dias/ventana_fin_dias, dosis o definicion_caso")
+            "dieta basal, momento, dosis o definición de caso), distínguelo en el campo correspondiente (experimento, "
+            "paridad, estado_fisiologico, dieta_basal, ventana_inicio_dias/ventana_fin_dias, dosis, definicion_caso...)")
     return _insert_extraction(conn, record, actor, status, comparison_id, pair, extractor=extractor,
                               checked_by=checked_by)
 
@@ -909,6 +910,18 @@ def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha25
         return {"id": int(cur.lastrowid), "sha256": sha256, "registros": len(records), "extractor": who, "nueva": True}
 
 
+def _pending_comparisons(conn: sqlite3.Connection, sources: list[str]) -> list[tuple[str, str]]:
+    """Comparaciones con discrepancias sin conciliar que afectan a alguna de las fuentes: [(CE-xxxx, fuente)]."""
+    out = []
+    for row in conn.execute(
+            "SELECT c.id, ca.source_ids AS sa, cb.source_ids AS sb FROM extraction_comparisons c "
+            "JOIN extraction_copies ca ON ca.id = c.copy_a JOIN extraction_copies cb ON cb.id = c.copy_b "
+            "WHERE c.result = 'con_discrepancias' AND c.conciliation IS NULL ORDER BY c.compared_at"):
+        involved = set(json.loads(row["sa"] or "[]")) | set(json.loads(row["sb"] or "[]"))
+        out += [(row["id"], sid) for sid in sources if sid in involved]
+    return out
+
+
 def _pick_copies(conn: sqlite3.Connection, sha_a: str, sha_b: str) -> tuple[sqlite3.Row, sqlite3.Row]:
     """Elige las copias depositadas que corresponden a los ficheros A y B: depositadas, sin usar en otra
     comparación y de extractores distintos."""
@@ -946,6 +959,16 @@ def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: 
     with transaction(conn):
         copy_a, copy_b = _pick_copies(conn, sha_a, sha_b)
         records_a, records_b = json.loads(copy_a["records"]), json.loads(copy_b["records"])
+        sources = sorted({r["fuente"] for r in records_a + records_b})
+        pending = _pending_comparisons(conn, sources)
+        if pending:
+            raise RegistryError(
+                "; ".join(f"la fuente {sid} tiene la comparación {cid} con discrepancias sin conciliar"
+                          for cid, sid in pending)
+                + ": concíliala antes de comparar otras copias de la misma fuente (`nutria extraccion conciliar <CE-xxxx> "
+                "--datos <fichero>`, resolviendo cada discrepancia releyendo la fuente o declarando en 'no_resueltos' lo "
+                "que no se pueda resolver). Corregir las copias después de ver las discrepancias no sustituye a la "
+                "conciliación registrada")
         diffs = compare_extraction_records(records_a, records_b)
         result = "con_discrepancias" if diffs else "concordante"
         comp_id = _next_id(conn, "extraction_comparisons", "CE")
@@ -1042,6 +1065,9 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
             raise RegistryError(f"{comparison_id} es concordante: sus registros ya constan como 'doble_concordante'")
         if comp["conciliation"] is not None:
             raise RegistryError(f"{comparison_id} ya está conciliada ({comp['conciliated_by']}, {comp['conciliated_at']})")
+        if who in (comp["actor_a"], comp["actor_b"]):
+            raise RegistryError(f"'{who}' depositó una de las copias de {comparison_id}: la conciliación la hace otro "
+                                "extractor o el orquestador, no quien extrajo la copia A o la B")
         copies = {r["id"]: json.loads(r["records"]) for r in conn.execute(
             "SELECT id, records FROM extraction_copies WHERE id IN (?, ?)", (comp["copy_a"], comp["copy_b"]))}
         records = {"a": copies[comp["copy_a"]], "b": copies[comp["copy_b"]]}

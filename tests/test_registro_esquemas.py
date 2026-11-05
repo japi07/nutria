@@ -291,6 +291,53 @@ def test_una_copia_con_discrepancias_no_se_blanquea_con_una_tercera(project, cap
     assert [c["id"] for c in json.loads(capsys.readouterr().out)] == ["CE-0001"]
 
 
+def test_copias_corregidas_tras_ver_discrepancias_no_sustituyen_a_la_conciliacion(project, capsys):
+    """Ver las discrepancias, igualar las copias y volver a depositarlas no da 'doble_concordante': la comparación
+    con discrepancias se concilia (o se cierra declarando lo no resuelto) antes de comparar otras copias."""
+    source = _source()
+    recs = _records(source)
+    distinta = copy.deepcopy(recs)
+    distinta[0]["media_tratamiento"] = 30.0
+    a = _deposit(project, "x_A.json", recs, "extractor-datos-A")
+    b = _deposit(project, "x_B.json", distinta, "extractor-datos-B")
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
+    a2 = _deposit(project, "x_A2.json", recs, "extractor-datos-A", indent=3)
+    b2 = _deposit(project, "x_B2.json", recs, "extractor-datos-B", indent=4)      # B igualada a A
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a2, b2, "--registrar"]) == 3
+    assert "CE-0001 con discrepancias sin conciliar" in capsys.readouterr().err
+    assert db.list_extractions(_conn()) == [] and len(db.list_extraction_comparisons(_conn())) == 1
+    # quien extrajo una de las copias no concilia su propia discrepancia
+    cierre = _write(project / "cierre.json", {"conciliacion": [], "no_resueltos": [
+        {"a": 1, "b": 1, "motivo": "Se repite la doble extracción completa de la fuente"},
+        {"a": 2, "b": 2, "motivo": "Se repite la doble extracción completa de la fuente"}]})
+    assert main(["--agente", "extractor-datos-A", "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 3
+    assert "no quien extrajo" in capsys.readouterr().err
+    # cerrarla con su motivo (sin registrar nada) permite una doble extracción nueva, que sí se registra
+    assert main(["--agente", "extractor-datos", "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 0
+    assert db.list_extractions(_conn()) == []
+    assert main(["extraccion", "comparar", a2, b2, "--registrar"]) == 0
+    assert {r["check_status"] for r in db.list_extractions(_conn())} == {"doble_concordante"}
+
+
+def test_diseno_factorial_no_se_toma_por_un_dato_repetido(project, capsys):
+    """Dos registros que solo difieren en la dieta basal (o en otro campo de contexto) son datos distintos."""
+    source = _source()
+    alta, baja = _records(source)[0], _records(source)[0]
+    alta.update(dieta_basal="TMR con 60 % de forraje", forraje_pct_ms=60.0, media_tratamiento=36.0)
+    baja.update(dieta_basal="TMR con 40 % de forraje", forraje_pct_ms=40.0, media_tratamiento=37.5)
+    _double(project, "fact", [alta, baja])
+    assert len(db.list_extractions(_conn())) == 2
+    # el mismo dato repetido en la copia sí se rechaza
+    otra = _source(2)
+    rec = _records(otra)[0]
+    a = _deposit(project, "rep_A.json", [rec, dict(rec)], "extractor-rep-A")
+    b = _deposit(project, "rep_B.json", [rec, dict(rec)], "extractor-rep-B")
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 3
+    assert "no se registra dos veces" in capsys.readouterr().err
+
+
 def test_los_mismos_datos_no_se_registran_dos_veces_con_copias_reformateadas(project, capsys):
     source = _source()
     recs = _records(source)
