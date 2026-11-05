@@ -506,47 +506,24 @@ def _texto_discrepancias(diffs: list[dict]) -> str:
     return "\n".join(f"registro {d['registro']} | {d['campo']}: A={d['a']!r}  B={d['b']!r}" for d in diffs)
 
 
-def _leer_bytes(path: str) -> bytes:
-    """Bytes de un fichero o, con '-', de la entrada estándar."""
-    if path != "-":
-        return Path(path).read_bytes()
-    stdin = getattr(sys.stdin, "buffer", None)
-    return stdin.read() if stdin is not None else sys.stdin.read().encode("utf-8")
-
-
 COMPARAR_SOLO_REGISTRADA = (
-    "En un proyecto con registro, las copias de una doble extracción solo se comparan con --registrar: cada extractor "
-    "deposita la suya (`nutria --agente <id> extraccion depositar --datos <fichero>`) y quien concilia ejecuta "
-    "`nutria --agente <id> extraccion comparar A.json B.json --registrar`, que registra la comparación (sha256 de las "
-    "dos copias, extractores y discrepancias) y muestra las discrepancias. No se muestran sin registrarlas: verlas "
-    "antes permitiría igualar las copias (o sustituirlas por otras de extractores nuevos) y obtener "
-    "'doble_concordante' sin conciliación ni rastro.")
+    "Las copias de una doble extracción solo se comparan con --registrar, en el proyecto: cada extractor deposita la "
+    "suya (`nutria --agente <id> extraccion depositar --datos <fichero>`) y quien concilia ejecuta `nutria --agente "
+    "<id> extraccion comparar A.json B.json --registrar`, que registra la comparación (sha256 de las dos copias, "
+    "extractores y discrepancias) y muestra las discrepancias. nutria no las muestra sin registrarlas, ni dentro ni "
+    "fuera de un proyecto: verlas antes permitiría igualar las copias (o sustituirlas por otras de extractores nuevos) "
+    "y obtener 'doble_concordante' sin conciliación ni rastro.")
 
 
 def _comparar_extracciones(args, cfg) -> int:
     if not args.registrar:
+        # Ningún par de ficheros (dos borradores, una copia depositada reformateada o por la entrada estándar frente a
+        # un borrador, dos copias depositadas), ni desde otro directorio fuera del proyecto: toda comparación de copias
+        # deja rastro en el registro. En el proyecto, el intento queda en la procedencia; fuera no se escribe nada.
         if cfg.db_path.is_file():
-            # Ni dos borradores sin depositar, ni una copia depositada (reformateada o por la entrada estándar) frente
-            # a un borrador, ni dos copias depositadas: toda comparación de copias deja rastro en el registro.
             log_event(cfg, "extraccion_comparar_rechazada", inputs={"a": args.a, "b": args.b},
-                      outputs={"motivo": "sin --registrar en un proyecto con registro"}, actor=args.agente)
-            raise registry.RegistryError(COMPARAR_SOLO_REGISTRADA)
-        # Sin registro (fuera de un proyecto) no hay copias depositadas ni comparaciones que proteger: es un diff.
-        if args.a == "-" and args.b == "-":
-            raise SystemExit("Solo una de las dos copias puede leerse de la entrada estándar")
-        raw = {"a": _leer_bytes(args.a), "b": _leer_bytes(args.b)}
-        a, b = json.loads(raw["a"].decode("utf-8")), json.loads(raw["b"].decode("utf-8"))
-        a, b = (a if isinstance(a, list) else [a]), (b if isinstance(b, list) else [b])
-        diffs = registry.compare_extraction_records(a, b)
-        text = ("Extracciones concordantes (fuera de un proyecto: no se registra nada). En el proyecto, cada extractor "
-                "deposita su copia (`extraccion depositar`) y se ejecuta `extraccion comparar A.json B.json --registrar`."
-                if not diffs else _texto_discrepancias(diffs)
-                + f"\n{len(diffs)} discrepancia(s) (fuera de un proyecto: no se registra nada).")
-        log_event(cfg, "extraccion_comparar", inputs={"a": args.a, "b": args.b, "sha256_a": sha256_text(raw["a"]),
-                                                      "sha256_b": sha256_text(raw["b"]), "registrar": False},
-                  outputs={"discrepancias": len(diffs)}, actor=args.agente)
-        _emit(args, {"discrepancias": diffs}, text)
-        return 1 if diffs else 0
+                      outputs={"motivo": "sin --registrar"}, actor=args.agente)
+        raise registry.RegistryError(COMPARAR_SOLO_REGISTRADA)
     if "-" in (args.a, args.b):
         raise SystemExit("--registrar necesita las rutas de los dos ficheros: su sha256 identifica cada copia depositada")
     path_a, path_b = Path(args.a), Path(args.b)
@@ -1424,10 +1401,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("a")
     x.add_argument("b")
     x.add_argument("--registrar", action="store_true",
-                   help="registra la comparación de dos copias depositadas por extractores distintos; sin "
-                        "discrepancias, registra los registros como 'doble_concordante'. En un proyecto con registro "
-                        "es obligatoria: las discrepancias no se muestran sin registrarlas (fuera de un proyecto, "
-                        "sin ella, solo compara los dos ficheros)")
+                   help="obligatoria: registra la comparación de dos copias depositadas por extractores distintos; "
+                        "sin discrepancias, registra los registros como 'doble_concordante'. Las discrepancias no se "
+                        "muestran sin registrarlas (ni dentro ni fuera de un proyecto)")
     x = es.add_parser("depositar", parents=[common],
                       help="deposita una copia de doble extracción (sha256 y extractor) sin registrarla")
     x.add_argument("--datos", dest="json_file", required=True, help="fichero JSON de la copia (A o B)")

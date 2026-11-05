@@ -548,13 +548,13 @@ def test_copias_corregidas_tras_ver_discrepancias_no_sustituyen_a_la_conciliacio
     deposito_rechazado("x_E.json", "extractor-datos", 7)
 
 
-def test_comparar_sin_registrar_no_muestra_discrepancias_en_un_proyecto(project, capsys, monkeypatch,
-                                                                         tmp_path_factory):
-    """Revisión de D2-12: en un proyecto con registro, `comparar` sin --registrar no muestra las discrepancias de
-    ningún par de ficheros: dos borradores sin depositar, una copia depositada (tal cual, reformateada o por la entrada
-    estándar) frente a un borrador, ni dos copias depositadas. Verlas sin registrarlas permitía igualar los borradores
-    antes de depositarlos, o sustituir las copias por otras de extractores nuevos, y obtener 'doble_concordante' sin
-    conciliación ni rastro. Fuera de un proyecto (sin registro) la orden solo compara dos ficheros."""
+def test_comparar_sin_registrar_no_muestra_discrepancias(project, capsys, monkeypatch, tmp_path_factory):
+    """Revisión de D2-12: `comparar` sin --registrar no muestra las discrepancias de ningún par de ficheros: dos
+    borradores sin depositar, una copia depositada (tal cual, reformateada o por la entrada estándar) frente a un
+    borrador, ni dos copias depositadas. Verlas sin registrarlas permitía igualar los borradores antes de depositarlos,
+    o sustituir las copias por otras de extractores nuevos, y obtener 'doble_concordante' sin conciliación ni rastro.
+    Tampoco desde un directorio fuera del proyecto (con las rutas de sus ficheros o con copias fuera de él): nutria no
+    sirve de visor de discrepancias sin registro, y fuera de un proyecto no escribe nada."""
     import io
     source = _source()
     recs = _records(source)
@@ -594,13 +594,21 @@ def test_comparar_sin_registrar_no_muestra_discrepancias_en_un_proyecto(project,
     d = _deposit(project, "x_D.json", recs, "extractor-datos-D", indent=6)
     assert main(["extraccion", "comparar", c, d, "--registrar"]) == 3          # CE-0001 sin conciliar
     assert db.list_extractions(_conn()) == []
-    # fuera de un proyecto no hay registro que proteger: la orden compara dos ficheros y no registra nada
+    # 4. desde un directorio fuera del proyecto, con las rutas de los borradores o con copias fuera de todo proyecto:
+    # tampoco (la revisión mostró que, si no, bastaba con cambiar de directorio), y fuera no se escribe nada
+    nuevo_b = _write(project / "y_B.json", distinta, indent=2)
     fuera = tmp_path_factory.mktemp("fuera_del_proyecto")
+    copia_a, copia_b = _write(fuera / "a.json", recs), _write(fuera / "b.json", distinta)
     monkeypatch.chdir(fuera)
+    sin_vistazo(str(project / "x_A_ref.json"), nuevo_b)
+    sin_vistazo(copia_a, copia_b)
+    sin_vistazo("-", copia_b, stdin=json.dumps(recs))
+    assert sorted(p.name for p in fuera.iterdir()) == ["a.json", "b.json"]     # ni research/ ni procedencia
+    # y con --registrar, fuera de un proyecto no hay registro: tampoco se ven las discrepancias
     capsys.readouterr()
-    assert main(["extraccion", "comparar", str(project / "x_A.json"), str(project / "x_B.json")]) == 1
-    assert "39.9" in capsys.readouterr().out
-    assert not (fuera / "research" / "nutria.sqlite").exists()
+    assert _code(["extraccion", "comparar", copia_a, copia_b, "--registrar"]) not in (0, 1)
+    assert "39.9" not in "".join(capsys.readouterr())
+    assert sorted(p.name for p in fuera.iterdir()) == ["a.json", "b.json"]
 
 
 def test_diseno_factorial_no_se_toma_por_un_dato_repetido(project, capsys):
@@ -862,6 +870,11 @@ def test_exportar_filtra_por_especie_y_etapa_y_no_mezcla_especies(project, capsy
     capsys.readouterr()
     assert main(["extraccion", "listar", "--especie", "bovino"]) == 0
     assert all("bovino de carne" in line for line in capsys.readouterr().out.splitlines())
+    # el volcado del registro (--formato registro) no es un análisis: incluye todas las especies y solo avisa
+    out = _export_json(capsys, "--formato", "registro", "--csv", csv_path)
+    assert out["filas"] == len(db.list_extractions(_conn())) and len(out["especies"]) == 3
+    assert any("el volcado incluye especies distintas" in a for a in out["avisos"])
+    assert len(_csv_rows(Path(csv_path))) == out["filas"]
 
 
 def test_meta_regresion_de_casos_completos(project, capsys):

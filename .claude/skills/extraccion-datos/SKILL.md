@@ -51,9 +51,10 @@ registrada → conciliación si hay discrepancias → exportación para el anál
    una ejecución interrumpida deja su copia depositada (la siguiente puede compararla con la B de otro extractor o
    usar identidades nuevas), y quien participó en una comparación con discrepancias no vuelve a extraer esa fuente.
 3. Comparación registrada: `nutria --agente <id> extraccion comparar <A.json> <B.json> --registrar` (dos copias
-   depositadas por extractores distintos; código de salida 1 si hay discrepancias). En un proyecto, `comparar` sin
-   `--registrar` se niega (código 3) con cualquier par de ficheros: las discrepancias solo se ven al registrar la
-   comparación, para que nadie iguale los borradores antes de depositarlos ni sustituya las copias por otras.
+   depositadas por extractores distintos; código de salida 1 si hay discrepancias). Sin `--registrar`, `comparar` se
+   niega (código 3) con cualquier par de ficheros, también desde un directorio fuera del proyecto: las discrepancias
+   solo se ven al registrar la comparación, para que nadie iguale los borradores antes de depositarlos ni sustituya
+   las copias por otras.
 4. Si coinciden, el sistema registra los registros como `doble_concordante`. Si no, cada discrepancia se resuelve
    releyendo la fuente y se registra la conciliación: `nutria --agente <id> extraccion conciliar <CE-xxxx> --datos
    <conciliacion.json>` (plantilla: `ejemplos/conciliacion_ejemplo.json`). La hace otro extractor o el orquestador,

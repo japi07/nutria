@@ -54,8 +54,8 @@ verificada antes (`nutria fuente agregar`).
   `nutria --agente extractor-datos-A extraccion depositar --datos <tu fichero>` (o `extractor-datos-B`). El registro
   guarda su sha256 y quién la depositó; si el fichero cambia después, deja de ser la copia depositada. Una copia
   depositada es definitiva: no depositas otra de la misma fuente para corregirla. Nunca leas ni deposites la copia de
-  otro extractor. En el proyecto, `comparar` solo funciona con `--registrar` (sin él se niega con cualquier par de
-  ficheros): las discrepancias se ven al registrar la comparación, nunca antes. Tu identidad se compara sin
+  otro extractor. `comparar` solo funciona con `--registrar` (sin él se niega con cualquier par de ficheros, dentro
+  o fuera del proyecto): las discrepancias se ven al registrar la comparación, nunca antes. Tu identidad se compara sin
   mayúsculas, tildes ni signos; usa la que te indiquen para esta oportunidad y ejecución.
 - La conciliación (otro extractor o el orquestador, identificado con `--agente`; nunca quien depositó la copia A o la
   B) ejecuta `nutria --agente extractor-datos extraccion comparar <A.json> <B.json> --registrar`, que exige dos copias
