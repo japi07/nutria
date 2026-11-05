@@ -613,6 +613,15 @@ if (FASE === 'oportunidades') {
     `nutria --agente ${o.generador} oportunidad nueva --datos <fichero>. Registra cada hipótesis, con el efecto mínimo relevante y el criterio de falsación que diste, ` +
     `como JSON conforme a src/nutria/data/schemas/hipotesis.schema.json en research/hipotesis/${o.base_fichero}_H<n>.json (sin sobrescribir ficheros existentes) ` +
     `con nutria --agente ${o.generador} hipotesis nueva --datos <fichero>. Devuelve el ID asignado, el fichero y los IDs de las hipótesis.\n` + JSON.stringify(o)
+  // Ruta del análisis de triage que ven los evaluadores: la esperada, o la declarada solo si es un análisis de esa
+  // oportunidad (nunca un informe, un plan, un ranking, una revisión de red team ni puntuaciones).
+  const rutaTriage = (o, c) => {
+    const esperada = `${REVISIONES}/${o.id}_triage_${c.compuerta}.md`
+    const r = c.resultado && typeof c.resultado.archivo === 'string' ? c.resultado.archivo.trim().replace(/^\.\//, '') : ''
+    const valida = new RegExp(`^(research/revisiones/${o.id}_[^/]+\\.md|research/datos/${o.id}/[^\\s]+)$`).test(r) &&
+      !/redteam|puntuacion|informe|ranking|(^|\/)\.\.(\/|$)/i.test(r)
+    return valida ? r : esperada
+  }
   const promptEvaluador = (ev, o) =>
     `Eres el evaluador independiente "${ev.id}". Puntúa la oportunidad ${o.id} con los 9 criterios de docs/RUBRICA.md siguiendo .claude/skills/puntuacion/SKILL.md. ` +
     `Lee la oportunidad solo con nutria --agente ${ev.id} oportunidad ver ${o.id} --sin-puntuaciones --json (si incluye un campo "decisiones", ignóralo: no es evidencia) y la ` +
@@ -621,7 +630,7 @@ if (FASE === 'oportunidades') {
     `Guarda research/oportunidades/${o.id}_puntuacion_${ev.id}.json con "evaluador": "${ev.id}" y regístralo con nutria --agente ${ev.id} puntuar registrar --datos <fichero>.\n` +
     'Análisis de triage: ' + JSON.stringify((o.compuertas || []).filter(Boolean).map((c) => ({
       agente: c.agente, compuerta: c.compuerta, estado_propuesto: c.resultado ? c.resultado.estado : null,
-      resumen: c.resultado ? c.resultado.resumen : 'sin análisis (fallo de agente)', archivo: c.resultado ? c.resultado.archivo : null,
+      resumen: c.resultado ? c.resultado.resumen : 'sin análisis (fallo de agente)', archivo: c.resultado ? rutaTriage(o, c) : null,
     }))) +
     '\nCrítica del red team: ' + JSON.stringify(o.critica)
 

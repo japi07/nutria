@@ -1757,3 +1757,19 @@ def test_p8_evaluar_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas(proje
     rechazadas = [m.split(" declaró")[0] for m in out["logs"] if "fuera de las rutas de evidencia" in m]
     assert {"descarte:seguridad", "desarrollo-industrial:1", "economia-mercado-pi:2", "bibliografia:O-0003"} <= set(rechazadas)
     assert "sostenibilidad-bienestar:3" not in rechazadas  # su ruta es válida aunque no sea la esperada
+
+
+@requires_node
+def test_p8_mision1_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas(project, capsys):  # D1-3, D2-2
+    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}},
+              *_reglas_novedad(), *_registro_secuencial(1),
+              {"label": "triage:seguridad:O-0001", "respuesta": {"compuerta": "seguridad", "estado": "no_resuelta", "motivo": "m",
+                                                                 "resumen": "r", "archivo": "research/revisiones/M1_ranking_2026-11-04.md"}},
+              {"label": "triage:etica:O-0001", "respuesta": {"compuerta": "etica", "estado": "no_resuelta", "motivo": "m",
+                                                             "resumen": "r", "archivo": "research/revisiones/O-0001_etica_detalle.md"}}]
+    _registrar_oportunidades(project, capsys, 1)
+    reglas.append({"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0001")})
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    prompt = call(out, "puntuacion:evaluador-1:O-0001")["prompt"]
+    assert "M1_ranking" not in prompt
+    assert "research/revisiones/O-0001_triage_seguridad.md" in prompt and "research/revisiones/O-0001_etica_detalle.md" in prompt
