@@ -25,15 +25,15 @@ del informe (agente `verificador-citas`), que la comprobación del informe exige
 from __future__ import annotations
 
 import bisect
+import html
 import re
 import unicodedata
 from dataclasses import dataclass, field, fields
-from difflib import SequenceMatcher
 from urllib.parse import unquote
 
 from ..http import NetworkError, NotFoundError, OfflineError
 from ..sources import crossref, doiorg, openalex, pubmed
-from ..sources.base import Record, normalize_doi
+from ..sources.base import Record, clean_text, normalize_doi
 
 try:  # el paquete de fuentes aporta la redacción de secretos
     from ..http import redact as _redact
@@ -59,8 +59,16 @@ PAGES_RE = re.compile(r"(?<!\d)\d{1,6}\s*[-–]\s*\d{1,6}(?!\d)")
 VOLUME_PAGES_RE = re.compile(r"\b\d+\s*\(\s*[\w\-]+\s*\)\s*:\s*[\w\-–]+")
 
 _ESCAPED_MD_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!<>])")      # 10.1000/a\_b escrito en Markdown
-_TRAILING = ".,;:'\"!?*_"                                       # puntuación de la frase que sigue al DOI
+_TRAILING = ".,;:'\"!?*_”’»›"                                   # puntuación de la frase que sigue al DOI
 _CLOSERS = {")": "(", "]": "[", ">": "<", "}": "{"}
+# Etiquetas HTML/XML (<i>, </sub>, <mml:math ...>): una letra tras '<' o '</'; "< 0,05" o "<5 %" no lo son.
+_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*)?/?>")
+
+
+def _unescape(text: str) -> str:
+    """Texto de la cita sin entidades HTML (&lt; &gt; &amp; de un DOI SICI escrito en Markdown o HTML) ni escapes
+    de Markdown (10.1000/a\\_b)."""
+    return _ESCAPED_MD_RE.sub(r"\1", html.unescape(text or ""))
 
 
 def _trim_trailing(raw: str) -> str:
@@ -95,7 +103,7 @@ def _doi_from_match(text: str, match: re.Match, url_spans: list[tuple[int, int]]
 
 
 def extract_identifiers(text: str) -> dict[str, list[str]]:
-    text = _ESCAPED_MD_RE.sub(r"\1", text or "")
+    text = _unescape(text)
     url_spans = [m.span() for m in URL_RE.finditer(text)]
     dois: list[str] = []
     for match in DOI_RE.finditer(text):
@@ -207,11 +215,12 @@ def _strip_identifiers(text: str) -> str:
 
 
 def _clean_citation(text: str | None) -> str:
-    """Texto de la cita sin marcador [Rn], identificadores, URL ni anotaciones ("[Review]", "(in Spanish)")."""
-    text = unicodedata.normalize("NFC", text or "")
-    text = _ESCAPED_MD_RE.sub(r"\1", text)
+    """Texto de la cita sin marcador [Rn], identificadores, URL, etiquetas HTML (CH<sub>4</sub> -> CH4) ni
+    anotaciones ("[Review]", "(in Spanish)")."""
+    text = unicodedata.normalize("NFC", _unescape(text))
     text = _MARKER_RE.sub("", text, count=1)
     text = _strip_identifiers(text)
+    text = _TAG_RE.sub("", text)
     return _ANNOTATION_RE.sub(" ", text)
 
 
@@ -239,18 +248,34 @@ def citation_year(citation_text: str | None) -> int | None:
 # el 10 % de las palabras significativas del título real (una de cada diez) o añadir como mucho un 10 %, pero
 # no las dos cosas a la vez: una palabra cambiada por otra (sustitución) es lo que distingue dos trabajos del
 # mismo grupo y tema ("... rumen-protected choline ..." frente a "... rumen-protected methionine ..."), así que
-# siempre es discrepancia. Las variantes de ortografía (fibre/fiber), plurales y compuestos (rumen-protected /
-# rumenprotected) se emparejan antes y no cuentan como sustitución. El umbral anterior (0,6, asimétrico) dejaba
-# pasar un título distinto del mismo tema con el 73 % de palabras comunes.
+# siempre es discrepancia. Solo se emparejan antes, sin contar como sustitución, las variantes SISTEMÁTICAS:
+# ortografía británica y estadounidense (fibre/fiber, oestrus/estrus, sulphur/sulfur, -ise/-ize), singular y
+# plural (study/studies) y compuestos (rumen-protected / rumenprotected). No se toleran erratas ni palabras
+# "parecidas": nitrate/nitrite o choline/chlorine son trabajos distintos. Las menciones de edición ("8th ed.",
+# "Eighth Revised Edition") no cuentan: la edición la distingue el año. El umbral anterior (0,6, asimétrico)
+# dejaba pasar un título distinto del mismo tema con el 73 % de palabras comunes.
 TITLE_MIN = 0.9
+
+_ORDINALS = (r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|"
+             r"primera|segunda|tercera|cuarta|quinta|sexta|s[eé]ptima|octava|novena|d[eé]cima")
+_EDITION_RE = re.compile(
+    rf"\b(?:(?:\d+\s*(?:st|nd|rd|th|\.?\s*[ªa])|{_ORDINALS})\.?\s+)?(?:rev(?:ised)?\.?\s+|revisada\s+)?"
+    r"(?:ed(?:ition|ici[oó]n)?\b\.?)(?:\s+rev(?:ised|isada)?\b\.?)?", re.IGNORECASE)
+_EDITION_WORDS = frozenset({"edition", "ed", "eds", "revised", "rev", "edicion", "revisada"})
 
 
 def _strip_title_prefix(text: str) -> str:
     return _TITLE_PREFIX_RE.sub("", text or "", count=1)
 
 
+def _strip_edition(text: str) -> str:
+    """Quita las menciones de edición ("8th ed.", "Eighth Revised Edition", "2.ª edición") de un título; solo las
+    que llevan la palabra edición (ed., edition, edición), para no tocar "Second" o "Revised" sueltos."""
+    return _EDITION_RE.sub(" ", text or "")
+
+
 def _title_tokens(text: str | None) -> list[str]:
-    return [t.norm for t in _tokens_of(text or "") if _is_sig(t.norm)]
+    return [t.norm for t in _tokens_of(_strip_edition(text or "")) if _is_sig(t.norm)]
 
 
 @dataclass
@@ -296,13 +321,43 @@ def _pair_compounds(missing: list[str], extra: list[str], real: list[str], cited
     return missing, extra
 
 
+_UK_US_WORDS = {"mould": "mold", "moulds": "molds", "mouldy": "moldy", "grey": "gray", "aluminium": "aluminum",
+                "plough": "plow", "programme": "program", "programmes": "programs", "tyre": "tire"}
+_UK_US_SUFFIXES = (("isation", "ization"), ("ising", "izing"), ("ised", "ized"), ("ise", "ize"), ("ysing", "yzing"),
+                   ("ysed", "yzed"), ("yse", "yze"), ("ogue", "og"), ("ence", "ense"), ("tre", "ter"),
+                   ("our", "or"))
+
+
+def _us_spelling(word: str) -> str:
+    """Ortografía estadounidense de una palabra británica (ae/oe -> e, ph -> f, ll -> l, -ise -> -ize, -tre -> -ter,
+    -our -> -or...). Se aplica a las dos palabras comparadas, así que solo importa que coincidan."""
+    w = word.replace("ae", "e").replace("oe", "e").replace("ph", "f").replace("ll", "l")
+    for uk, us in _UK_US_SUFFIXES:
+        if w.endswith(uk):
+            return w[:-len(uk)] + us
+    return w
+
+
+def _loose_forms(word: str) -> set[str]:
+    """Formas canónicas de una palabra: la propia y, si parece un plural, sus singulares posibles (studies ->
+    study, analyses -> analysis, doses -> dose), todas en ortografía estadounidense."""
+    w = _UK_US_WORDS.get(word, word)
+    stems = {w}
+    if len(w) > 4 and w.endswith("ies"):
+        stems.add(w[:-3] + "y")
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        stems.add(w[:-1])
+        if w.endswith("es"):
+            stems.add(w[:-2])
+            if w.endswith("ses"):
+                stems.add(w[:-3] + "sis")
+    return {_us_spelling(_UK_US_WORDS.get(s, s)) for s in stems}
+
+
 def _spelling_variant(a: str, b: str) -> bool:
-    if a[0] != b[0]:
-        return False
-    for x, y in ((a, b), (b, a)):
-        if x in (y + "s", y + "es"):
-            return True
-    return min(len(a), len(b)) >= 3 and SequenceMatcher(None, a, b).ratio() >= 0.8
+    """¿Son `a` y `b` la misma palabra con otra ortografía o en plural? Solo variantes sistemáticas
+    (`_loose_forms`): nunca palabras simplemente parecidas (nitrate/nitrite, choline/chlorine, goats/goals)."""
+    return a == b or bool(_loose_forms(a) & _loose_forms(b))
 
 
 def _compare(real: list[str], cited: list[str]) -> TitleComparison:
@@ -348,18 +403,28 @@ def titles_same_work(a: str | None, b: str | None) -> bool:
 
 
 # ============================================================================ autores
-def _author_candidates(name: str | None, family: str | None = None) -> set[str]:
+def _author_candidates(name: str | None, family: str | None = None, order: str | None = None) -> set[str]:
     """Formas normalizadas del apellido de un autor del registro (Crossref "Apellido Nombre", PubMed
-    "Apellido AB", OpenAlex "Nombre Apellido"); con el apellido explícito (`family`) solo se usa ese."""
-    def pick(tokens: list[_Tok]) -> set[str]:
-        return {t.norm for t in tokens if len(t.norm) >= 2 and not _is_initial(t.raw)
-                and t.norm not in _PARTICLES and t.norm not in _STOPWORDS}
+    "Apellido AB", OpenAlex "Nombre Apellido"); con el apellido explícito (`family`) solo se usa ese. Con
+    `order="given_family"` (OpenAlex: "Juan Carlos García Pérez") el primer nombre no cuenta como apellido, para
+    que una cita de "Juan Smith" no pase por el nombre de pila de "Juan Pérez"."""
+    def pick(tokens: list[_Tok]) -> list[str]:
+        return [t.norm for t in tokens if len(t.norm) >= 2 and not _is_initial(t.raw)
+                and t.norm not in _PARTICLES and t.norm not in _STOPWORDS]
     if family:
         found = pick(_tokens_of(family))
         if found:
-            return found
+            return set(found)
     tokens = _tokens_of(name or "")
-    return pick(tokens) or {t.norm for t in tokens if len(t.norm) >= 2}
+    words = pick(tokens)
+    if order == "given_family" and len(words) >= 2:
+        words = words[1:]
+    return set(words) or {t.norm for t in tokens if len(t.norm) >= 2}
+
+
+def _all_author_words(authors) -> set[str]:
+    """Todas las palabras de los nombres del registro (apellidos y nombres de pila): no son texto ajeno a la cita."""
+    return {t.norm for name in authors or [] for t in _tokens_of(name or "") if len(t.norm) >= 2}
 
 
 def _acronym(name: str | None) -> str | None:
@@ -370,8 +435,9 @@ def _acronym(name: str | None) -> str | None:
 
 def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
     """Primer autor de la cita: palabras del principio hasta la primera coma, punto y coma, '&', paréntesis,
-    cifra, conjunción ("and", "y", "et al."), palabra en minúscula (salvo partículas) o fin de frase tras una
-    palabra que no es una inicial."""
+    cifra, conjunción ("and", "y", "et al."), palabra en minúscula (salvo partículas) o fin de frase. Tras una
+    inicial con punto ("Pérez J. D.", "J. D. Pérez") sigue solo si viene otra inicial o si aún no hay apellido:
+    "Smith J. Pérez J." no hace de Pérez el primer autor."""
     lead: list[_Tok] = []
     prev_end = 0
     for tok in toks:
@@ -379,8 +445,11 @@ def _lead_tokens(text: str, toks: list[_Tok]) -> list[_Tok]:
         if lead:
             if re.search(r"[,;&(\[:]", gap):
                 break
-            if re.search(r"[.?!]\s", gap + " ") and not _is_initial(lead[-1].raw):
-                break
+            if re.search(r"[.?!]\s", gap + " "):
+                if not _is_initial(lead[-1].raw):
+                    break
+                if not _is_initial(tok.raw) and any(not _is_initial(t.raw) for t in lead):
+                    break
         if _has_digit(tok.norm) or tok.norm in _LEAD_CONJ:
             break
         if tok.raw[:1].islower() and tok.norm not in _PARTICLES:
