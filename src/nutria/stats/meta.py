@@ -16,9 +16,11 @@ estrecho que el de Wald, se emite un aviso (campo `avisos`).
 
 Intervalo de predicción: μ̂ ± t(k - 2; 1 - α/2)·√(tau² + EE²), con el EE de Wald del efecto medio
 (√(1/Σw), w = 1/(vi + tau²)) y k - 2 grados de libertad (Higgins, Thompson y Spiegelhalter 2009,
-J R Stat Soc A 172:137-159). No depende del ajuste elegido para el IC. predict() de metafor usa
-otra convención (k - 1 gl y el EE del ajuste Knapp-Hartung, o z con la prueba de Wald), así que el
-script de `nutria meta exportar-r` calcula el intervalo con esta misma fórmula.
+J R Stat Soc A 172:137-159). No depende del ajuste elegido para el IC. predict() de metafor, con
+sus opciones por defecto, usa la distribución de la prueba del modelo (z con test = "z", y t con
+k - 1 gl y el EE de Knapp-Hartung con test = "knha"): con z, estas mismas piezas reproducen su
+intervalo para dat.bcg ([-1,8667; 0,4376]; ver tests/test_estadistica_v2.py). Para que R y nutria
+coincidan, el script de `nutria meta exportar-r` calcula el intervalo con la fórmula de arriba.
 
 Efectos dependientes (varios tratamientos frente a un control compartido, varias variables o
 momentos por estudio): `detect_dependence` avisa de los clústeres con más de una fila y

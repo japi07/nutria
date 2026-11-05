@@ -732,7 +732,7 @@ def _effects_from_rows(rows: list[dict], measure: str, rho_intrasujeto: float | 
                 nota = es.design_note(measure, kind, diseno, rho)
                 if vals["n_trt"] != vals["n_ctrl"]:
                     grupos.setdefault(("aviso", "Diseño cruzado con n_trt distinto de n_ctrl: se usa como n el menor "
-                                                "(animales con ambos tratamientos)."), []).append(label)
+                                                "(unidades experimentales con ambos tratamientos)."), []).append(label)
         if nota:
             grupos.setdefault(nota, []).append(label)
         yi.append(y)

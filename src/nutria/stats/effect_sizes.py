@@ -15,8 +15,9 @@ de los recuentos de animales (o unidades experimentales) con evento y totales po
 Diseños cruzados (crossover y cuadrado latino): cada animal recibe el tratamiento y el control,
 así que las dos medias no son independientes. `effect_from_summary(..., diseno=...)` usa entonces
 las fórmulas de grupos emparejados de Borenstein, Hedges, Higgins y Rothstein (2009, Introduction
-to Meta-Analysis, cap. 4), con n = número de animales y r = correlación intrasujeto (entre las dos
-observaciones del mismo animal).
+to Meta-Analysis, cap. 4), con n = número de unidades experimentales que reciben ambos tratamientos
+(animales o, en cuadrados latinos por corrales, corrales) y r = correlación intrasujeto (entre las dos
+observaciones de la misma unidad).
 
 - SMD: exige r. Con una dispersión residual (SEM combinado o SED del modelo con el animal como
   efecto), la DE entre animales que la estandariza es s_w/√(1 - r); con DE por tratamiento, su
@@ -379,7 +380,8 @@ def design_note(measure: str, kind: str | None, diseno: str | None,
                          "con las fórmulas de grupos emparejados (correlación intrasujeto).")
     kind = str(kind).strip()
     rho = _check_rho(rho_intrasujeto)
-    base = "Diseño cruzado (crossover o cuadrado latino), n = animales con ambos tratamientos"
+    base = ("Diseño cruzado (crossover o cuadrado latino), n = unidades experimentales (animales o corrales) "
+            "con ambos tratamientos")
     if measure == "SMD":
         if rho is None:  # effect_from_summary lo rechaza; aquí solo por completitud
             return ("aviso", f"{base}: la SMD necesita la correlación intrasujeto r y no se indicó.")

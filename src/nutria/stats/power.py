@@ -91,13 +91,15 @@ def n_crossover(delta: float, sd_within: float, alpha: float = 0.05, power: floa
         tcrit = stats.t.ppf(1 - alpha / 2, df)
         pw = float(stats.nct.sf(tcrit, df, ncp) + stats.nct.cdf(-tcrit, df, ncp))
         if pw >= power:
+            nota = ("Aproximación: supone que no hay efecto residual (carry-over) y periodos comunes a todos los "
+                    "animales; verifica con simulación del modelo mixto real (periodo, secuencia o cuadrado).")
+            if t > 2:
+                nota += (f" Es la potencia de una comparación entre dos de los {t} tratamientos, sin ajuste por "
+                         "comparaciones múltiples.")
             return {"diseno": "crossover" if t == 2 else "cuadrado_latino", "tratamientos": t,
                     "unidad_experimental": "animal (periodo dentro de animal)", "n_total": n,
                     "n_animales_total": n, "n_observaciones": n * t, "gl": df, "potencia": pw,
-                    "de_intra": sd_within,
-                    "nota": "Aproximación: supone que no hay efecto residual (carry-over) y periodos comunes a "
-                            "todos los animales; verifica con simulación del modelo mixto real (periodo, "
-                            "secuencia o cuadrado)."}
+                    "de_intra": sd_within, "nota": nota}
         n += 2 if t == 2 else t
     raise ValueError("Tamaño muestral fuera de rango")
 
