@@ -553,8 +553,8 @@ def test_titulo_que_contiene_el_nombre_de_la_revista():
 
 
 def test_negacion_o_calificativo_recortado_no_se_sella(net):
-    for real, cited in ((EFFECT, "No effect" + EFFECT[len("Effect"):]), (VIT_E, VIT_E.replace("vitamin E", "vitamin D3")),
-                        (SERIES + ". Part I", SERIES + ". Part 2")):
+    for real, cited in ((EFFECT, "No effect" + EFFECT[len("Effect"):]),
+                        (VIT_E, VIT_E.replace("vitamin E", "vitamin D3")), (SERIES + ". Part I", SERIES + ". Part 2")):
         published(net, title=real)
         entry = f"Pérez J, García A. 2020. {cited}. J Dairy Sci 103:1-10. DOI: {DOI}"
         res = c.verify_entry(Client(), entry)[0]

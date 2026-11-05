@@ -11,15 +11,23 @@ Comprueba lo que un LLM suele fallar:
    ese DOI o tiene el mismo título): OpenAlex puede asociar a un DOI el PMID de otro trabajo.
 2. Que corresponde al trabajo citado (`compare_citation`). Es una heurística, no una garantía; la cita se lee
    como [autores] [año] [título] [revista, volumen, páginas] en cualquiera de los estilos habituales:
-   - primer autor: el primer nombre de la cita debe ser el PRIMER autor del registro, no uno cualquiera;
+   - primer autor: la cita debe empezar por los autores (si el registro los tiene) y el primer nombre de la cita
+     debe ser el PRIMER autor del registro, no uno cualquiera;
    - año: el de la cita (sin contar identificadores, volumen, páginas, fechas de consulta ni el propio
      título) debe estar a ±1 año del real;
    - título: si el registro lo tiene, la cita debe traerlo (sin él, o con solo el identificador, es
      discrepancia). Se compara de forma simétrica (palabras significativas normalizadas en los dos sentidos;
-     ver `TITLE_MIN`), sin admitir sustituciones de palabras ni que falte o sobre una cifra o una negación
-     ("50 g/d" frente a "100 g/d", "does not improve" frente a "improves"); y no puede haber delante texto que no
+     ver `TITLE_MIN`), sin admitir sustituciones de palabras ni que falte o sobre una cifra, una negación o un
+     calificativo ("50 g/d" frente a "100 g/d", "does not improve" frente a "improves", "vitamin E" frente a
+     "vitamin D3", "Part I" frente a "Part 2", la parte "I." de una serie); y no puede haber delante texto que no
      sea de los autores del registro (también sus nombres de pila junto al apellido) ni el año (un título
-     inventado delante del real);
+     inventado delante del real). El tramo del título se recorta de autores, año, revista, volumen y páginas
+     pegados (citas sin puntos), pero nunca de una negación o una cifra pegada delante ni de un calificativo o
+     unas cifras finales que no son año, volumen ni páginas (`_trim_span`). Son el mismo título los subíndices
+     de MEDLINE ("D(3)" = "D3"), los romanos y los arábigos de una parte ("Part II" = "Part 2"), los números en
+     inglés ("two" = "2"), la llamada de nota al pie final del registro ("cattle1,2") y el título sin un
+     subtítulo que no distingue el trabajo dentro de una serie; un título del registro en otra escritura
+     (cirílico, chino...) se compara literalmente;
    - revista: si la cita la trae, el primer tramo con contenido tras el título (o tras los autores, si el
      registro no tiene título) debe ser la revista del registro, con tolerancia a abreviaturas ISO 4 ("J Dairy
      Sci" = "Journal of Dairy Science"), siglas y calificativos de país (PNAS "U S A"); no se compara en libros,
@@ -308,8 +316,9 @@ def citation_year(citation_text: str | None) -> int | None:
 # "Eighth Revised Edition") no cuentan: la edición la distingue el año. El umbral anterior (0,6, asimétrico)
 # dejaba pasar un título distinto del mismo tema con el 73 % de palabras comunes.
 TITLE_MIN = 0.9
-# Las cifras y las negaciones no entran en esa tolerancia: una que falte o sobre es siempre discrepancia
-# (`TitleComparison.critical_differ`).
+# Las cifras, las negaciones y los calificativos ("vitamin E", "Part II", la parte "I." de una serie) no entran en
+# esa tolerancia: uno que falte o sobre es siempre discrepancia (`TitleComparison.critical_differ`), y el recorte
+# del tramo del título no los quita (`_trim_span`).
 _CRITICAL_WORDS = frozenset({"not", "no", "non", "nor", "neither", "never", "without", "sin", "ni", "nunca", "nao",
                              "sem", "nicht", "kein", "keine", "keinen", "ohne", "pas", "sans", "senza", "nessun"})
 
@@ -366,7 +375,6 @@ def _qualifier(norm: str) -> str | None:
     if _has_digit(norm) and len(norm) <= 6:
         return norm
     return None
-
 
 
 def _is_qualifier(toks: list[_Tok]) -> bool:
