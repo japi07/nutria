@@ -858,7 +858,80 @@ def test_pubchem_ghs_states_are_explicit(cfg):
     assert with_h["estado"] == pubchem.GHS_CON_FRASES and with_h["frases_H"] == ["H302: Harmful if swallowed"]
     error = pubchem.ghs_classification(by_status(503), 1)
     assert error["estado"] == pubchem.GHS_ERROR and "503" in error["detalle"]
-    assert pubchem.ghs_classification(by_status(200, section), 1)["frases_H"] == ["Not Classified"]
+    # «Not Classified» no es una frase H: clasificado sin frases H, con la notificación a la vista.
+    not_classified = pubchem.ghs_classification(by_status(200, section), 1)
+    assert not_classified["estado"] == pubchem.GHS_SIN_FRASES and not_classified["frases_H"] == []
+    assert not_classified["no_clasificado"] == ["Not Classified"] and "Not Classified" in not_classified["detalle"]
+
+
+def _ghs_record(*informations):
+    """Respuesta de PUG View con la forma real de la sección «GHS Classification» (Safety and Hazards > Hazards
+    Identification > GHS Classification), con una o varias referencias."""
+    info = []
+    for ref, (name, strings) in enumerate(informations, start=1):
+        info.append({"ReferenceNumber": ref, "Name": name,
+                     "Value": {"StringWithMarkup": [{"String": text} for text in strings]}})
+    return {"Record": {"RecordType": "CID", "RecordNumber": 1, "Section": [
+        {"TOCHeading": "Safety and Hazards", "Section": [{"TOCHeading": "Hazards Identification", "Section": [
+            {"TOCHeading": "GHS Classification", "Information": info}]}]}]}}
+
+
+# D7-14: en la lista «GHS Hazard Statements» PubChem mezcla frases H con textos que no lo son.
+GHS_NOT_MEETING = "Reported as not meeting GHS hazard criteria by 1197 of 1201 companies. For more detailed " \
+                  "information, please visit ECHA C&L website"
+GHS_OLD_FORMAT = ["Reported as not meeting GHS hazard criteria by 4 of 1203 companies. For more detailed information, "
+                  "please visit ECHA C&L website",
+                  "Of the 31 notification(s) provided by 1199 of 1203 companies with hazard statement code(s):",
+                  "H302 (88.6%): Harmful if swallowed [Warning Acute toxicity, oral]",
+                  "H300+H310+H330 (12%): Fatal if swallowed, in contact with skin or if inhaled [Danger]",
+                  "H360FD (10.2%): May damage fertility. May damage the unborn child [Danger Reproductive toxicity]",
+                  "EUH066: Repeated exposure may cause skin dryness or cracking",
+                  "Information may vary between notifications depending on impurities, additives, and other factors. "
+                  "The percentage value in parenthesis indicates the notified classification ratio from companies "
+                  "that provide hazard codes. Only hazard classifications with ratios higher than 10% are shown"]
+
+
+@pytest.mark.parametrize("informations, estado, frases, no_clasificado", [
+    ([("GHS Hazard Statements", ["Not Classified"]), ("ECHA C&L Notifications Summary", [GHS_NOT_MEETING])],
+     pubchem.GHS_SIN_FRASES, [], ["Not Classified", GHS_NOT_MEETING]),
+    ([("GHS Hazard Statements", [GHS_NOT_MEETING])], pubchem.GHS_SIN_FRASES, [], [GHS_NOT_MEETING]),
+    ([("Signal", ["Warning"]), ("GHS Hazard Statements", GHS_OLD_FORMAT)], pubchem.GHS_CON_FRASES,
+     GHS_OLD_FORMAT[2:6], GHS_OLD_FORMAT[:1]),
+    # Dos referencias que discrepan: una notifica H315 y otra «Not Classified».
+    ([("GHS Hazard Statements", ["H315 (100%): Causes skin irritation [Warning Skin corrosion/irritation]"]),
+      ("GHS Hazard Statements", ["Not Classified"])],
+     pubchem.GHS_CON_FRASES, ["H315 (100%): Causes skin irritation [Warning Skin corrosion/irritation]"],
+     ["Not Classified"]),
+    ([("GHS Hazard Statements", ["Hazard statements not available", "H3020 typo", "Harmful"])],
+     pubchem.GHS_SIN_FRASES, [], []),
+])
+def test_pubchem_only_coded_statements_are_hazard_statements(cfg, informations, estado, frases, no_clasificado):
+    body = _ghs_record(*informations)
+    result = pubchem.ghs_classification(FakeClient(cfg, lambda url, params, kw: body), 1)
+    assert result["estado"] == estado
+    assert result["frases_H"] == frases and result["no_clasificado"] == no_clasificado
+    assert not set(result["frases_H"]) & set(result["otras"])
+    assert all(pubchem.is_hazard_statement(text) for text in result["frases_H"])
+    assert pubchem.ghs_hazards(FakeClient(cfg, lambda url, params, kw: body), 1) == frases
+    if estado == pubchem.GHS_CON_FRASES and no_clasificado:
+        assert "algunas notificaciones declaran que no se clasifica" in result["detalle"]
+    if estado == pubchem.GHS_SIN_FRASES:
+        assert "no equivale a «sin peligro»" in result["detalle"]
+
+
+def test_molecula_cli_does_not_present_not_classified_as_a_hazard_statement(proj, router, capsys):
+    router.add(r"compound/name/glucose", (200, {"PropertyTable": {"Properties": [{"CID": 5793}]}}))
+    router.add(r"pug_view/data/compound/5793/", (200, _ghs_record(
+        ("GHS Hazard Statements", ["Not Classified"]), ("ECHA C&L Notifications Summary", [GHS_NOT_MEETING]))))
+    code, out, _ = run(capsys, ["molecula", "pubchem", "glucose", "--peligros"])
+    assert code == cli.SALIDA_OK
+    line = next(text for text in out.splitlines() if text.startswith("GHS CID 5793"))
+    assert line.startswith("GHS CID 5793: clasificado_sin_frases_H —") and "con_frases_H" not in line
+    assert "notificado como «Not Classified»" in line
+    code, out, _ = run(capsys, ["--json", "molecula", "pubchem", "glucose", "--peligros"])
+    ghs = json.loads(out)["resultados"][0]
+    assert ghs["GHS_frases_H"] == [] and ghs["GHS"]["no_clasificado"] == ["Not Classified", GHS_NOT_MEETING]
+    assert events(proj, "molecula")[-1]["outputs"]["ghs"] == {"5793": "clasificado_sin_frases_H"}
 
 
 def test_pubchem_compound_falls_back_to_isomeric_smiles_and_lists_synonyms(cfg):
