@@ -59,7 +59,8 @@ verificada antes (`nutria fuente agregar`).
   mayúsculas, tildes ni signos; usa la que te indiquen para esta oportunidad y ejecución.
 - La conciliación (otro extractor o el orquestador, identificado con `--agente`; nunca quien depositó la copia A o la
   B) ejecuta `nutria --agente extractor-datos extraccion comparar <A.json> <B.json> --registrar`, que exige dos copias
-  depositadas por extractores distintos. Sin discrepancias (código 0), el sistema registra los registros como
+  depositadas por extractores distintos y un responsable identificado (quien la registra ve las discrepancias y, si
+  las hay, ya no extrae esa fuente). Sin discrepancias (código 0), el sistema registra los registros como
   `doble_concordante`. Con discrepancias (código 1), registra solo la comparación (`CE-xxxx`): resuelve cada
   discrepancia releyendo la fuente (nunca promediando ni eligiendo al azar) y registra la conciliación con
   `nutria --agente extractor-datos extraccion conciliar <CE-xxxx> --datos <conciliacion.json>` (formato en

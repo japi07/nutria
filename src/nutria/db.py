@@ -1258,8 +1258,10 @@ def _simple_extractions_of(conn: sqlite3.Connection, records: list[dict]) -> lis
 def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: str, actor: str | None = None,
                                    file_a: str | None = None, file_b: str | None = None) -> dict:
     """Registra la comparación de dos copias depositadas. Sin discrepancias, registra los registros como
-    'doble_concordante'; con discrepancias, solo la comparación (se concilia con `conciliate_extraction_comparison`)."""
-    who = current_actor(actor)
+    'doble_concordante'; con discrepancias, solo la comparación (se concilia con `conciliate_extraction_comparison`).
+    Quien la registra ve las discrepancias: debe estar identificado, como quien deposita o concilia, para que la regla
+    de exposición también le alcance."""
+    who, _key = _identified_actor(actor, "La comparación registrada")
     with transaction(conn):
         copy_a, copy_b = _pick_copies(conn, sha_a, sha_b)
         records_a, records_b = json.loads(copy_a["records"]), json.loads(copy_b["records"])

@@ -135,7 +135,8 @@ def test_extraction_batch_export_and_double_extraction(project, capsys):
         (project / f"c_{label}.json").write_text(json.dumps([copy], indent=1 if label == "A" else 2), "utf-8")
         assert main(["--agente", f"extractor-datos-{label}", "extraccion", "depositar", "--datos",
                      str(project / f"c_{label}.json")]) == 0
-    assert main(["extraccion", "comparar", str(project / "c_A.json"), str(project / "c_B.json"), "--registrar"]) == 0
+    assert main(["--agente", "orquestador", "extraccion", "comparar", str(project / "c_A.json"),
+                 str(project / "c_B.json"), "--registrar"]) == 0
     capsys.readouterr()
     assert main(["--json", "extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path)]) == 0
     out = json.loads(capsys.readouterr().out)
