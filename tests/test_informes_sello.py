@@ -193,17 +193,27 @@ def test_review_name_must_match_registered_reviewer(project):
                for e in _errors(text, conn=_conn(), path=path))
 
 
+def _rejected(argv: list[str]) -> bool:
+    """La orden se rechaza (con SystemExit o con un código distinto de 0: la comprobación central de la firma en
+    contexto de agente puede hacerlo antes que la propia orden)."""
+    try:
+        rc = main(argv)
+    except SystemExit as exc:
+        return exc.code not in (0, None)
+    return rc != 0
+
+
 def test_review_command_rejects_agents_missing_signature_and_errors(project, monkeypatch):
     path = _filled_report(project)
-    with pytest.raises(SystemExit, match="exige --firma-humana"):
+    before = path.read_bytes()
+    with pytest.raises(SystemExit, match=f"exige {SIGN}"):
         main(["informe", "revisar", str(path)])
-    with pytest.raises(SystemExit, match="no la registra un agente"):
-        main(["--agente", "director-cientifico", "informe", "revisar", str(path), SIGN, "Ana"])
+    assert _rejected(["--agente", "director-cientifico", "informe", "revisar", str(path), SIGN, "Ana"])
     for name, value in (("NUTRIA_AGENT", "verificador-citas"), ("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", "cli")):
         with monkeypatch.context() as m:
             m.setenv(name, value)
-            with pytest.raises(SystemExit, match="no la registra un agente"):
-                main(["informe", "revisar", str(path), SIGN, "Ana"])
+            assert _rejected(["informe", "revisar", str(path), SIGN, "Ana"]), name
+    assert path.read_bytes() == before and db.report_reviews(_conn()) == []
     # un informe final con errores (fuente sin registrar) no se da por revisado
     conn = _conn()
     conn.execute("DELETE FROM sources")
