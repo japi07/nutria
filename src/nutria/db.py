@@ -767,7 +767,11 @@ INCIDENCE_OUTCOME_RE = re.compile(
     # a la izquierda; P/IA: gestaciones por inseminación)
     r"|celos?|estros?|anestros?|ovulacion|quistes? ovaricos?|gestantes|prenadas|neumonias?|timpanismo|meteorismo"
     r"|cetonuria|estrus|anestrus|ovulation|ovarian cysts?|pregnant|pneumonia|bloat|ketonuria"
-    r"|sck|sch|scm|rfm|lda|p ?/ ?(?:ia|ai))\b")
+    r"|sck|sch|scm|rfm|lda|p ?/ ?(?:ia|ai)"
+    # animales con el trastorno o el estado ('vacas cetósicas', 'vacas vacías', 'terneros enfermos')
+    r"|cetosic[oa]s?|hipocalcemic[oa]s?|hipercetonemic[oa]s?|mastitic[oa]s?|coj[oa]s|enferm[oa]s|muert[oa]s"
+    r"|abortad[oa]s|prenad[oa]s|vaci[oa]s|descartad[oa]s|eliminad[oa]s|ketotic|hypocalc(?:a)?emic|lame|sick|dead"
+    r"|open cows)\b")
 # Proporción de animales (o unidades) con algo, por la unidad o por el nombre: '% de vacas', 'proporción de animales',
 # 'casos/100 vacas', 'vacas con BHB alto', 'cows with'. Es una incidencia aunque la variable no nombre un trastorno.
 _ANIMAL_WORDS = (r"vacas?|novillas?|terneros?|terneras?|becerr[oa]s?|cerdas?|lechones|cerdos?|ovejas?|cabras?"
@@ -786,6 +790,16 @@ THRESHOLD_RE = re.compile(r"[<>≤≥⩽⩾]\s*=?\s*\d|=\s*[<>]\s*\d|\b(?:mayor|
                           r"|greater than|less than|al menos)\s+\d")
 # Un umbral sobre el tiempo ('tiempo con pH < 5,8') no es una proporción de animales.
 TIME_OUTCOME_RE = re.compile(r"\b(?:tiempo|time|duracion|duration|horas?|hours?|minutos?|minutes?)\b")
+# La variable empieza por los animales ('vacas gestantes a 150 DEL', '% vacas con...'): proporción de animales.
+ANIMAL_START_RE = re.compile(r"^\W*(?:(?:%|porcentaje|proporcion|fraccion|numero|percentage|proportion|number)\s*"
+                             r"(?:(?:de|of)\s+)?)?(?:(?:las|los|the)\s+)?(?:" + _ANIMAL_WORDS + r")\b")
+# Un nivel cualitativo de un marcador ('BHB alto', 'AGNE elevados', 'high BHB'), al final en español o al principio en
+# inglés, con una unidad que solo dice proporción ('%'): proporción de animales por encima o por debajo de un umbral
+# sin cifra.
+LEVEL_OUTCOME_RE = re.compile(r"\b(?:alt[oa]s?|elevad[oa]s?|baj[oa]s?|high|low|elevated)\W*$"
+                              r"|^\W*(?:high|low|elevated)\b")
+BARE_PROPORTION_UNITS = frozenset({"%", "porcentaje", "proporcion", "fraccion", "tasa", "percent", "percentage",
+                                   "proportion", "fraction", "rate"})
 INCIDENCE_UNIT_RE = re.compile(
     r"%|\b(?:porcentaje|proporcion|fraccion|casos?|animales|vacas|novillas|terneros|cerdas|lechones|aves|incidencia"
     r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?|percent(?:age)?|proportion|cases?|animals|cows|heifers"
@@ -796,7 +810,8 @@ PER_TIME_UNIT_RE = re.compile(r"/ ?(?:h|hora|d|dia|day|min)\b|por (?:hora|dia|mi
 COMPOSITION_UNIT_RE = re.compile(r"\b(?:ms|mo|pb|pv|peso|materia|ingesta|dieta|racion|energia|grasa|proteina|leche"
                                  r"|higado|tejido|fresco|seco|plasma|sangre|suero|tiempo|duracion|horas?|minutos?"
                                  r"|dm|om|cp|bw|weight|matter|intake|diet|ration|energy|fat|protein|milk|liver|tissue"
-                                 r"|fresh|dry|blood|serum|time|duration|hours?|minutes?)\b")
+                                 r"|fresh|dry|blood|serum|time|duration|hours?|minutes?|ag|fa|acidos? grasos?"
+                                 r"|fatty acids?)\b")
 
 
 def incidence_like(outcome: Any, unit: Any) -> bool:
@@ -812,7 +827,10 @@ def incidence_like(outcome: Any, unit: Any) -> bool:
         return False
     outcome_text, outcome_fold = plain_text(outcome), _fold(str(outcome or ""))
     return bool(INCIDENCE_OUTCOME_RE.search(outcome_text) or ANIMAL_PROPORTION_RE.search(outcome_fold)
-                or (THRESHOLD_RE.search(outcome_fold) and not TIME_OUTCOME_RE.search(outcome_text)))
+                or ANIMAL_START_RE.search(outcome_fold)
+                or ((THRESHOLD_RE.search(outcome_fold)
+                     or (LEVEL_OUTCOME_RE.search(outcome_text) and unit_text.strip(" ()") in BARE_PROPORTION_UNITS))
+                    and not TIME_OUTCOME_RE.search(outcome_text)))
 
 
 def is_incidence(get) -> bool:

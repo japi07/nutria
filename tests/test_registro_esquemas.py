@@ -1043,13 +1043,17 @@ def test_incidencia_expresada_como_porcentaje_tambien_exige_definicion_y_ventana
     for variable, unidad in (("BHB ≥ 1,2 mmol/L", "% de vacas"), ("vacas con BHB alto", "%"), ("SCK", "% de vacas"),
                              ("SCK", "%"), ("BHB ≥ 1,2 mmol/L", "%"), ("RCS > 200 000 células/mL", "%"),
                              ("Ca < 2,0 mmol/L", "proporción"), ("cualquier nombre", "% de las vacas"),
-                             ("Cows with high BHB", "%"), ("P/IA", "%"), ("casos de cojera", "casos/100 vacas/año")):
+                             ("Cows with high BHB", "%"), ("P/IA", "%"), ("casos de cojera", "casos/100 vacas/año"),
+                             ("vacas cetósicas", "%"), ("vacas vacías a 150 DEL", "%"), ("BHB alto", "%"),
+                             ("AGNE elevados", "%"), ("high BHB", "%"), ("terneros enfermos", "%")):
         with pytest.raises(SystemExit, match="definicion_caso"):
             _validate("extraccion", dict(pct, variable=variable, unidad=unidad))
     # sin falsos positivos: un umbral sobre el tiempo, la composición o un marcador continuo no son incidencias
     for variable, unidad in (("tiempo con pH < 5,8", "%"), ("pH ruminal < 5,8", "h/d"), ("pH < 5,8", "% del tiempo"),
                              ("BHB ≥ 1,2 mmol/L", "mmol/L"), ("proteína de la leche", "%"), ("estrógenos", "pg/mL"),
-                             ("digestibilidad de la FND", "%"), ("ingestión de MS", "% del PV")):
+                             ("digestibilidad de la FND", "%"), ("ingestión de MS", "% del PV"),
+                             ("FND de alta digestibilidad", "%"), ("high oleic acid", "% of FA"), ("BHB alto", "mmol/L"),
+                             ("peso vacío", "kg")):
         _validate("extraccion", dict(sin_contexto, variable=variable, unidad=unidad))
 
 
