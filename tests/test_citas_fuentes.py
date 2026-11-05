@@ -518,12 +518,38 @@ SERIES = "Rumen-protected choline in transition dairy cows: effects on milk prod
     (EFFECT, EFFECT + " 100"),
     (EFFECT, EFFECT + " in 2019"),
     (EFFECT, EFFECT + " without monensin"),
+    (EFFECT, "No symposium: " + EFFECT),                       # una cabecera de sección no esconde una negación
 ])
 @pytest.mark.parametrize("style", sorted(STYLES))
 def test_recorte_del_titulo_no_esconde_cifras_negaciones_ni_calificativos(real, cited, style):
     check = c.compare_citation(STYLES[style].format(t=cited), titles=[real],
                                **{k: v for k, v in REC.items() if k != "titles"})
     assert check.title_ok is False, (style, cited, check)
+
+
+def test_negacion_delante_del_titulo_se_compara_o_se_senala():
+    rec = {k: v for k, v in REC.items() if k != "titles"}
+    # pegada al título, entra en el tramo y se compara (sobra "no")...
+    check = c.compare_citation(f"Pérez J García A 2020 No effect{EFFECT[len('Effect'):]} J Dairy Sci 103 1-10",
+                               titles=[EFFECT], **rec)
+    assert check.title_ok is False and "no" in check.title_extra, check
+    # ...y separada del título por un punto, es texto ajeno delante del título
+    for cite in (f"Pérez J, García A. 2020. No. {EFFECT}. J Dairy Sci 103:1-10.",
+                 f"Pérez J, García A. No. {EFFECT}. J Dairy Sci. 2020;103:1-10.",
+                 f"Pérez J, García A. 2020. No 2. {EFFECT}. J Dairy Sci 103:1-10."):   # entre el año y el título
+        check = c.compare_citation(cite, titles=[EFFECT], **rec)
+        assert check.title_ok is False and check.text_before_title == ["No"], (cite, check)
+
+
+def test_titulo_que_contiene_el_nombre_de_la_revista():
+    # La revista se busca al final del tramo, seguida solo de año, volumen o páginas: "animal" dentro del título no
+    # es la revista "Animal".
+    real = "Effects of heat stress on animal welfare and milk production in grazing dairy cows"
+    rec = dict(authors=REC["authors"], families=REC["families"], journals=["Animal"])
+    for style in ("Pérez J García A 2020 {t} Animal 14 1-10", "Pérez J, García A, 2020, {t}, Animal 14:1-10",
+                  "Pérez J, García A. 2020. {t}. Animal 14:1-10."):
+        check = c.compare_citation(style.format(t=real), titles=[real], **rec)
+        assert not _bad(check) and check.year_in_citation == 2020, (style, check)
 
 
 def test_negacion_o_calificativo_recortado_no_se_sella(net):
@@ -1099,6 +1125,81 @@ def test_fila_del_mismo_trabajo_recibe_el_identificador_asociado(project, net, m
                            year=2018)
     assert main(["fuente", "agregar", "--pmid", "666"]) == 0
     assert source("doi:10.5555/arch.1")["pmid"] == "666" and source("pmid:666") is None
+
+
+def test_fila_verificada_por_pmid_con_el_doi_de_otro_trabajo_no_se_reescribe(project, net, capsys):
+    # Escenario T de la revisión (ronda 2): PubMed declara por error el DOI X en el PMID 777 (otro trabajo), y la fila
+    # se registra como doi:X. Después, la verificación del propio DOI X (Crossref: otro trabajo) la encuentra por ese
+    # DOI. No se reescribe la fila (ni sus afirmaciones y extracciones pasan a otro trabajo): error sin cambios.
+    net.pm["777"] = pm_rec("777", DOI, title=EWES, authors=("Ruiz R",), year=2015)
+    assert main(["fuente", "agregar", "--pmid", "777"]) == 0
+    sid = f"doi:{DOI}"
+    claim = add_claim(project, [sid])
+    add_extraction(project, sid)
+    before, decisions = source(sid), len(db.list_decisions(_conn()))
+    published(net)
+    capsys.readouterr()
+    assert run(["fuente", "agregar", "--doi", DOI]) == 3
+    err = capsys.readouterr().err
+    assert "Conflicto" in err and "No se ha cambiado nada" in err and "otro trabajo" in err
+    after = source(sid)
+    assert after == before and after["title"] == EWES and after["year"] == 2015 and after["pmid"] == "777"
+    assert {cl["id"]: cl["source_ids"] for cl in db.list_claims(_conn())}[claim] == [sid]
+    assert len(db.list_decisions(_conn())) == decisions and len(db.list_sources(_conn())) == 1
+    # si el DOI que declara PubMed sí es el del trabajo, la verificación del DOI actualiza la fila (caso legítimo)
+    good = "10.5555/jds.2020-1"
+    net.pm["888"] = pm_rec("888", good)
+    assert main(["fuente", "agregar", "--pmid", "888"]) == 0
+    published(net, doi=good, pmid="888")
+    assert main(["fuente", "agregar", "--doi", good]) == 0
+    row = source(f"doi:{good}")
+    assert row["verified_via"] == "crossref" and row["pmid"] == "888" and row["title"] == TITLE
+
+
+def test_aviso_del_identificador_registrado(project, net, capsys):
+    # Revisión (ronda 2): «ya estaba registrada» solo si la fila existía antes de la orden.
+    net.pm["31000001"] = pm_rec("31000001", DOI)
+    capsys.readouterr()
+    assert main(["fuente", "agregar", "--pmid", "31000001"]) == 0
+    out = capsys.readouterr().out
+    assert "ya estaba registrada" not in out and f"se registra como doi:{DOI}" in out and "no pmid:31000001" in out
+    assert main(["fuente", "agregar", "--pmid", "31000001"]) == 0
+    assert f"ya estaba registrada como doi:{DOI}" in capsys.readouterr().out
+    # DOI alias: Crossref y OpenAlex dan el DOI principal; OpenAlex es coherente (mismo DOI que Crossref)
+    alias = "10.5555/alias.1"
+    main_doi = "10.5555/principal.1"
+    net.cr[alias] = cr_msg(main_doi)
+    net.oa[alias] = oa_work(main_doi)
+    assert main(["fuente", "agregar", "--doi", alias]) == 0
+    out = capsys.readouterr().out
+    assert f"se registra como doi:{main_doi}" in out and "ya estaba registrada" not in out
+    assert "no se pudo comprobar la retractación" not in out and "otro título" not in out
+    assert source(f"doi:{main_doi}")["retracted"] == 0
+
+
+def test_pmid_distintos_de_openalex_y_pubmed_no_dan_pmcid(net):
+    # Mutante MQ: con PMID distintos no se asocia ninguno, ni el PMCID de ese registro de PubMed.
+    published(net)
+    net.oa[DOI] = oa_work(DOI, pmid="111")
+    net.pm_by_doi[DOI] = "222"
+    rec = pm_rec("222", DOI)
+    rec.pmcid = "PMC222"
+    net.pm["222"] = rec
+    net.pm["111"] = pm_rec("111", DOI)
+    res = c.verify_doi(Client(), DOI)
+    assert res.record.pmid is None and res.record.pmcid is None and "PMID distintos" in res.message
+
+
+def test_mismo_trabajo_con_subindice_de_medline_no_se_duplica(project, net, capsys):
+    # Regresión de la ronda 2 (escenario X): "D<sub>3</sub>" de Crossref y "D(3)" de PubMed son el mismo trabajo.
+    real = "Effects of 25-hydroxyvitamin D<sub>3</sub> on calcium metabolism in periparturient dairy cows"
+    published(net, title=real)
+    assert main(["fuente", "agregar", "--doi", DOI]) == 0
+    net.pm["777"] = pm_rec("777", DOI, title=real.replace("D<sub>3</sub>", "D(3)"))
+    assert main(["fuente", "agregar", "--pmid", "777"]) == 0
+    rows = db.list_sources(_conn())
+    assert [(r["id"], r["pmid"]) for r in rows] == [(f"doi:{DOI}", "777")]
+    assert not any("no asociado" in d["decision"] for d in db.list_decisions(_conn()))
 
 
 def test_verificacion_retira_el_pmid_que_una_busqueda_asocio_a_otro_doi(project, net, monkeypatch):
