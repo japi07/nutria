@@ -1345,6 +1345,13 @@ def test_a_missing_registry_identifier_has_the_same_code_in_every_order(proj, ca
         assert "O-9999" in _assert_json_error(out, err, cli.SALIDA_REGISTRO, "registro")["error"] or "H-9999" in out
     code, out, err = run(capsys, ["oportunidad", "ver", "O-9999"])
     assert code == cli.SALIDA_REGISTRO and err.startswith("Error de registro: No existe O-9999")
+    # quien llama a main() desde Python sigue recibiendo SystemExit con el mensaje de la orden, y con el código
+    with pytest.raises(SystemExit, match="No existe O-9999") as info:
+        main(["oportunidad", "ver", "O-9999"])
+    assert info.value.code == cli.SALIDA_REGISTRO
+    with pytest.raises(SystemExit, match="Indica --doi o --pmid") as info:
+        main(["fuente", "agregar"])
+    assert info.value.code == cli.SALIDA_ENTRADA
     # un proyecto sin base de datos es una condición previa (2), aunque el mensaje empiece por «No existe»
     (proj / "research" / "nutria.sqlite").unlink()
     code, out, err = run(capsys, ["--json", "oportunidad", "ver", "O-0001"])

@@ -1921,6 +1921,19 @@ def _es_no_existe(mensaje) -> bool:
     return text.startswith(_NO_EXISTE) and not text.startswith(_NO_EXISTE + "la base de datos")
 
 
+class SalidaOrden(SystemExit):
+    """SystemExit con un código numérico de la tabla que conserva el mensaje de la orden: `exc.code` es el código (el
+    intérprete sale con él sin volver a imprimir nada) y `str(exc)`, el mensaje (lo que comprueba
+    `pytest.raises(SystemExit, match=...)` en las pruebas que llaman a main())."""
+
+    def __init__(self, codigo: int, mensaje: str):
+        super().__init__(codigo)
+        self.mensaje = mensaje
+
+    def __str__(self) -> str:
+        return self.mensaje
+
+
 class ErrorOrden(Exception):
     """Error de una orden con su código de salida (tabla `CODIGOS_SALIDA`); main() lo presenta sin traza."""
 
@@ -2016,10 +2029,10 @@ def main(argv: list[str] | None = None) -> int:
             raise
         # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa, salvo un
         # identificador que no existe en el registro, que es el mismo error que da la base de datos (código 3).
-        # Se relanza SystemExit (con el código numérico) para quien llama a main() desde Python.
+        # Se relanza SystemExit (con el código numérico y el mismo mensaje) para quien llama a main() desde Python.
         codigo = SALIDA_REGISTRO if _es_no_existe(exc.code) else SALIDA_ENTRADA
         _error(args, str(exc.code), codigo, "Error de registro" if codigo == SALIDA_REGISTRO else "Error", cfg)
-        raise SystemExit(codigo) from None
+        raise SalidaOrden(codigo, str(exc.code)) from None
     except ErrorOrden as exc:
         return _error(args, str(exc), exc.codigo, "Error", cfg)
     except registry.RegistryError as exc:
