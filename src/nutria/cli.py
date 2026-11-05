@@ -684,7 +684,12 @@ def cmd_buscar(args, cfg) -> int:
         inputs["consulta"] = args.consulta
         outputs["identificadores"] = identifiers
         outputs["avisos"] = api_avisos
-    log_event(cfg, "busqueda", inputs=inputs, outputs=outputs, actor=args.agente)
+    # Huellas con la API común de la procedencia (petición de P1, D9-7 y D1-11): la de la consulta y la de los
+    # identificadores devueltos, en las dos sensibilidades, en huellas.entrada y huellas.salida.
+    log_event(cfg, "busqueda", inputs=inputs, outputs=outputs, actor=args.agente,
+              params={"fuente": args.fuente, "max": args.max, "desde": args.desde, "hasta": args.hasta},
+              input_hashes={"consulta": sha256_text(args.consulta)},
+              output_hashes={"identificadores": sha256_text(json.dumps(identifiers, sort_keys=True))})
     # Los cambios del registro de fuentes no llevan la consulta en claro (puede ser confidencial): solo su huella.
     _log_source_changes(cfg, args, changes, {"fuente": args.fuente, "consulta_sha256": sha256_text(args.consulta)})
     notas = []
@@ -1160,7 +1165,10 @@ def cmd_patentes(args, cfg) -> int:
             outputs["lens_ids_sha256"] = sha256_text(json.dumps(lens_ids))
         notas.append("la procedencia guarda solo la huella SHA-256 de la consulta (usa --registrar-consulta para "
                      "guardarla en claro)")
-    log_event(cfg, "busqueda_patentes", inputs=inputs, outputs=outputs, actor=args.agente)
+    log_event(cfg, "busqueda_patentes", inputs=inputs, outputs=outputs, actor=args.agente,
+              params={"lens": bool(args.lens), "max": args.max},
+              input_hashes={"consulta": sha256_text(args.consulta)},
+              output_hashes={"lens_ids": sha256_text(json.dumps(lens_ids))} if args.lens else None)
     lines = [_json_text(data)] + _red_lineas(cfg, client, None, notas)
     _emit(args, {**data, "consulta_en_procedencia": "en claro" if registrar else "solo huella SHA-256",
                  **_red_salida(client), "notas": notas}, "\n".join(lines))
@@ -3442,8 +3450,14 @@ def _vaciar_stdout() -> bool:
     except BrokenPipeError:
         _silenciar(sys.stdout)
         return False
-    except (OSError, ValueError):   # flujo cerrado o inutilizable: nada que vaciar ni dónde informar
+    except ValueError:   # flujo cerrado: nada que vaciar
         return True
+    except OSError:
+        # Otro error de E/S (disco lleno, EIO): lo impreso no llegó a su destino. Se silencia stdout para que el
+        # intérprete no vuelva a fallar al cerrar («Exception ignored ...», código 120) y main() lo presenta como un
+        # error con su código de la tabla.
+        _silenciar(sys.stdout)
+        raise
     return True
 
 
@@ -3456,7 +3470,10 @@ def _imprimir(stream, texto: str) -> bool:
     except BrokenPipeError:
         _silenciar(stream)
         return False
-    except (OSError, ValueError):   # flujo cerrado o inutilizable: no hay dónde informar
+    except ValueError:   # flujo cerrado: no hay dónde informar
+        return False
+    except OSError:      # disco lleno, EIO...: no hay dónde informar; sin dejar el búfer lleno para el cierre
+        _silenciar(stream)
         return False
     return True
 
@@ -3554,7 +3571,13 @@ def main(argv: list[str] | None = None) -> int:
         return code if _vaciar_stdout() else SALIDA_TUBERIA
     except SystemExit as exc:
         if exc.code is None or isinstance(exc.code, int):
-            if not _vaciar_stdout() and not exc.code:
+            try:
+                vaciada = _vaciar_stdout()
+            except OSError as err:   # la salida no se pudo escribir: error (código de la orden o, si era 0, entrada)
+                codigo = exc.code or SALIDA_ENTRADA
+                _error(args, f"no se pudo escribir la salida: {_describe_oserror(err)}", codigo, "Error", cfg)
+                raise SystemExit(codigo) from None
+            if not vaciada and not exc.code:
                 raise SystemExit(SALIDA_TUBERIA) from None
             raise
         # Las órdenes que se niegan con un mensaje (SystemExit(str)): entrada no válida o condición previa, salvo un

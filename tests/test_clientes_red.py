@@ -2279,3 +2279,24 @@ def test_a_failing_chembl_strategy_does_not_hide_the_others(proj, router, capsys
     assert events(proj, "diana")[-1]["outputs"]["incompleto"] is True
     router.add(r"chembl/api/data/target", (400, '{"error": "x"}'))                 # otra consulta: sin copias
     assert run(capsys, ["diana", "Catalase", "--organismo", "Bos taurus"])[0] == cli.SALIDA_RED
+
+
+# ============================================================================ fase de coordinación (petición de P1)
+def test_coord_busquedas_guardan_sus_huellas_con_la_api_de_la_procedencia(proj, router, capsys):
+    # D9-7 y D1-11: la huella de la consulta y la de los identificadores devueltos van en huellas.entrada/salida (la
+    # API común de log_event), en las dos sensibilidades; los parámetros, en parametros.
+    query = "combinacion-secreta AND carnitine"
+    router.add(r"esearch\.fcgi", (200, {"esearchresult": {"count": "1", "idlist": ["111"]}}))
+    router.add(r"esummary\.fcgi", (200, esummary("111", "10.1000/abc")))
+    claros = []
+    for extra in ([], ["--sensibilidad", "confidencial"]):
+        assert run(capsys, ["buscar", "pubmed", query, *extra])[0] == 0
+        event = events(proj, "busqueda")[-1]
+        assert event["huellas"]["entrada"]["consulta"] == hashlib.sha256(query.encode()).hexdigest()
+        assert len(event["huellas"]["salida"]["identificadores"]) == 64
+        assert event["parametros"]["fuente"] == "pubmed"
+        claros.append((proj / "research" / "procedencia.jsonl").read_text("utf-8").count("combinacion-secreta"))
+    assert claros[0] >= 1 and claros[1] == claros[0]       # la búsqueda confidencial no añade la consulta en claro
+    assert run(capsys, ["patentes", query])[0] == 0
+    event = events(proj, "busqueda_patentes")[-1]
+    assert event["huellas"]["entrada"]["consulta"] == hashlib.sha256(query.encode()).hexdigest()

@@ -626,3 +626,41 @@ def test_coord_regulatoria_superada_exige_la_clasificacion_del_triage(project, c
         assert db.effective_gates(conn, "O-0001", ["regulatoria"])["regulatoria"] == "superada"
     finally:
         conn.close()
+
+
+# ============================================================================ fase de coordinación (2): P3 → P4
+def test_coord_europepmc_lee_la_licencia_y_el_registro_la_guarda(project):
+    """Petición de P3 a P4: el cliente de Europe PMC pone el campo 'license' del resultado en Record.extra['license'];
+    db.upsert_source lo guarda (en una búsqueda, solo si la fila no tenía licencia)."""
+    from dataclasses import asdict
+
+    from nutria import db
+    from nutria.config import load_config
+    from nutria.sources import europepmc
+    hit = {"id": "123", "source": "MED", "pmid": "123", "doi": "10.1234/epmc.1", "title": "Choline in cows",
+           "pubYear": "2020", "license": "cc by"}
+    rec = europepmc.parse(hit)
+    assert rec.extra["license"] == "cc by"
+    assert "license" not in europepmc.parse({**hit, "license": "  "}).extra
+    conn = db.connect(load_config().db_path)
+    try:
+        db.upsert_source(conn, asdict(rec))
+        assert db.get_source(conn, "doi:10.1234/epmc.1")["license"] == "cc by"
+    finally:
+        conn.close()
+
+
+# ============================================================================ fase de coordinación (2): P4
+@pytest.mark.skipif(not Path("/dev/full").exists(), reason="sin /dev/full")
+@pytest.mark.parametrize("argv, codigo", [(["procedencia"], 2), (["--json", "oportunidad", "ver", "O-9999"], 3)])
+def test_coord_error_de_escritura_en_stdout_tiene_su_codigo(tmp_path, argv, codigo):
+    """Revisión final de P4: un error de E/S en stdout distinto de una tubería rota (disco lleno) salía con 120 y
+    «Exception ignored ... OSError». Ahora: el código de la orden si ya era un error (3) y, si no, 2, sin traza."""
+    subprocess.run([sys.executable, "-m", "nutria", "init"], cwd=tmp_path, env=_env(), capture_output=True,
+                   check=True, timeout=120)
+    env = _env()
+    env.pop("PYTHONUNBUFFERED", None)
+    res = subprocess.run(["sh", "-c", 'exec "$@" > /dev/full', "sh", sys.executable, "-m", "nutria", *argv],
+                         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+    assert res.returncode == codigo, res.stderr
+    assert "Exception ignored" not in res.stderr and "Traceback" not in res.stderr

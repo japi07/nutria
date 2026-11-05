@@ -43,7 +43,9 @@ def parse(hit: dict) -> Record:
         cited_by=hit.get("citedByCount"),
         retracted=any(str(t).strip().lower() == "retracted publication" for t in pub_types),
         url=f"https://europepmc.org/article/{hit.get('source')}/{hit.get('id')}" if hit.get("id") else None,
-        extra={"epmc_id": hit.get("id"), "epmc_source": hit.get("source")},
+        # licencia que declara Europe PMC (p. ej. «cc by»; petición de P3): db.upsert_source la guarda en sources.license
+        extra={"epmc_id": hit.get("id"), "epmc_source": hit.get("source"),
+               **({"license": str(hit["license"]).strip()} if str(hit.get("license") or "").strip() else {})},
     )
 
 
