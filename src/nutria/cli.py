@@ -672,6 +672,10 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
                       + ["doble_extraccion_verificada", "moderadores_no_informados"])
         out_rows = [{"estudio": r["source_id"], "comparacion": f"E{r['id']}",
                      **{name: r.get(col) for name, col in ANALYSIS_COLUMNS[1:]},
+                     # el estado efectivo: un 'doble_concordante' sin comparación registrada no se presenta como tal
+                     "estado_verificacion": (r["check_status"] if r["id"] in verificadas
+                                             or r["check_status"] not in CONCILIATED
+                                             else f"{r['check_status']}_sin_comparacion_registrada"),
                      "doble_extraccion_verificada": "si" if r["id"] in verificadas else "no",
                      "moderadores_no_informados": ";".join(_moderadores_ausentes(r))} for r in rows]
     with open(args.csv, "w", newline="", encoding="utf-8") as fh:

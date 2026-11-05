@@ -128,6 +128,8 @@ def test_doble_concordante_declarada_sin_comparacion_no_llega_al_metaanalisis(pr
     out = _export_json(capsys, "--variable", LECHE, "--csv", str(csv_path), "--incluir-sin-conciliar")
     assert out["filas"] == 5 and any("sin doble extracción verificada" in a for a in out["avisos"])
     assert {r["doble_extraccion_verificada"] for r in _csv_rows(csv_path)} == {"no"}
+    assert {r["estado_verificacion"] for r in _csv_rows(csv_path)} == {"doble_concordante_sin_comparacion_registrada",
+                                                                     "resuelta_sin_comparacion_registrada"}
 
 
 def test_el_estado_de_doble_extraccion_no_se_escribe_en_la_base_de_datos(project, capsys):
