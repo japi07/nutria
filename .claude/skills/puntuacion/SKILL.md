@@ -47,18 +47,18 @@ esperada.
 
 `nutria puntuar ranking --perfil recomendado --sim 5000 [--min-evaluadores 3] [--alfa 50]` (compara también
 `--perfil original`; la salida muestra el rango con cada perfil de pesos; `--min-evaluadores` no admite menos de 3).
-Estados: APTA (todas las compuertas
-superadas y firmadas por una persona), CONDICIONAL (alguna compuerta sin resolver o sin firmar; se ordena después de
-las APTA), BLOQUEADA, INCOMPLETA (criterios sin puntuar) e INSUFICIENTE (menos de 3 evaluadores distintos por
-criterio). La puntuación es orientativa: las compuertas bloquean con independencia de ella.
+Estados: APTA (todas las compuertas superadas y firmadas por una persona), CONDICIONAL (alguna compuerta sin
+resolver o sin firmar; se ordena después de las APTA), BLOQUEADA, INCOMPLETA (criterios sin puntuar) e INSUFICIENTE
+(menos de 3 evaluadores distintos por criterio). La puntuación es orientativa: las compuertas bloquean con
+independencia de ella.
 
 Dentro de CONDICIONAL hay tres subgrupos que se ordenan siempre así, sea cual sea la puntuación: solo pendientes de
 firma humana (todas las compuertas propuestas como `superada`), con alguna compuerta sin resolver y con alguna
 compuerta **crítica** (`seguridad`, `regulatoria`, `destino_digestivo`) sin resolver. P(top-k) y el rango se refieren
 al ranking completo, que respeta ese orden: una candidata con k o más candidatas por delante en grupos anteriores
-tiene P(top-k) = 0 aunque puntúe más. El bloque "AVISOS" de la salida
-(en `--json`, por la salida de error y en las `flags` de cada fila) señala si el top-k para planes incluye compuertas
-críticas sin resolver, si el orden o el conjunto del top-k cambian entre perfiles de pesos y si el top-k del Monte
-Carlo no coincide con el orden determinista del perfil elegido: transcríbelos en la propuesta; un orden que cambia con
-los pesos no es robusto. Cada ranking queda en la procedencia con la semilla, las
-simulaciones, el alfa, el perfil, las huellas de la rúbrica y de las puntuaciones y el orden resultante.
+tiene P(top-k) = 0 aunque puntúe más. El bloque "AVISOS" de la salida (en `--json`, por la salida de error y en las
+`flags` de cada fila) señala si el top-k para planes incluye compuertas críticas sin resolver, si el orden o el
+conjunto del top-k cambian entre perfiles de pesos y si el top-k del Monte Carlo no coincide con el orden determinista
+del perfil elegido: transcríbelos en la propuesta; un orden que cambia con los pesos no es robusto. Cada ranking queda
+en la procedencia con la semilla, las simulaciones, el alfa, el perfil, las huellas de la rúbrica y de las
+puntuaciones y el orden resultante.
