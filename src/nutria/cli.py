@@ -995,11 +995,13 @@ def cmd_meta(args, cfg) -> int:
         except ValueError as exc:
             out["meta_regresion"] = {"error": str(exc)}
             text.append(f"Meta-regresión no estimable: {exc}")
+    # Todo lo que el texto muestra como AVISO (diseño, dependencia, HKSJ con q < 1 en el modelo, uno fuera,
+    # subgrupos y meta-regresión) también va en el JSON y en la procedencia.
+    out["avisos"] = [linea.strip() for linea in "\n".join(text).splitlines() if linea.strip().startswith("AVISO")]
     salidas = {"k": res.k, "modelo": res.model, "prueba": res.test, "estimacion": res.estimate, "ee": res.se,
                "ic": [res.ci_low, res.ci_high], "p": res.p_value, "tau2": res.tau2, "I2": res.I2, "Q": res.Q,
                "ip": [res.pi_low, res.pi_high], "ip_gl": res.pi_df, "hksj_q": res.hksj_q,
-               "ic_wald": [res.ci_wald_low, res.ci_wald_high], "avisos": res.avisos + out["avisos_diseno"],
-               **info_disenos}
+               "ic_wald": [res.ci_wald_low, res.ci_wald_high], "avisos": out["avisos"], **info_disenos}
     if reg is not None:
         salidas["meta_regresion"] = {"coeficientes": dict(zip(reg.names, reg.coef)), "p": dict(zip(reg.names, reg.p_values)),
                                      "tau2": reg.tau2, "prueba": reg.test, "moderadores": codificados[2]}

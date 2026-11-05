@@ -192,6 +192,7 @@ def test_cli_avisa_al_mezclar_disenos_y_unidades(project, capsys):
     avisos = " ".join(out["avisos_diseno"])
     assert "Se combinan diseños distintos" in avisos and "--moderador diseno" in avisos
     assert "Se combinan unidades experimentales distintas" in avisos
+    assert any("Se combinan diseños distintos" in a for a in out["avisos"])  # también en la lista general
     assert any("residual (intraanimal)" in n for n in out["notas_diseno"])
     # Las filas cruzadas usan vi = 2·SEM² con n = animales (no la fórmula del paralelo)
     yi = meta.random_effects([1.0, 0.5, 1.0, 0.8, 1.0],
@@ -343,6 +344,14 @@ def test_hksj_estandar_avisa_tambien_en_uno_fuera_subgrupos_y_meta_regresion(pro
     assert "AVISO: en 8 de 8 análisis uno-fuera" in text
     assert "AVISO (subgrupo A)" in text and "AVISO (subgrupo B)" in text
     assert "AVISO: Knapp-Hartung estándar con s²" in text and "Knapp-Hartung modificado (max(1, s²)" in text
+    # Los mismos avisos van en el JSON (clave avisos) y en la procedencia
+    code, out, _ = _json(capsys, "meta", "analizar", str(path), "--ajuste", "hksj", "--subgrupo", "grupo",
+                         "--moderador", "dosis")
+    avisos = out["avisos"]
+    assert any(a.startswith("AVISO: El IC95 del HKSJ estándar") for a in avisos)
+    assert any("uno-fuera" in a for a in avisos) and any(a.startswith("AVISO (subgrupo B)") for a in avisos)
+    assert any("Knapp-Hartung estándar" in a for a in avisos)
+    assert _eventos("metaanalisis")[-1]["outputs"]["avisos"] == avisos
     # Con el ajuste por defecto (modificado) no hay ningún IC más estrecho que Wald que avisar
     code, text, _ = _texto(capsys, "meta", "analizar", str(path), "--subgrupo", "grupo", "--moderador", "dosis")
     assert code == 0 and "AVISO" not in text
