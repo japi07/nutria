@@ -311,7 +311,7 @@ if [ "$solo_lectura" = 0 ]; then
   fi
   if por_segmento "$minusculas" "${git_orden}(reflog[[:space:]]+(expire|delete)|update-ref)([[:space:]]|$)" \
     || contiene "$minusculas" 'gc\.reflogexpire|core\.logallrefupdates' \
-    || por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)${fin}.*[[:space:]=](\./)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)"; then
+    || por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)"; then
     bloquea "no se borra ni se reescribe el reflog de git (ni .git) desde Bash: \`nutria procedencia verificar\` lo usa para detectar la historia reescrita tras quitar eventos ya confirmados. Si hace falta, que lo haga una persona."
   fi
 fi

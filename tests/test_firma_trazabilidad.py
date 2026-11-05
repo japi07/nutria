@@ -629,6 +629,7 @@ BLOQUEADAS = [
     "git update-ref refs/heads/main HEAD~3",
     "rm -rf .git/logs",
     "rm -rf .git",
+    "rm -rf /home/u/nutria/.git/logs/refs/heads/main",
     # falsos positivos aceptados (hay alternativa): el texto '--firma' dentro de un motivo y leer la procedencia con
     # Python (usa `nutria procedencia --json` o un cat/tail simple)
     "nutria --agente director-cientifico decision registrar --decision d --motivo 'falta --firma de la persona'",
