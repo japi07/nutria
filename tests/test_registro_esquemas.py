@@ -356,6 +356,8 @@ def test_diseno_factorial_no_se_toma_por_un_dato_repetido(project, capsys):
     baja.update(dieta_basal="TMR con 40 % de forraje", forraje_pct_ms=40.0, media_tratamiento=37.5)
     _double(project, "fact", [alta, baja])
     assert len(db.list_extractions(_conn())) == 2
+    out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "f.csv"))
+    assert any("varias comparaciones de la misma variable" in a and "--agregar-estudio" in a for a in out["avisos"])
     # el mismo dato repetido en la copia sí se rechaza
     otra = _source(2)
     rec = _records(otra)[0]
@@ -576,7 +578,10 @@ def test_exportar_filtra_por_especie_y_etapa_y_no_mezcla_especies(project, capsy
     assert out["especies"] == {"ovino": 1}                     # 'ovino' no selecciona 'bovino de carne'
     out = _export_json(capsys, "--variable", LECHE, "--especie", "Vacuno Lechero", "--etapa", "transicion",
                        "--csv", csv_path)
-    assert out["especies"] == {"vacuno lechero": 1} and not out["avisos"][1:]
+    assert out["especies"] == {"vacuno lechero": 1} and len(out["fuera_de_filtro"]) == 2
+    (aviso,) = [a for a in out["avisos"] if "dejan fuera" in a]       # lo que el filtro deja fuera, a la vista
+    assert "ovino" in aviso and "bovino de carne" in aviso
+    assert not any("mezcla" in a or "combinan" in a for a in out["avisos"])
     assert _code(["extraccion", "exportar", "--variable", LECHE, "--etapa", "transición", "--especie", "ovino",
                   "--csv", csv_path]) not in (0, None)          # sin resultados
     out = _export_json(capsys, "--variable", LECHE, "--mezclar-especies", "--csv", csv_path)

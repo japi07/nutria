@@ -572,9 +572,11 @@ def _conciliar_extracciones(args, cfg, conn) -> int:
     return 0
 
 
-def _exportar_extracciones(args, rows: list[dict], verificadas: set[int]) -> int:
+def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_de_filtro: list[dict]) -> int:
     if not rows:
-        raise SystemExit("No hay extracciones con esos filtros")
+        raise SystemExit("No hay extracciones con esos filtros"
+                         + (f" (--especie/--etapa dejan fuera {len(fuera_de_filtro)}: especies "
+                            + ", ".join(_distintos(fuera_de_filtro, "species")) + ")" if fuera_de_filtro else ""))
     excluded: dict[str, int] = {}
     if args.formato == "analisis" and not args.incluir_sin_conciliar:
         # Doble extracción (regla del proyecto): al análisis solo pasan los registros cuyo estado respalda una
@@ -614,13 +616,30 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int]) -> int
         lista = ", ".join(f"{v['valor']} ({v['n']})" for v in especies.values())
         if not args.mezclar_especies:
             raise SystemExit(f"El resultado mezcla especies: {lista}. Filtra con --especie (y --etapa) o, si combinarlas "
-                             "está justificado (transferibilidad), repite con --mezclar-especies.")
+                             "está justificado (transferibilidad) o son la misma especie escrita de otra forma, repite "
+                             "con --mezclar-especies (el aviso las listará).")
         avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza la "
                       "especie como subgrupo (--subgrupo especie)")
     estados = _distintos(rows, "physiological_stage")
     if len(estados) > 1:
         avisos.append("AVISO: se combinan estados fisiológicos distintos ("
                       + ", ".join(f"{v['valor']} ({v['n']})" for v in estados.values()) + ")")
+    if fuera_de_filtro:
+        avisos.append(f"AVISO: --especie/--etapa dejan fuera {len(fuera_de_filtro)} registro(s) de esas variables "
+                      "(especies: " + ", ".join(f"{v['valor']} ({v['n']})" for v in
+                                                _distintos(fuera_de_filtro, "species").values())
+                      + "; estados: " + ", ".join(f"{v['valor']} ({v['n']})" for v in
+                                                  _distintos(fuera_de_filtro, "physiological_stage").values())
+                      + "): compruébese que no son la misma especie o etapa escrita de otra forma")
+    por_estudio: dict[tuple, list[str]] = {}
+    for r in rows:
+        por_estudio.setdefault((r["source_id"], r["outcome"]), []).append(f"E{r['id']}")
+    repetidos = {k: v for k, v in por_estudio.items() if len(v) > 1}
+    if repetidos:
+        avisos.append(f"AVISO: {len(repetidos)} estudio(s) aportan varias comparaciones de la misma variable ("
+                      + "; ".join(f"{s} {o}: {', '.join(ids)}" for (s, o), ids in list(repetidos.items())[:6])
+                      + "): son dependientes (en meta analizar, --agregar-estudio) y no deben ser el mismo dato "
+                      "extraído dos veces")
     ausentes: dict[str, set[str]] = {}
     for r in rows:
         faltan = _moderadores_ausentes(r)
@@ -662,7 +681,8 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int]) -> int
     _emit(args, {"filas": len(rows), "csv": args.csv, "formato": args.formato, "excluidas": excluded,
                  "especies": {v["valor"]: v["n"] for v in especies.values()},
                  "moderadores_no_informados": {k: sorted(v) for k, v in ausentes.items()},
-                 "excluidas_por_casos_completos": sin_casos, "incidencia": incidencia, "avisos": avisos},
+                 "excluidas_por_casos_completos": sin_casos, "fuera_de_filtro": [f"E{r['id']}" for r in fuera_de_filtro],
+                 "incidencia": incidencia, "avisos": avisos},
           f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato})" + "".join(f"\n{a}" for a in avisos))
     return 0
 
@@ -691,14 +711,15 @@ def cmd_extraccion(args, cfg) -> int:
             f"({r['actor_a']}) | B: {r['file_b']} ({r['actor_b']}) | {len(r['discrepancies'] or [])} discrepancia(s)"
             for r in rows) or "(sin comparaciones)")
         return 0
-    rows = registry.list_extractions(conn, source_id=args.fuente, outcome=args.variable)
+    rows = todas = registry.list_extractions(conn, source_id=args.fuente, outcome=args.variable)
     if args.especie:
         rows = [r for r in rows if _coincide(r.get("species"), args.especie)]
     if args.etapa:
         rows = [r for r in rows if _coincide(r.get("physiological_stage"), args.etapa)]
     verificadas = registry.verified_extraction_ids(conn)
     if args.accion == "exportar":
-        return _exportar_extracciones(args, rows, verificadas)
+        dentro = {r["id"] for r in rows}
+        return _exportar_extracciones(args, rows, verificadas, [r for r in todas if r["id"] not in dentro])
     _emit(args, rows, "\n".join(f"#{r['id']} {r['source_id']} | {r['species']} | {r['intervention']} | {r['outcome']} "
                                 f"({r['outcome_unit']}) | {_estado_doble(r, verificadas)}" for r in rows)
           or "(sin extracciones)")

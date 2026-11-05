@@ -49,7 +49,8 @@
       "type": "string"
     },
     "ubicacion": {
-      "type": "string"
+      "type": "string",
+      "description": "Dónde se comprueba: tabla, figura o página de la fuente en una afirmación [PUB]; en una [DER], la orden nutria o el script que la produce y el fichero de salida."
     },
     "entidad": {
       "type": "string",
@@ -356,5 +357,6 @@
       "x-mensaje": "indica la especie del estudio (in vitro, el sistema con su especie de origen: 'líquido ruminal bovino') o 'no_consta' si la fuente no la informa",
       "description": "Como texto_especifico y, además (\"x-texto\": \"especie\"), debe nombrar la especie: no basta con describir a los animales ('animales adultos', 'hembras reproductoras')."
     }
-  }
+  },
+  "description": "Afirmación etiquetada (regla 1 de CLAUDE.md). No admite campos fuera del esquema: el contexto biológico va dentro de 'contexto' y la orden de una [DER], en 'ubicacion'."
 }
