@@ -159,6 +159,57 @@ def test_el_estado_de_doble_extraccion_no_se_escribe_en_la_base_de_datos(project
     conn.execute("UPDATE extractions SET notes = 'nota' WHERE id = ?", (sid,))   # lo demás sí se puede anotar
 
 
+def test_solo_cuentan_las_filas_que_salieron_de_la_comparacion(project, capsys):
+    """Una fila añadida por fuera de nutria que remite a una comparación real, o unos valores cambiados después del
+    registro, no cuentan como doble extracción verificada (ni llegan al análisis); anotar las notas sí se puede."""
+    comp = _double(project, "x", _records(_source()))
+    conn = _conn()
+    verified = db.verified_extraction_ids(conn)
+    leche = next(r for r in db.list_extractions(conn) if r["outcome"] == LECHE)
+    conn.execute("UPDATE extractions SET notes = 'revisado' WHERE id = ?", (leche["id"],))
+    assert db.verified_extraction_ids(conn) == verified
+    # una fila nueva con el estado y la comparación de otra (pareja repetida o inexistente)
+    for pair in (1, 7):
+        conn.execute("INSERT INTO extractions (source_id, species, physiological_stage, intervention, outcome, "
+                     "outcome_unit, n_ctrl, n_trt, mean_ctrl, mean_trt, dispersion_type, location, check_status, "
+                     "comparison_id, pair_a, pair_b) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (leche["source_id"], "vacuno lechero", "periodo de transición", "Otro compuesto", LECHE, "kg/d",
+                      20, 20, 30.0, 45.0, "SEM_combinado", "Tabla 9", "doble_concordante", comp, pair, pair))
+    assert db.verified_extraction_ids(conn) == verified
+    # la media del tratamiento cambiada después del registro
+    conn.execute("UPDATE extractions SET mean_trt = 50 WHERE id = ?", (leche["id"],))
+    assert db.verified_extraction_ids(conn) == verified - {leche["id"]}
+    out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "x.csv"), "--incluir-sin-conciliar")
+    assert {r["doble_extraccion_verificada"] for r in _csv_rows(project / "x.csv")} == {"no"} and out["filas"] == 3
+
+
+def test_la_fusion_de_fuentes_duplicadas_conserva_la_doble_extraccion_y_sus_reglas(project, capsys):
+    """Si el trabajo de la doble extracción estaba registrado por PMID y se fusiona con su registro por DOI, las
+    extracciones siguen verificadas y quien vio discrepancias de esa fuente sigue sin poder extraerla de nuevo."""
+    conn = _conn()
+    pmid = db.upsert_source(conn, {"pmid": "424242", "title": "Trabajo", "verified": True, "retracted": False})
+    _double(project, "x", _records(pmid))
+    otra = _records(pmid)
+    otra[0].update(variable="grasa de la leche", unidad="%", media_control=3.8, media_tratamiento=4.0)
+    distinta = copy.deepcopy(otra)
+    distinta[0]["media_tratamiento"] = 4.4
+    a = _deposit(project, "g_A.json", otra[:1], "extractor-g-A")
+    b = _deposit(project, "g_B.json", distinta[:1], "extractor-g-B")
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
+    doi = db.upsert_source(conn, {"doi": "10.1234/fusion", "title": "Trabajo", "verified": True, "retracted": False})
+    assert db.upsert_source(conn, {"doi": "10.1234/fusion", "pmid": "424242", "verified": True}) == doi
+    assert {r["source_id"] for r in db.list_extractions(conn)} == {doi}          # fusionadas en el DOI
+    assert len(db.verified_extraction_ids(conn)) == 2
+    capsys.readouterr()
+    nueva = _write(project / "g_B2.json", [dict(otra[0], fuente=doi)])
+    assert main(["--agente", "extractor-g-B", "extraccion", "depositar", "--datos", nueva]) == 3
+    assert "participó en una comparación con discrepancias" in capsys.readouterr().err
+    c = _deposit(project, "g_C.json", [dict(otra[0], fuente=doi)], "extractor-g-C")
+    d = _deposit(project, "g_D.json", [dict(otra[0], fuente=doi)], "extractor-g-D", indent=4)
+    assert main(["extraccion", "comparar", c, d, "--registrar"]) == 3      # CE-0002 sigue sin conciliar
+    assert "sin conciliar" in capsys.readouterr().err
+
+
 def test_doble_extraccion_concordante_la_registra_el_sistema(project, capsys):
     source = _source()
     recs = _records(source)

@@ -831,13 +831,73 @@ def list_extractions(conn: sqlite3.Connection, source_id: str | None = None,
 
 def verified_extraction_ids(conn: sqlite3.Connection) -> set[int]:
     """Extracciones cuyo estado de doble extracción respalda el registro: 'doble_concordante' con una comparación
-    registrada concordante (o conciliada) y 'resuelta' con una conciliación registrada. Un estado declarado sin
-    esa comparación (p. ej. de una versión anterior) no cuenta."""
-    rows = conn.execute(
-        "SELECT e.id FROM extractions e JOIN extraction_comparisons c ON c.id = e.comparison_id "
-        "WHERE (e.check_status = 'doble_concordante' AND (c.result = 'concordante' OR c.conciliation IS NOT NULL)) "
-        "OR (e.check_status = 'resuelta' AND c.conciliation IS NOT NULL)").fetchall()
-    return {int(r[0]) for r in rows}
+    registrada concordante (o conciliada) y 'resuelta' con una conciliación registrada. Además, la fila debe ser la
+    que salió de esa comparación: el registro de la copia A (concordante) o el que construyó la conciliación, con los
+    mismos valores (se admite la fusión posterior de dos fuentes del mismo trabajo) y una sola fila por pareja. Un
+    estado declarado sin esa comparación (p. ej. de una versión anterior), una fila añadida o unos valores cambiados
+    después por fuera de nutria no cuentan."""
+    comparisons: dict[str, dict] = {}
+    for c in conn.execute(
+            "SELECT c.id, c.result, c.conciliation, ca.records AS ra, cb.records AS rb FROM extraction_comparisons c "
+            "JOIN extraction_copies ca ON ca.id = c.copy_a JOIN extraction_copies cb ON cb.id = c.copy_b"):
+        conciliation = json.loads(c["conciliation"]) if c["conciliation"] else None
+        comparisons[c["id"]] = {
+            "result": c["result"], "a": json.loads(c["ra"]), "b": json.loads(c["rb"]),
+            "detail": {d.get("id"): d for d in (conciliation or {}).get("conciliacion", [])} if conciliation else None}
+    out: set[int] = set()
+    seen: set[tuple] = set()
+    for row in conn.execute("SELECT * FROM extractions WHERE comparison_id IS NOT NULL "
+                            "AND check_status IN ('doble_concordante', 'resuelta') ORDER BY id"):
+        comp = comparisons.get(row["comparison_id"])
+        if comp is None:
+            continue
+        try:
+            if comp["detail"] is not None:
+                detail = comp["detail"].get(row["id"])
+                if (detail is None or detail.get("estado") != row["check_status"]
+                        or (row["pair_a"], row["pair_b"]) != (detail.get("a"), detail.get("b"))):
+                    continue
+                expected, _status, _problems = _apply_resolutions(
+                    comp["a"][detail["a"] - 1], comp["b"][detail["b"] - 1], detail.get("resoluciones") or [], "")
+            elif comp["result"] == "concordante" and row["check_status"] == "doble_concordante":
+                i = row["pair_a"]
+                if not isinstance(i, int) or row["pair_b"] != i or not 1 <= i <= len(comp["a"]):
+                    continue
+                expected = comp["a"][i - 1]
+            else:
+                continue
+        except (IndexError, KeyError, TypeError):
+            continue
+        pair = (row["comparison_id"], row["pair_a"], row["pair_b"])
+        if pair not in seen and _row_matches(conn, row, expected):
+            seen.add(pair)
+            out.add(int(row["id"]))
+    return out
+
+
+def _source_aliases(conn: sqlite3.Connection, source_id: Any) -> set[str]:
+    """Identificadores con que puede aparecer una fuente: el suyo y sus doi:, pmid: y openalex:. Tras fusionar dos
+    registros del mismo trabajo, las copias y comparaciones anteriores citan el identificador que desapareció."""
+    out = {str(source_id)}
+    row = conn.execute("SELECT id, doi, pmid, openalex_id FROM sources WHERE id = ?", (source_id,)).fetchone()
+    if row is not None:
+        out.update(f"{prefix}:{row[col]}" for prefix, col in (("doi", "doi"), ("pmid", "pmid"),
+                                                             ("openalex", "openalex_id")) if row[col])
+    return out
+
+
+def _row_matches(conn: sqlite3.Connection, row: sqlite3.Row, record: dict) -> bool:
+    """¿Tiene la extracción registrada los valores del registro del que salió? (sin las notas, que se pueden
+    anotar después; la fuente puede haber cambiado de identificador al fusionarse con un duplicado)."""
+    for key, col in EXTRACTION_FIELDS.items():
+        if key in COMPARE_IGNORED or key == "fuente":
+            continue
+        if not same_value(_norm_value(key, row[col]), _norm_value(key, record.get(key))):
+            return False
+    stored = json.loads(row["not_reported"]) if row["not_reported"] else None
+    if not same_value(_norm_value("no_consta", stored or None), _norm_value("no_consta", record.get("no_consta") or None)):
+        return False
+    return record.get("fuente") in _source_aliases(conn, row["source_id"])
 
 
 # ---------------------------------------------------------------------------- doble extracción
@@ -971,6 +1031,7 @@ def _exposed_actors(conn: sqlite3.Connection, sources: list[str]) -> dict[str, l
     (depositó la copia A o la B, registró la comparación o la concilió). Ya conoce los valores de la otra copia, así
     que no vuelve a extraer esa fuente para una doble extracción."""
     out: dict[str, list[tuple[str, str]]] = {}
+    aliases = {sid: _source_aliases(conn, sid) for sid in sources}
     for row in conn.execute(
             "SELECT c.id, c.actor_a, c.actor_b, c.compared_by, c.conciliated_by, ca.source_ids AS sa, "
             "cb.source_ids AS sb FROM extraction_comparisons c JOIN extraction_copies ca ON ca.id = c.copy_a "
@@ -978,7 +1039,7 @@ def _exposed_actors(conn: sqlite3.Connection, sources: list[str]) -> dict[str, l
             "ORDER BY c.compared_at"):
         involved = set(json.loads(row["sa"] or "[]")) | set(json.loads(row["sb"] or "[]"))
         for sid in sources:
-            if sid not in involved:
+            if not aliases[sid] & involved:
                 continue
             for who in (row["actor_a"], row["actor_b"], row["compared_by"], row["conciliated_by"]):
                 key = actor_key(who)
@@ -1032,10 +1093,12 @@ def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha25
         if hits:
             raise _exposure_error(who, hits)
         used_ids, used_shas = _used_copies(conn)
+        aliases = {sid: _source_aliases(conn, sid) for sid in sources}
         for row in conn.execute("SELECT id, sha256, source_ids, deposited_by FROM extraction_copies ORDER BY id"):
             if actor_key(row["deposited_by"]) != key or row["id"] in used_ids or row["sha256"] in used_shas:
                 continue
-            shared = sorted(set(json.loads(row["source_ids"] or "[]")) & set(sources))
+            listed = set(json.loads(row["source_ids"] or "[]"))
+            shared = sorted(sid for sid in sources if aliases[sid] & listed)
             if shared:
                 raise RegistryError(
                     f"'{who}' ya depositó la copia #{row['id']} con registros de {', '.join(shared)}, aún sin comparar: "
@@ -1051,12 +1114,13 @@ def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha25
 def _pending_comparisons(conn: sqlite3.Connection, sources: list[str]) -> list[tuple[str, str]]:
     """Comparaciones con discrepancias sin conciliar que afectan a alguna de las fuentes: [(CE-xxxx, fuente)]."""
     out = []
+    aliases = {sid: _source_aliases(conn, sid) for sid in sources}
     for row in conn.execute(
             "SELECT c.id, ca.source_ids AS sa, cb.source_ids AS sb FROM extraction_comparisons c "
             "JOIN extraction_copies ca ON ca.id = c.copy_a JOIN extraction_copies cb ON cb.id = c.copy_b "
             "WHERE c.result = 'con_discrepancias' AND c.conciliation IS NULL ORDER BY c.compared_at"):
         involved = set(json.loads(row["sa"] or "[]")) | set(json.loads(row["sb"] or "[]"))
-        out += [(row["id"], sid) for sid in sources if sid in involved]
+        out += [(row["id"], sid) for sid in sources if aliases[sid] & involved]
     return out
 
 
