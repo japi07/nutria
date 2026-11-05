@@ -1768,3 +1768,110 @@ def test_new_patterns_are_fast_on_pathological_input():
         started = time.perf_counter()
         chk.check_report(_draft(body), require_sections=False)
         assert time.perf_counter() - started < 10, body[:40]
+
+
+# ============================================================================ ronda 3b: revisión del punto de control
+@pytest.mark.parametrize("body", [
+    # una línea con forma de referencia necesita un punto, una coma o un paréntesis entre los autores y el año
+    "Explotaciones [SUP]:\n\n- Cooperativa A 2020: 50 vacas [SUP].\n- Finca B 2021: 80 vacas [SUP].",
+    "La colina es un nutriente esencial[^1] [SUP].\n\n[^1]: Datos de Galicia 2019 [SUP].",
+    # «en <año> por <nombre>» solo es una cita con un verbo de cita delante
+    "El Reglamento (CE) 767/2009 fue adoptado en 2009 por el Parlamento Europeo y el Consejo [SUP].",
+    # una unidad al cuadrado tras un paréntesis no es un número volado
+    "La varianza entre estudios fue tau² = 0,4 (kg/d)² [DER] (cálculo: nutria meta analizar).",
+    # varios números entre paréntesis en la línea: una enumeración (aviso, no error)
+    "La cojera se puntuó como leve (1), moderada (2) o grave (3).",
+])
+def test_round3b_false_positives_are_not_errors(body):
+    assert _body_errors(body) == [], body
+
+
+@pytest.mark.parametrize("body, what", [
+    ("Otros trabajos:\n\n- Pérez M, López A. 2019. Betaína en vacas. Animal 13:5-9.", "Cita autor-año"),
+    ("Otros trabajos:\n\n- García J. 2018. Colina en vacas. J Dairy Sci 101:1-10.", "Cita autor-año"),
+    ("Otros trabajos:\n\n- García, J. (2018) Colina en vacas. J Dairy Sci 101:1-10.", "Cita autor-año"),
+    ("La colina reduce la cetosis[^1] [SUP].\n\n[^1]: García, 2018.", "Cita autor-año"),
+    ("La colina reduce la cetosis[^1] [SUP].\n\n[^1]: García J, Pérez M. 2018. Colina. J Dairy Sci.", "Cita autor-año"),
+    ("El método fue descrito en 1979 por Ørskov y McDonald para estimar la degradabilidad.", "Cita autor-año"),
+    ("In 2018, Smith showed that choline reduces ketosis in dairy cows.", "Cita autor-año"),
+    ("Smith reported in 2019 that choline reduces ketosis in dairy cows.", "Cita autor-año"),
+    ("La colina reduce la cetosis subclínica (1).", "Posible cita numérica «(1)»"),
+])
+def test_round3b_citations_are_still_errors(body, what):
+    assert any(what in e for e in _body_errors(body)), body
+
+
+def test_round3b_parenthesized_enumeration_is_a_warning_and_a_single_number_an_error():
+    body = "La cojera se puntuó como leve (1), moderada (2) o grave (3)."
+    issues = _body_issues(body, status="final")
+    assert any("Posible cita numérica «(3)»" in str(i) and i.severity == "aviso" for i in issues)
+    assert any("Posible cita numérica «(1)»" in e for e in _body_errors("La colina reduce la cetosis (1)."))
+
+
+def test_round3b_body_identifier_of_a_bibliography_entry_is_a_warning(tmp_path):
+    # D3-4: el sello no miente si el identificador del cuerpo es el de una entrada de la bibliografía (que sí se
+    # verifica); un identificador que no está en ella sigue siendo un error en los informes, aunque estén en borrador.
+    report = tmp_path / "research" / "informes" / "nota.md"
+    sici = "10.1016/S0022-0302(20)30001-1"
+    bib = f"[R1] Autor A. 2020. Título del trabajo. DOI: 10.1234/abc\n[R2] Autor B. 2020. Otro título. DOI: {sici}"
+    for body, ref in (("El texto completo (doi:10.1234/abc) no estaba disponible [SUP] [R1].", "R1"),
+                      ("El diseño está en https://doi.org/10.1234/abc [SUP] [R1].", "R1"),
+                      (f"El texto completo (doi:{sici}) no estaba disponible [SUP] [R2].", "R2")):
+        issues = chk.check_report(_draft(body, bib), require_sections=False, path=report)
+        assert not any("Identificador de una fuente" in str(i) and i.severity == "error" for i in issues), body
+        assert any("Identificador de una fuente" in str(i) and f"es el de {ref} de la bibliografía" in str(i)
+                   and i.severity == "aviso" for i in issues), body
+    unknown = _draft("El texto completo (doi:10.9999/doi.inventado.2021.001) no estaba disponible [SUP] [R1].", bib)
+    assert any("Identificador de una fuente" in e for e in _errors(unknown, require_sections=False, path=report))
+
+
+def test_round3b_bibliography_entries_keep_superscripts_as_in_the_metadata():
+    # El cuerpo lee «Ca²⁺» como «Ca^2+» (no es «(R2)» ni un número volado), pero el título de la entrada se compara
+    # con Crossref y PubMed como antes: «Ca2+».
+    bib = "[R1] Autor A. 2020. Ca²⁺ y colina en vacas en transición. J Dairy Sci 103:1-10. DOI: 10.1234/abc"
+    text = _draft("La colina eleva el Ca²⁺ sérico en vacas en transición [SUP].", bib)
+    entry = chk.bibliography_entries(text)[0]
+    assert "Ca2+ y colina" in entry.text and "^" not in entry.text
+    assert chk.bibliography_entries(text.replace("Ca²⁺ y", "Ca<sup>2+</sup> y"))[0].text.count("^") == 0
+    assert _errors(text, require_sections=False) == []
+
+
+def test_round3b_motive_quotes_with_superscripts_are_found_in_the_abstract(monkeypatch):
+    monkeypatch.setattr(chk, "fetch_abstract",
+                        lambda client, entry: ("Choline raised serum Ca²⁺ and milk yield in transition cows.", "PubMed"))
+    claim = "La colina eleva el Ca²⁺ sérico en vacas en transición"
+    text = _strict_doc(f"{claim} [PUB] [R1].", f"| R1 | {claim} | respalda | «raised serum Ca²⁺» |")
+    issues, details = chk.check_support_quotes(None, text)
+    assert issues == [] and [d["estado"] for d in details] == ["en_resumen"]
+
+
+def test_round3b_stamp_counts_unverified_links_of_the_body(project, online, capsys):
+    path = _filled_report(project)
+    link = "Texto consolidado del reglamento en https://eur-lex.europa.eu/eli/reg/2009/767/oj [SUP]."
+    path.write_text(path.read_text("utf-8").replace(CLAIM_B, CLAIM_B + "\n\n" + link, 1), "utf-8")
+    assert main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"]) == 0
+    assert main(["informe", "comprobar", str(path), "--online", "--sellar"]) == 0
+    valid, message = chk.stamp_status(path)
+    assert valid and "2 de 2 referencia(s) verificadas en línea" in message
+    assert "1 enlace(s) del cuerpo sin verificar" in message
+
+
+def test_round3b_registry_message_names_any_label(project):
+    path = _filled_report(project)
+    conn = _conn()
+    conn.execute("DELETE FROM sources WHERE doi = ?", (GOOD2,))
+    text = path.read_text("utf-8").replace(
+        CLAIM_B, "La fracción absorbible calculada con los datos del ensayo es 0,48 [DER] (cálculo: nutria destino "
+                 "ruminal) [R2].", 1)
+    found = [e for e in _errors(text.replace("estado: borrador", "estado: final"), conn=conn, path=path)
+             if "no está registrada como fuente" in e]
+    assert found and all("[PUB]" not in e and "se cita en una afirmación del informe" in e for e in found)
+
+
+def test_round3b_font_color_attribute_hides_text_in_section_14(project):
+    path = _filled_report(project, ruta_regulatoria_preliminar="aditivo_zootecnico")
+    final = path.read_text("utf-8").replace("estado: borrador", "estado: final")
+    for hidden in ('<font color="white">no_resuelta</font> superada', "<font color=#ffffff>no_resuelta</font> superada"):
+        text = final.replace("| seguridad | no_resuelta |", f"| seguridad | {hidden} |")
+        assert any("dice «superada» para la compuerta seguridad" in e for e in _errors(text, conn=_conn(), path=path)), \
+            hidden
