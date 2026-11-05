@@ -714,6 +714,8 @@ def _effects_from_rows(rows: list[dict], measure: str, rho_intrasujeto: float | 
             rho = None
             if paired:
                 rho = _num(r, "rho_intrasujeto", tag)
+                if rho is not None and rho != rho:  # "nan" en la celda cuenta como dato ausente
+                    rho = None
                 if rho is None and rho_intrasujeto is not None:
                     rho = rho_intrasujeto
                     grupos.setdefault(("aviso", f"Correlación intrasujeto supuesta r = {rho_intrasujeto:g} "
@@ -865,6 +867,18 @@ def cmd_meta(args, cfg) -> int:
     sobrantes = [c for c in referencias if c not in (args.moderador or [])]
     if sobrantes:
         raise ValueError(f"--referencia solo se aplica a moderadores (--moderador): {', '.join(sobrantes)}")
+    if args.moderador is not None and not args.moderador:
+        raise ValueError("--moderador necesita al menos una columna del CSV")
+    # Los moderadores se codifican antes del análisis: un error de los datos (columna inexistente, celdas
+    # vacías, números mezclados con texto, referencia inexistente) detiene la orden con código 2; solo un
+    # moderador sin contraste estimable (una sola categoría) se informa como meta-regresión no estimable.
+    codificados = no_estimable = None
+    if args.moderador:
+        from .stats.metareg import ModeradorNoEstimable, codificar_moderadores
+        try:
+            codificados = codificar_moderadores(rows, args.moderador, referencias)
+        except ModeradorNoEstimable as exc:
+            no_estimable = str(exc)
     out: dict = {"medida": args.medida, "k": len(yi), "estudios": labels, **info_disenos,
                  "avisos_diseno": [t for nivel, t in mensajes if nivel == "aviso"],
                  "notas_diseno": [t for nivel, t in mensajes if nivel == "nota"]}
@@ -935,10 +949,13 @@ def cmd_meta(args, cfg) -> int:
         if sg.get("Q_entre") is not None:
             text.append(f"  Q entre subgrupos = {sg['Q_entre']:.3f} (gl {sg['gl']}), p = {sg['p']:.3g}. {sg['nota']}")
     reg = None
-    if args.moderador:
-        from .stats.metareg import codificar_moderadores, meta_regression
+    if no_estimable is not None:
+        out["meta_regresion"] = {"error": no_estimable}
+        text.append(f"Meta-regresión no estimable: {no_estimable}")
+    elif codificados is not None:
+        from .stats.metareg import meta_regression
+        mods, names, desc = codificados
         try:
-            mods, names, desc = codificar_moderadores(rows, args.moderador, referencias)
             reg = meta_regression(yi, vi, mods, names, method=method_re, ajuste=args.ajuste)
             out["meta_regresion"] = {**reg.to_dict(), "moderadores": desc}
             for col, d in desc.items():
@@ -957,7 +974,9 @@ def cmd_meta(args, cfg) -> int:
                **info_disenos}
     if reg is not None:
         salidas["meta_regresion"] = {"coeficientes": dict(zip(reg.names, reg.coef)), "p": dict(zip(reg.names, reg.p_values)),
-                                     "tau2": reg.tau2, "prueba": reg.test}
+                                     "tau2": reg.tau2, "prueba": reg.test, "moderadores": codificados[2]}
+    elif args.moderador:
+        salidas["meta_regresion"] = {"error": out.get("meta_regresion", {}).get("error")}
     if args.subgrupo:
         salidas["subgrupos"] = {g: r["estimate"] for g, r in out["subgrupos"]["subgrupos"].items()}
     log_event(cfg, "metaanalisis", inputs={**entrada, "medida": args.medida, "metodo": args.metodo,
@@ -1010,14 +1029,16 @@ def _script_r(data_name: str, medida: str, metodo: str, ajuste: str) -> str:
           "  cat(sprintf(\"nutria: intervalo de prediccion [%.4f; %.4f] (gl = %d)\\n\", ip[1], ip[2], k - 2))\n"
           "}\n")
     return f"""# Script generado por nutria {__version__}. Revísalo antes de usarlo y ejecútalo desde su carpeta.
-# Parámetros de `nutria meta analizar`: medida {medida}; método {metodo}; ajuste {ajuste_txt}; nivel 95 %.
+# Reproduce `nutria meta analizar <csv> --medida {medida} --metodo {metodo} --ajuste {ajuste}` (sin --agregar-estudio):
+# medida {medida}; método {metodo}; ajuste {ajuste_txt}; nivel 95 %.
 # Los tamaños de efecto (yi, vi) ya vienen calculados por nutria, incluida la conversión del SEM o SED a DE y las
 # fórmulas de grupos emparejados de los diseños cruzados.
 # Requiere: install.packages(c("metafor", "clubSandwich"))
 library(metafor)
 dat <- read.csv("{data_name}")
 nivel <- 0.95
-# 1) Modelo de metafor: aporta tau² (mismo estimador que nutria)
+# 1) Modelo de metafor: aporta tau² (mismo estimador que nutria). print(res) muestra además la inferencia propia
+#    de metafor, que puede diferir de la de nutria (p. ej. Knapp-Hartung sin max(1, q)): compara las líneas "nutria:".
 {modelo}
 print(res)
 # 2) Inferencia de nutria, calculada explícitamente con el tau² del modelo: debe coincidir con `nutria meta analizar`
@@ -1032,9 +1053,16 @@ if (any(duplicated(dat$estudio))) {{
   print(res_ml)
   print(robust(res_ml, cluster = dat$estudio, clubSandwich = TRUE))
 }}
-# 5) Diseño como moderador (crossover y cuadrado latino frente a paralelo), si hay varios diseños
-if ("diseno" %in% names(dat) && length(unique(dat$diseno[dat$diseno != ""])) > 1) {{
-  print(rma(yi, vi, mods = ~ factor(diseno), data = dat, method = "REML", test = "knha"))
+# 5) Diseño como moderador (crossover y cuadrado latino frente a paralelo), si hay varios diseños, con la misma
+#    categoría de referencia que nutria (paralelo) y la prueba de Knapp-Hartung de metafor (sin max(1, s²)).
+#    Como en nutria, no se ajusta si alguna fila no declara el diseño.
+if ("diseno" %in% names(dat)) {{
+  d <- as.character(dat$diseno)
+  if (all(!is.na(d) & d != "") && length(unique(d)) > 1) {{
+    dat$diseno_f <- factor(d)
+    if ("paralelo" %in% levels(dat$diseno_f)) dat$diseno_f <- relevel(dat$diseno_f, ref = "paralelo")
+    print(rma(yi, vi, mods = ~ diseno_f, data = dat, method = "REML", test = "knha"))
+  }}
 }}
 # 6) Sensibilidad (uno fuera con la prueba de metafor); sesgo de publicación solo con k >= 10
 print(leave1out(res))
@@ -1053,12 +1081,16 @@ def _export_r(args, rows, yi, vi, labels, comps, cfg=None, entrada: dict | None 
     if data_path.resolve() == script_path.resolve():
         raise ValueError("--salida debe ser el script de R (p. ej. metaanalisis.R), no un .csv: los datos se "
                          "guardan junto a él con extensión .csv")
+    from .stats import effect_sizes as es
     extra = [k for k in rows[0].keys() if k not in ("yi", "vi", "estudio", "comparacion")]
+    # diseno y unidad_experimental se exportan normalizados (las mismas categorías que usó nutria).
+    normalizar = {"diseno": es.normalize_design, "unidad_experimental": es.normalize_unit}
     with open(data_path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["estudio", "comparacion", "yi", "vi", *extra])
         for r, y, v, lab, comp in zip(rows, yi, vi, labels, comps):
-            writer.writerow([lab, comp, repr(float(y)), repr(float(v)), *[r.get(k, "") for k in extra]])
+            valores = [(normalizar[k](r.get(k)) or "") if k in normalizar else r.get(k, "") for k in extra]
+            writer.writerow([lab, comp, repr(float(y)), repr(float(v)), *valores])
     script_path.write_text(_script_r(data_path.name, args.medida, args.metodo, args.ajuste), "utf-8")
     if cfg is not None:
         log_event(cfg, "meta_exportar_r", inputs={**(entrada or {}), "medida": args.medida, "metodo": args.metodo,
@@ -1461,8 +1493,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="columnas para meta-regresión: numéricas o categóricas (p. ej. diseno, "
                                 "unidad_experimental), estas con codificación ficticia frente a una referencia")
             x.add_argument("--referencia", nargs="*", default=[], metavar="COLUMNA=CATEGORIA",
-                           help="categoría de referencia de un moderador categórico (por defecto, la primera en "
-                                "orden alfabético); también fuerza a tratar como categórica una columna numérica")
+                           help="categoría de referencia de un moderador categórico (por defecto, paralelo en diseno, "
+                                "animal en unidad_experimental y, en las demás columnas, la primera en orden "
+                                "alfabético); también fuerza a tratar como categórica una columna numérica")
             x.add_argument("--subgrupo", help="columna para análisis por subgrupos (p. ej. diseno)")
         if name == "stpierre":
             x.add_argument("--respuesta", required=True)

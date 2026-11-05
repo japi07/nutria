@@ -9,7 +9,10 @@ constantes o colineales se rechazan con un ValueError que los nombra.
 
 Moderadores categóricos (p. ej. diseno o unidad_experimental): `codificar_moderadores` construye
 la matriz a partir de las filas de un CSV con codificación ficticia (una variable indicadora por
-categoría salvo la de referencia, que se declara en el resultado).
+categoría salvo la de referencia, que se declara en el resultado). Los errores de los datos
+(columna inexistente, celdas vacías, números mezclados con texto, referencia inexistente) lanzan
+ValueError; un moderador categórico con una sola categoría lanza `ModeradorNoEstimable` (subclase
+de ValueError), que la CLI informa como meta-regresión no estimable, igual que los colineales.
 """
 
 from __future__ import annotations
@@ -24,6 +27,11 @@ from .meta import _Q_ZERO_TOL, _arrays, _resolve_ajuste, _typical_within_varianc
 
 # Tolerancia relativa (sobre columnas normalizadas) para decidir que una columna es redundante.
 _RANK_RTOL = 1e-10
+
+
+class ModeradorNoEstimable(ValueError):
+    """El moderador no permite estimar ningún contraste (p. ej. una sola categoría): no es un error de los
+    datos, sino una meta-regresión no estimable con ellos."""
 
 
 def _celda_vacia(value) -> bool:
@@ -137,8 +145,8 @@ def codificar_moderadores(rows: list[dict], columnas: list[str],
         else:
             referencia = categorias[0]
         if len(categorias) < 2:
-            raise ValueError(f"El moderador categórico '{col}' solo tiene una categoría ({categorias[0]}): "
-                             "no hay contraste que estimar")
+            raise ModeradorNoEstimable(f"El moderador categórico '{col}' solo tiene una categoría ({categorias[0]}): "
+                                       "no hay contraste que estimar")
         otras = [c for c in categorias if c != referencia]
         indicadoras = [f"{col}[{c}]" for c in otras]
         bloques.append(np.column_stack([[1.0 if x == c else 0.0 for x in categorias_fila] for c in otras]))
