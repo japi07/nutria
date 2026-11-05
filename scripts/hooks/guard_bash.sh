@@ -68,8 +68,9 @@ por_segmento() {  # $1: texto; $2: expresión regular extendida que debe cumplir
 # no forma parte de un nombre.
 ini='(^|[^[:alnum:]_.-])'
 fin='([^[:alnum:]_.-]|$)'
-# Posición de orden: inicio, separador o sustitución, tras asignaciones y envoltorios (env, sudo, exec, xargs...).
-posicion_de_orden='(^|[;&|({`]|\$\()[[:space:]]*(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|sudo|env|exec|command|builtin|nice|nohup|time|xargs|eval|-[^[:space:]]+)[[:space:]]+)*([^[:space:];&|]*/)?'
+# screen y expect también son palabras de las búsquedas bibliográficas: solo cuentan con sus opciones de uso
+# desatendido (screen -dm, expect -c, expect fichero.exp, ... | expect, expect < fichero).
+multiplexor_ingles='(^|[^[:alnum:]_.-])screen[[:space:]]([^;&|]*[[:space:]])?-[[:alnum:]]*[dDm]|(^|[^[:alnum:]_.-])expect[[:space:]]+(-[bcdDfinN]?([[:space:]]|$)|[^[:space:];&|]+\.exp([[:space:]]|$))|\|[[:space:]]*expect([[:space:]]|$)|(^|[^[:alnum:]_.-])expect[[:space:]]*<'
 # Mención de nutria como orden o módulo (no como parte de una ruta: src/nutria/, research/nutria.sqlite).
 menciona_nutria='(^|[^[:alnum:]_./-])nutria([^[:alnum:]_./-]|$)|-m[[:space:]]*nutria|(from|import)[[:space:]]+nutria'
 
@@ -112,7 +113,7 @@ if [ "$solo_lectura" = 0 ]; then
     bloquea "no se desvinculan procesos de la sesión de Claude Code (setsid, nohup, disown, systemd-run, crontab, os.fork...): la CLI usa los procesos antecesores para reconocer a los agentes."
   fi
   if contiene "$plano" "${ini}(tmux|dtach|abduco|zellij|byobu|tmate|unbuffer|socat)${fin}|${ini}script[[:space:]]+-|${ini}import[[:space:]]+pty|pty\.(spawn|fork|openpty)|openpty|forkpty|posix_openpt|/dev/ptmx|IO::Pty|PTY\.spawn|node-pty" \
-    || contiene "$sin_comillas" "${posicion_de_orden}(screen|expect)([[:space:]]|$)" \
+    || contiene "$plano" "$multiplexor_ingles" \
     || contiene "$plano" "${ini}ssh[[:space:]]([^;&|]*[[:space:]])?-[[:alnum:]]*t|${ini}ssh[[:space:]][^;&|]*RequestTTY"; then
     bloquea "no se lanzan órdenes con una terminal propia desde Bash (tmux, screen, dtach, expect, script, unbuffer, socat, ssh -t, pty): la firma humana exige la terminal de una persona."
   fi

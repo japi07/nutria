@@ -358,6 +358,44 @@ def test_un_programa_que_llama_al_registro_desde_claude_code_no_firma(registered
     assert [d for d in db.list_decisions(_conn()) if d["human_signoff"]] == []
 
 
+def _fake_ps(tmp_path: Path, rows: list[tuple]) -> tuple[str, ...]:
+    """Orden que imprime una tabla de procesos como `ps -A -o pid=,ppid=,tty=,args=` (macOS: '??' sin terminal)."""
+    script = tmp_path / "ps_simulado.py"
+    table = "".join(f"{pid:>6} {ppid:>6} {tty:<8} {args}\n" for pid, ppid, tty, args in rows)
+    script.write_text(f"import sys\nsys.stdout.write({table!r})\n", "utf-8")
+    return (sys.executable, str(script))
+
+
+def test_sin_proc_los_antecesores_se_recorren_con_ps(registered, tmp_path, monkeypatch, capsys):
+    """Revisión: sin /proc (macOS) solo se miraba el entorno del propio proceso, así que `env -i nutria ... --firma-
+    humana` firmaba. Ahora la cadena de antecesores sale de `ps`: Claude Code entre ellos (también instalado con npm,
+    `node .../bin/claude`) y la terminal de control. `ps` no muestra el entorno inicial de otros procesos."""
+    me = os.getpid()
+    agente = [(me, 4300, "??", "python3 -m nutria decision registrar"), (4300, 4200, "??", "/bin/zsh -c nutria"),
+              (4200, 4100, "ttys001", "node /usr/local/bin/claude --resume"), (4100, 1, "ttys001", "-zsh")]
+    monkeypatch.setattr(provenance, "PS_COMMAND", _fake_ps(tmp_path, agente))
+    assert provenance.ancestor_markers() == ["Claude Code (proceso 4200)"]
+    capsys.readouterr()
+    assert _code(FIRMADAS[0]) == 3
+    assert "Claude Code (proceso 4200)" in capsys.readouterr().err
+    persona = [(me, 4100, "ttys002", "python3 -m nutria decision registrar"), (4100, 4000, "ttys002", "-zsh"),
+               (4000, 1, "??", "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal")]
+    monkeypatch.setattr(provenance, "PS_COMMAND", _fake_ps(tmp_path, persona))
+    assert provenance.ancestor_markers() == [] and provenance.interactive_terminal() is True
+    assert _code(FIRMADAS[0]) == 0
+    monkeypatch.setattr(provenance, "PS_COMMAND", _fake_ps(tmp_path, [(me, 1, "??", "python3 -m nutria")]))
+    assert provenance.interactive_terminal() is False                    # huérfano sin terminal: no firma
+    monkeypatch.setattr(provenance, "PS_COMMAND", None)
+    assert provenance.interactive_terminal() is None and provenance.ancestor_markers() == []
+
+
+def test_claude_code_instalado_con_npm_tambien_se_reconoce(tmp_path):
+    proc = tmp_path / "proc"
+    _fake_proc(proc, 30, 20, "python3", ["python3", "-m", "nutria"], {})
+    _fake_proc(proc, 20, 1, "node", ["node", "/usr/local/bin/claude", "--continue"], {})
+    assert provenance.ancestor_markers(proc, pid=30) == ["Claude Code (proceso 20)"]
+
+
 @pytest.mark.parametrize("tty,expected", [(0, 3), (34816, 0)])
 def test_sin_terminal_de_control_en_la_cadena_no_se_firma(registered, monkeypatch, capsys, tty, expected):
     """Un proceso desvinculado de Claude Code (huérfano, adoptado por init) y sin terminal no firma, aunque no tenga
@@ -447,6 +485,9 @@ BLOQUEADAS = [
     "screen -dmS x nutria estado",
     "/usr/bin/screen -dm sh -c 'nutria estado'",
     "cd /tmp && screen -dm nutria estado",
+    "screen -S x -d -m nutria estado",
+    "expect guion.exp",
+    "expect < guion.exp",
     "echo 'spawn nutria estado' | expect",
     "expect -c 'spawn nutria estado'",
     "dtach -n /tmp/s nutria estado",
@@ -552,6 +593,7 @@ PERMITIDAS = [
     "git rm research/revisiones/obsoleta.md",
     "git restore --staged src/nutria/cli.py",
     "nutria buscar pubmed \"high-throughput screen of rumen modifiers: what to expect\" --max 25",
+    "nutria buscar europepmc \"(screen OR screening) AND rumen; expect (cattle)\" --max 25",
     "tail -n 3 research/PROCEDENCIA.JSONL",
     "head -c 200 research/procedencia.jsonl",
     "cat research/nutria.sqlite | head -c 16",
@@ -716,6 +758,43 @@ def test_la_evidencia_citada_debe_poder_comprobarse(project):
     assert _code(base) == 0                  # una propuesta sin evidencia se admite (no cuenta hasta que se firme)
 
 
+def test_la_evidencia_es_un_fichero_regular_del_proyecto_y_no_la_propia_oportunidad(project, tmp_path_factory):
+    """Revisión: se aceptaban '.', rutas de fuera del proyecto y la propia oportunidad como evidencia."""
+    _new_opportunity(project)
+    outside = tmp_path_factory.mktemp("fuera_del_proyecto") / "analisis.md"
+    outside.write_text("análisis ajeno", "utf-8")
+    link = project / "research" / "revisiones" / "enlace.md"
+    link.symlink_to(outside)
+    base = ["--agente", "compuestos-toxicologia", "puntuar", "compuerta", "O-0001", "seguridad", "superada",
+            "--motivo", "m"]
+    for item in (".", "research", "research/revisiones", str(outside), "research/revisiones/enlace.md",
+                 f"research/../../{outside.parent.name}/analisis.md", "O-0001", "o-0001"):
+        assert _code([*base, "--evidencia", item]) == 3, item
+    assert db.list_gates(_conn()) == []
+    with pytest.raises(db.RegistryError, match="propia compuerta"):        # también por la API del registro
+        db.set_gate(_conn(), "O-0001", "seguridad", "superada", "m", list(db.GATE_OWNERS), evidence=["O-0001"],
+                    actor="compuestos-toxicologia")
+    (project / "research" / "revisiones" / "O-0001_seguridad.md").write_text("análisis", "utf-8")
+    assert _code([*base, "--evidencia", "research/revisiones/O-0001_seguridad.md",
+                  str(project / "research" / "revisiones" / "O-0001_seguridad.md")]) == 0
+    # desbloquear: la propia oportunidad tampoco vale como evidencia
+    assert _code(["--agente", "critico-red-team", "puntuar", "compuerta", "O-0001", "seguridad", "bloqueada",
+                  "--motivo", "señal"]) == 0
+    assert _code(["puntuar", "compuerta", "O-0001", "seguridad", "no_resuelta", "--motivo", "revisado",
+                  "--evidencia", "O-0001", SIGN, "Ana"]) == 3
+    assert db.effective_gates(_conn(), "O-0001", ["seguridad"])["seguridad"] == "bloqueada"
+
+
+def test_el_agente_se_guarda_sin_espacios_alrededor(project):
+    """Revisión: `--agente " desarrollo-industrial "` pasaba el control de rol pero quedaba con espacios."""
+    _new_opportunity(project)
+    assert _code(["--agente", " desarrollo-industrial ", "puntuar", "compuerta", "O-0001", "analitica", "superada",
+                  "--motivo", "m"]) == 0
+    assert db.list_gates(_conn(), "O-0001")[0]["decided_by"] == "desarrollo-industrial"
+    assert db.list_decisions(_conn(), "O-0001")[-1]["decided_by"] == "desarrollo-industrial"
+    assert _events(project)[-1]["actor"] == "desarrollo-industrial"
+
+
 def test_bloquear_nunca_falla_por_la_evidencia_y_desbloquear_la_exige(project):
     _new_opportunity(project)
     assert _code(["--agente", "critico-red-team", "puntuar", "compuerta", "O-0001", "seguridad", "bloqueada",
@@ -769,6 +848,28 @@ def test_solo_el_propio_evaluador_registra_y_sustituye_sus_puntuaciones(project,
     assert "nadie registra ni sobrescribe" in capsys.readouterr().err
 
 
+def test_las_variantes_de_un_evaluador_cuentan_como_uno(project, capsys):
+    """Revisión: con espacios o mayúsculas, un mismo evaluador contaba varias veces para el mínimo de 3 (O-0002
+    quedaba CONDICIONAL en lugar de INSUFICIENTE). El identificador se normaliza al comparar y al guardar."""
+    _new_opportunity(project)
+    data = _example("puntuacion_ejemplo.json")
+    data["oportunidad"] = "O-0001"
+    for i, (agent, rater) in enumerate((("evaluador-1", "evaluador-1"), ("evaluador-1", "evaluador-1 "),
+                                        ("Evaluador-1", "Evaluador-1"), (" EVALUADOR-1", "evaluador-1"))):
+        data["evaluador"] = rater
+        path = _write_json(project / f"variante_{i}.json", data)
+        assert _code(["--agente", agent, "puntuar", "registrar", "--datos", path]) == 0
+    conn = _conn()
+    assert [r[0] for r in conn.execute("SELECT DISTINCT rater FROM scores")] == ["evaluador-1"]
+    assert len(db.list_scores(conn, "O-0001")) == len(data["puntuaciones"])
+    assert {r[0] for r in conn.execute("SELECT DISTINCT replaced_by FROM scores_history")} == {"evaluador-1"}
+    capsys.readouterr()
+    assert _code(["--json", "puntuar", "ranking", "--sim", "200", "--min-evaluadores", "3"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "INSUFICIENTE"
+    assert _code(["--agente", "Evaluador-2", "puntuar", "registrar", "--datos", path]) == 3   # sigue sin suplantar
+    assert db.normalize_rater("  Evaluador-1 ") == "evaluador-1"
+
+
 def test_un_evaluador_identificado_por_nutria_agent_tampoco_ve_puntuaciones(project, monkeypatch, capsys):
     _new_opportunity(project)
     assert _code(["--agente", "evaluador-1", "puntuar", "registrar", "--datos",
@@ -814,6 +915,31 @@ def test_decisiones_historial_y_autoria_son_solo_de_insercion(project):
             conn.execute(sql)
 
 
+def test_insert_or_replace_tampoco_sustituye_lo_registrado(project):
+    """Revisión: INSERT OR REPLACE borra la fila que choca sin disparar los triggers de DELETE y la sustituía."""
+    _new_opportunity(project)
+    for value in (0.25, 0.5):
+        assert _code(["--agente", "evaluador-1", "puntuar", "registrar", "--datos",
+                      _scores_file(project, "evaluador-1", value)]) == 0
+    assert _code(["autoria", "registrar", "--entidad", "O-0001", "--persona", "Ana", "--aportacion", "X + Y",
+                  SIGN, "Ana"]) == 0
+    conn = _conn()
+    tables = {"decisions": "(id, ts, decision, rationale) VALUES (1, 't', 'd', 'r')",
+              "scores_history": "(id, opportunity_id, rater, criterion, replaced_at) VALUES (1, 'O-0001', 'x', 'c', 't')",
+              "inventive_contributions": "(id, entity_id, person, contribution, signed_by, signed_at) "
+                                         "VALUES (1, 'O-0001', 'Otra', 'Z', 'Otra', 't')"}
+    before = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")] for t in tables}
+    for table, values in tables.items():
+        for verb in ("INSERT OR REPLACE INTO", "REPLACE INTO", "INSERT INTO"):
+            with pytest.raises(sqlite3.IntegrityError, match="solo de inserción"):
+                conn.execute(f"{verb} {table} {values}")
+        with pytest.raises(sqlite3.IntegrityError, match="solo de inserción"):
+            conn.execute(f"INSERT INTO {table} {values} ON CONFLICT(id) DO UPDATE SET id = excluded.id")
+    assert {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")] for t in tables} == before
+    db.add_decision(conn, "O-0001", "propuesta nueva", "m", actor="director-cientifico")    # insertar sí se puede
+    assert db.list_decisions(conn)[-1]["decision"] == "propuesta nueva"
+
+
 def test_las_bases_de_datos_existentes_se_migran(tmp_path):
     path = tmp_path / "anterior.sqlite"
     old = sqlite3.connect(path)
@@ -825,9 +951,12 @@ def test_las_bases_de_datos_existentes_se_migran(tmp_path):
     conn = db.connect(path)
     assert "context" in {r[1] for r in conn.execute("PRAGMA table_info(decisions)")}
     triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
-    assert {"decisions_sin_update", "decisions_sin_delete", "scores_history_sin_delete"} <= triggers
+    assert {"decisions_sin_update", "decisions_sin_delete", "scores_history_sin_delete", "decisions_sin_reemplazo",
+            "scores_history_sin_reemplazo", "inventive_contributions_sin_reemplazo"} <= triggers
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("DELETE FROM decisions")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT OR REPLACE INTO decisions (id, ts, decision, rationale) VALUES (1, 't', 'd', 'r')")
 
 
 # ============================================================================ procedencia (D3-11, D3-12, D9-7)
@@ -938,6 +1067,24 @@ def test_las_lineas_corruptas_se_cuentan_e_informan(project, capsys):
     assert json.loads(path.read_text("utf-8").splitlines()[-1])["action"] == "decision"
     res = provenance.verify_chain(load_config())
     assert res["lineas_corruptas"] == [n_lines] and not res["cadena_rota"] and not res["alterados"]
+
+
+def test_el_listado_avisa_si_la_procedencia_no_es_integra(project, capsys):
+    """Revisión: un evento forjado con el formato antiguo aparecía sin aviso en `nutria procedencia`."""
+    path = _seed_events(project, 2)
+    capsys.readouterr()
+    assert _code(["procedencia"]) == 0
+    assert "no es íntegra" not in capsys.readouterr().err
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00", "actor": "humano", "action": "revision_humana",
+                             "inputs": {}, "outputs": {}, "nutria": "0.1.0"}) + "\n")
+    assert _code(["procedencia"]) == 0
+    out = capsys.readouterr()
+    assert "revision_humana" in out.out                                  # se muestra...
+    assert "no es íntegra" in out.err and "sin cadena" in out.err        # ...con el aviso
+    assert _code(["--json", "procedencia"]) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out)[-1]["action"] == "revision_humana" and "no es íntegra" in out.err
 
 
 def test_los_eventos_anteriores_a_la_cadena_quedan_anclados(tmp_path):
