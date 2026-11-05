@@ -102,6 +102,9 @@ BAD_LABEL_RE = re.compile(r"(?i:\[\s*(?:pub|der|hip|sup|desc)\b[^\]\n]*[^\]\s][^
 GROUPED_REFS_RE = re.compile(r"\[\s*R\d+\s*(?:[,;]|\by\b|-|–)\s*R?\d+[^\]\n]*\]")
 LOWER_REF_RE = re.compile(r"\[(r\d+)\]")
 PENDING_RE = re.compile(r"\[\s*por\s*completar", re.IGNORECASE)
+# El marcador escrito como código al principio de una línea («`[POR COMPLETAR]` ...») sigue siendo un marcador; a
+# mitad de frase es una mención del término (como en la convención de la plantilla).
+CODE_PENDING_RE = re.compile(r"^\s*(?:[-*+>]\s*|\d+[.)]\s*)*`+\s*\[\s*por\s*completar", re.IGNORECASE)
 ENTRY_RE = re.compile(r"^\s{0,3}(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?\[(R\d+)\](?:\*\*|__)?\s*[:.]?\s*(.*)$")
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -113,16 +116,27 @@ QUOTE_RE = re.compile(r"«([^»]+)»|\"([^\"]+)\"|“([^”]+)”")
 _NUM = r"(?<![\w.,/])[-+±−]?\d+(?:[.,]\d+)*"
 _WORD_UNITS = ("puntos porcentuales", "por ciento", "ppm", "ppb", "pp", "mEq", "mmol", "μmol", "umol", "nmol", "mol",
                "mg", "μg", "ug", "ng", "kg", "g", "t", "Mcal", "kcal", "cal", "MJ", "kJ", "mL", "dL", "L", "UI", "IU",
-               "UFC", "CFU", "EUR", "USD")
+               "UFC", "CFU", "EUR", "USD",
+               # unidades escritas con todas sus letras
+               "gramo", "gramos", "kilogramo", "kilogramos", "kilo", "kilos", "miligramo", "miligramos",
+               "microgramo", "microgramos", "litro", "litros", "mililitro", "mililitros", "tonelada", "toneladas",
+               "megacaloría", "megacalorías", "megacaloria", "megacalorias", "kilocaloría", "kilocalorías",
+               "kilocaloria", "kilocalorias", "megajulio", "megajulios", "euro", "euros", "céntimo", "céntimos",
+               "centimo", "centimos", "dólar", "dólares", "dolar", "dolares", "gram", "grams", "kilogram", "kilograms",
+               "liter", "liters", "litre", "litres", "tonne", "tonnes", "ton", "tons", "percent")
 _SYMBOL_UNITS = ("%", "‰", "°C", "€")
 UNIT_RE = re.compile(
     _NUM + r"\s?(?:(?:" + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True))
     + r")(?![^\W\d_])|(?:" + "|".join(re.escape(u) for u in _SYMBOL_UNITS) + "))",
     re.IGNORECASE)
 _NAME = r"[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúñü'\-]+"
+_COAUTHORS = r"(?:et\s+al\.?|[ye]\s+cols?\.?|y\s+colaboradores)"
 AUTHOR_YEAR_RES = (
-    re.compile(rf"\(\s*{_NAME}(?:\s+(?:et\s+al\.?|y|and|&)\s*(?:{_NAME})?)?,?\s+(?:19|20)\d{{2}}[a-z]?\s*[;)]"),
-    re.compile(rf"\b{_NAME}\s+(?:et\s+al\.?|y\s+{_NAME}|and\s+{_NAME})\s*\(\s*(?:19|20)\d{{2}}[a-z]?\s*\)"),
+    # (Smith et al., 2019; Jones, 2017), (Smith y col. 2019), (Smith y Jones, 2019)
+    re.compile(rf"\(\s*{_NAME}(?:\s+(?:{_COAUTHORS}|y|and|&)\s*(?:{_NAME})?)?,?\s+(?:19|20)\d{{2}}[a-z]?\s*[;),]"),
+    # Smith et al. (2019), Smith y col. (2019), Smith y Jones (2019)
+    re.compile(rf"\b{_NAME}\s+(?:{_COAUTHORS}|y\s+{_NAME}|and\s+{_NAME}|&\s+{_NAME})\s*,?\s*\(\s*(?:19|20)\d{{2}}[a-z]?"
+               rf"\s*\)"),
 )
 _RUMINANT_RE = re.compile(
     r"vacun|bovin|vaca|ternero|ternera|novill|buey|toro|ovin|oveja|cordero|caprin|cabra|cabrit|bufal|rumiant|"
@@ -1149,21 +1163,58 @@ def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[st
     return out
 
 
-def _gate_registry_issues(conn, doc: _Doc, lines: list[tuple[int, str]], gate_ids, sev: str) -> list[Issue]:
-    """La sección 14 no puede declarar para una compuerta un estado distinto del efectivo en el registro, y debe
-    recoger la ruta regulatoria que el registro tiene para la oportunidad del front matter."""
+@dataclass
+class _RegistryOpportunity:
+    opp_id: str | None          # oportunidad declarada en el front matter
+    opp: dict | None            # su registro, si existe
+    problem: str | None = None  # error al leer el registro
+
+
+def _registry_opportunity(conn, doc: _Doc) -> _RegistryOpportunity:
     fields, _ = _fm_fields(doc)
     opp_id = next((v for _, v, p in fields.get("oportunidad", []) if v and not p), None)
+    if not opp_id:
+        return _RegistryOpportunity(None, None)
+    from .. import db
+    try:
+        return _RegistryOpportunity(opp_id, db.get_opportunity(conn, opp_id))
+    except (sqlite3.Error, db.RegistryError) as exc:
+        return _RegistryOpportunity(opp_id, None, str(exc))
+
+
+def _context_issues(doc: _Doc, reg: _RegistryOpportunity, sev: str) -> list[Issue]:
+    """La especie y la etapa del front matter son las de la oportunidad en el registro (de ellas depende, p. ej., que se
+    exija el destino digestivo de los rumiantes)."""
+    if reg.opp is None:
+        return []
+    fields, _ = _fm_fields(doc)
+    out = []
+    for key, column, name in (("especie", "species", "especie"), ("etapa", "production_stage", "etapa")):
+        registered = reg.opp.get(column)
+        declared = next((v for _, v, p in fields.get(key, []) if v and not p), None)
+        if registered and _plain(declared or "") != _plain(registered):
+            out.append(Issue(sev, f"La {name} del front matter ({declared or 'sin declarar'}) no es la de la oportunidad "
+                                  f"{reg.opp_id} en el registro ({registered}): corrígela",
+                             (doc.fm_start + 1) if doc.fm_start is not None else None))
+    return out
+
+
+def _gate_registry_issues(conn, doc: _Doc, reg: _RegistryOpportunity, lines: list[tuple[int, str]], gate_ids,
+                          sev: str) -> list[Issue]:
+    """La sección 14 no puede declarar para una compuerta un estado distinto del efectivo en el registro, y debe
+    recoger la ruta regulatoria que el registro tiene para la oportunidad del front matter."""
+    opp_id, opp = reg.opp_id, reg.opp
     if not opp_id:
         return [Issue(sev, "El front matter no declara la oportunidad del informe (oportunidad: O-xxxx): no se puede "
                            "contrastar el estado de las compuertas de la sección 14 con el registro",
                       (doc.fm_start + 1) if doc.fm_start is not None else None)]
     from .. import db
+    if reg.problem:
+        return [Issue(sev, f"No se pudo leer la oportunidad {opp_id} en el registro ({reg.problem})")]
+    if opp is None:
+        return [Issue(sev, f"La oportunidad {opp_id} del front matter no está en el registro: no se puede contrastar "
+                           "el estado de las compuertas de la sección 14")]
     try:
-        opp = db.get_opportunity(conn, opp_id)
-        if opp is None:
-            return [Issue(sev, f"La oportunidad {opp_id} del front matter no está en el registro: no se puede contrastar "
-                               "el estado de las compuertas de la sección 14")]
         effective = db.effective_gates(conn, opp_id, list(gate_ids))
     except (sqlite3.Error, db.RegistryError) as exc:
         return [Issue(sev, f"No se pudo leer el estado de las compuertas de {opp_id} en el registro ({exc})")]
@@ -1193,7 +1244,7 @@ def _pending_and_empty(doc: _Doc, numbered: dict[int, list[int]], require_sectio
             current = titles[i][1]
         if doc.in_front_matter(i):
             continue
-        if PENDING_RE.search(_drop_term_spans(line)):
+        if PENDING_RE.search(_drop_term_spans(line)) or CODE_PENDING_RE.match(line):
             pending.setdefault(current, i + 1)
     empty = []
     if require_sections:
@@ -1508,7 +1559,10 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                         "ninguna afirmación [PUB] actual con esa referencia: si la afirmación se "
                                         "reformuló, actualiza la fila y comprueba la nueva versión", r.line))
 
-    # ---- registro de fuentes
+    # ---- registro: oportunidad del front matter y fuentes
+    reg = _registry_opportunity(conn, doc) if conn is not None else None
+    if reg is not None and is_report:
+        issues += _context_issues(doc, reg, sev_strict)
     if conn is not None:
         first_line: dict[str, int] = {}
         for i, refs in pub_lines:
@@ -1535,8 +1589,11 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                             f"las compuertas: {', '.join(missing)}", start + 1))
         if conn is not None:
             numbered_content = [(j, doc.lines[j]) for j in range(start + 1, doc.section_end(start, 2))]
-            issues += _gate_registry_issues(conn, doc, numbered_content, gate_ids, sev_strict)
-    if require_sections and numbered.get(7) and is_ruminant(_species(doc)):
+            issues += _gate_registry_issues(conn, doc, reg, numbered_content, gate_ids, sev_strict)
+    # Rumiante si lo dice el front matter o la oportunidad del registro (o si ninguno declara la especie).
+    ruminant = is_ruminant(_species(doc)) or (reg is not None and reg.opp is not None
+                                              and is_ruminant(reg.opp.get("species")))
+    if require_sections and numbered.get(7) and ruminant:
         start = numbered[7][0]
         content = [doc.lines[j] for j in range(start + 1, doc.section_end(start, 2))]
         labeled = [_plain(c) for c in content if _scan(c).labels]

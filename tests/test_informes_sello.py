@@ -768,6 +768,41 @@ def test_digestive_fate_is_required_in_ruminant_reports(project):
     assert not any("destino digestivo" in str(i) for i in chk.check_report(pig, path=path))
 
 
+def test_front_matter_species_cannot_skip_the_digestive_fate(project):
+    # Cambiar la especie del front matter no evita la exigencia del destino digestivo: manda también la del registro.
+    path = _filled_report(project)
+    text = path.read_text("utf-8")
+    section7 = text.split("### 7.1")[1].split("## 8.")[0]
+    pig = text.replace(section7, ". Destino digestivo en la especie diana\n\nSin datos.\n\n").replace(
+        "especie: 'vacuno lechero'", "especie: 'porcino de cebo'").replace("estado: borrador", "estado: final")
+    errors = _errors(pig, conn=_conn(), path=path)
+    assert any("no trata el destino digestivo" in e for e in errors)
+    assert any("La especie del front matter (porcino de cebo) no es la de la oportunidad O-0001" in e for e in errors)
+    stage = text.replace("etapa: 'periodo de transición", "etapa: 'lactación media").replace("estado: borrador",
+                                                                                            "estado: final")
+    assert any("La etapa del front matter" in e for e in _errors(stage, conn=_conn(), path=path))
+
+
+def test_pending_marker_in_code_is_still_pending():
+    body = "`[POR COMPLETAR]` mecanismo en la especie diana [HIP]."
+    assert any("[POR COMPLETAR]" in e for e in _errors(_draft(body), require_sections=False, strict=True))
+    mention = "Lo que falta se marca con `[POR COMPLETAR]` en el borrador [HIP]."
+    assert not any("[POR COMPLETAR]" in e for e in _errors(_draft(mention), require_sections=False, strict=True))
+
+
+@pytest.mark.parametrize("citation", ["(Smith y col., 2019)", "Smith y col. (2019)", "(Smith et al. 2019; Jones, 2017)",
+                                      "Smith y colaboradores (2019)", "(García y López, 2019)"])
+def test_author_year_citations_in_spanish_forms(citation):
+    assert any("autor-año" in e for e in _errors(_draft(f"La colina reduce la cetosis {citation} [HIP]."),
+                                                 require_sections=False))
+
+
+@pytest.mark.parametrize("text", ["3 kilos de pienso", "2,5 litros/d", "15 gramos/d", "0,30 euros por vaca",
+                                  "5 toneladas"])
+def test_spelled_out_units_count_as_figures(text):
+    assert chk.UNIT_RE.search(text)
+
+
 def test_section_14_has_route_and_effective_gate_states(project):
     _opportunity(project)
     assert main(["--agente", "regulacion-seguridad", "puntuar", "compuerta", "O-0001", "seguridad", "superada",

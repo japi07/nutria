@@ -29,8 +29,9 @@ def stamp_key(tmp_path, monkeypatch):
 
 
 def make(body: str, bib: str, estado: str = "borrador", humano: str = "null", anexo: str = "") -> str:
-    return (f"---\noportunidad: O-0001\nestado: {estado}\nespecie: vacuno lechero\nrevisado_por_humano: {humano}\n"
-            "---\n# Informe\n"
+    return (f"---\noportunidad: O-0001\nestado: {estado}\nespecie: vacuno lechero\n"
+            "etapa: 'periodo de transición (-21 a +21 días respecto al parto)'\n"
+            f"revisado_por_humano: {humano}\n---\n# Informe\n"
             f"{SECTIONS}\n{body}\n## 20. Bibliografía científica verificable\n{bib}\n## Anexo A. Tabla\n{anexo}\n")
 
 
