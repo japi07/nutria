@@ -178,7 +178,8 @@ _NUM = r"(?<![\w.,/])[-+±−]?\d+(?:[.,]\d+)*(?:[eE][-+−]?\d+)?"
 _WORD_UNITS = ("puntos porcentuales", "por ciento", "ppm", "ppb", "pp", "mEq", "mmol", "μmol", "umol", "nmol", "mol",
                "mg", "μg", "ug", "ng", "kgs", "kg", "g", "t", "Mcal", "kcal", "cal", "MJ", "kJ", "mL", "dL", "μL", "uL",
                "L", "UI", "IU", "UFC", "CFU", "EUR", "USD", "cm", "mm", "km", "μm", "m", "m^2", "m^3", "m2", "m3",
-               "cm^2", "cm^3", "cm2", "cm3", "lb", "lbs", "oz", "kPa", "MPa", "UFL", "UFV", "UGM", "log",
+               "cm^2", "cm^3", "cm2", "cm3", "lb", "lbs", "oz", "kPa", "MPa", "UFL", "UFV", "UGM", "log", "pmol", "nm",
+               "kWh", "MWh", "kW", "MW",
                # unidades escritas con todas sus letras
                "gramo", "gramos", "kilogramo", "kilogramos", "kilo", "kilos", "miligramo", "miligramos",
                "microgramo", "microgramos", "litro", "litros", "mililitro", "mililitros", "tonelada", "toneladas",
@@ -217,7 +218,9 @@ _MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|set
 _NOT_NAMES = (r"(?:Agenda|Horizonte|Horizon|Estrategia|Strategy|Plan|Programa|Programme|Program|Reglamento|Regulation|"
               r"Directiva|Directive|Decisi[oó]n|Decision|Ley|Decreto|Norma|Campa[nñ]a|Censo|Encuesta|Fase|Semana|Grupo|"
               r"Lote|Tabla|Table|Figura|Figure|Fig|Anexo|Annex|Secci[oó]n|Section|Versi[oó]n|Version|A[nñ]o|Year|Mes|"
-              r"Cosecha|Temporada|Ejercicio|Edici[oó]n|Edition|Cap[ií]tulo|Chapter|Vol|Volumen|PAC|CAP|ODS|SDG|COVID)")
+              r"Cosecha|Temporada|Ejercicio|Edici[oó]n|Edition|Cap[ií]tulo|Chapter|Vol|Volumen|PAC|CAP|ODS|SDG|COVID|"
+              r"Ensayo|Tratamiento|Experimento|Estudio|Dieta|Raci[oó]n|Reba[nñ]o|Granja|Explotaci[oó]n|Parcela|Bloque|"
+              r"Per[ií]odo|Muestra|Animal|Vacas?|Raza|Modelo|Escenario|Caso)")
 # Palabras de función que empiezan una frase con mayúscula y no son apellidos («Se observó en 2019», «No mostró...»).
 _FUNCTION_WORDS = (r"(?:Se|No|Lo|Ya|Si|Sí|Ni|Que|Qué|Como|Cómo|Cuando|Donde|Esto|Este|Esta|Estos|Estas|Eso|Ese|"
                    r"Esa|Esos|Esas|Aquello|Aquel|Aquella|Ello|Ellos|Ellas|Él|Ella|Nos|Les|Los|Las|Un|Una|Unos|"
@@ -239,6 +242,11 @@ _NAME = rf"(?:{_PARTICLES}\s+){{0,3}}{_NAME_WORD}(?:\s+(?:{_PARTICLES}\s+){{0,2}
 # Iniciales: con punto («J.», «J. M.», «J.-M.») o dos o tres mayúsculas («JM»); una mayúscula suelta sin punto no
 # cuenta («Grupo A (2019)» no es una cita).
 _INITIALS = r"(?:,?\s+(?:(?:[A-Z]\.\s?-?){1,3}|[A-Z]{2,3}\b\.?))?"
+_INITIALS_REQ = r"(?:,?\s+(?:(?:[A-Z]\.\s?-?){1,3}|[A-Z]{1,3}\b\.?))"
+# Autores al estilo Vancouver, con las iniciales detrás de cada apellido («García J, Pérez M, López A»).
+_REF_AUTHORS = (rf"{_NAME}{_INITIALS_REQ}(?:\s*,\s*{_NAME}{_INITIALS_REQ}){{0,8}}"
+                r"(?:\s*,?\s+(?:et\s+al\.?|y\s+otr[oa]s|and\s+others|(?:y|e|and|&)\s+[A-ZÀ-ÖØ-Þ][^\W\d_]+"
+                r"(?:\s+[A-Z]{1,3}\b\.?)?))?")
 _AUTHOR = rf"{_NAME}{_INITIALS}"
 _COAUTHORS = (r"(?:et\s+al\.?|et\s+alii|[ye]\s+cols?\.?|y\s+colaboradores|and\s+colleagues|y\s+otr[oa]s|"
               r"and\s+others)")
@@ -292,6 +300,13 @@ AUTHOR_YEAR_RES = (
     # García en 2018 mostró...; un trabajo publicado en 2018 por García
     re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s+(?i:en\s+)(?:19|20)\d{{2}}\s*,?\s+(?i:{_CITE_VERBS})"),
     re.compile(rf"(?i:\ben\s+)(?:19|20)\d{{2}}\s+(?i:por)\s+{_FIRST}"),
+    # Referencia bibliográfica fuera de la bibliografía: una línea que empieza por un autor con sus iniciales y el año
+    # («García J. 2018. Título...», «- García J, Pérez M. 2018.») o una nota al pie con autor y año («[^1]: García,
+    # 2018.», «[^2]: García J, Pérez M. 2018. Título»)
+    re.compile(rf"^\s{{0,3}}(?:[-*+]\s+|\d+[.)]\s+)?(?:{_REF_AUTHORS}|{_NAME}{_INITIALS_REQ}{_AUTHORS})\s*[,.]?\s*"
+               rf"\(?(?:19|20)\d{{2}}[a-z]?\)?\s*[.,:;]", re.MULTILINE),
+    re.compile(rf"^\s{{0,3}}\[\^[^\]\n]+\]:\s*(?:{_LEADIN})?(?:{_REF_AUTHORS}|{_FIRST}{_AUTHORS})\s*[,.]?\s*\(?"
+               rf"(?:(?:19|20)\d{{2}}|{_STATUS})", re.MULTILINE),
 )
 _IN_PARENS_ONLY = 1          # índice de AUTHOR_YEAR_RES que solo cuenta dentro de un paréntesis o corchete abierto
 # En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita si la
@@ -312,8 +327,9 @@ NUMERIC_CITATION_RE = re.compile(r"(?<![\]\w^])\[\s*([1-9]\d{0,2}(?:\s*(?:[,;]|[
                                  r"(?![(:\[])")
 # Cita numérica entre paréntesis al final de una frase («... la cetosis (1).», «(2, 3).», «(4-6).»), salvo tras una
 # palabra que numera (ecuación, tabla, grupo, dieta...): `_paren_numeric_citations`. Y con «ref.»: «(ref. 3)».
-PAREN_NUMERIC_RE = re.compile(r"(?<=[^\W\d_])\s?\((\d{1,3}(?:\s*(?:[,;]|[-–—])\s*\d{1,3})*)\)(?=\s*\.(?:\s|$)|\s*$)")
-_ENUM_WORD_RE = re.compile(r"(?i)\b(?:ecuaci[oó]n(?:es)?|f[oó]rmulas?|eqs?|tablas?|figuras?|figs?|pasos?|apartados?|"
+PAREN_NUMERIC_RE = re.compile(r"(?<=[^\W\d_])\s?\((\d{1,3}(?:\s*(?:[,;]|[-–—])\s*\d{1,3})*)\)(?=\s*\.(?:\s|$))")
+_ENUM_WORD_RE = re.compile(r"(?i)\b(?:uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|veinte|"
+                           r"treinta|cuarenta|cincuenta|cien|ciento|mil|ecuaci[oó]n(?:es)?|f[oó]rmulas?|eqs?|tablas?|figuras?|figs?|pasos?|apartados?|"
                            r"secci[oó]n(?:es)?|puntos?|criterios?|niveles?|opci[oó]n(?:es)?|grupos?|tratamientos?|"
                            r"dietas?|fases?|semanas?|d[ií]as?|columnas?|filas?|modelos?|anexos?|notas?|hip[oó]tesis|"
                            r"escenarios?|casos?|ensayos?|experimentos?|lotes?|parcelas?|bloques?|per[ií]odos?|"
@@ -2282,7 +2298,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 issues.append(Issue("error", f"Cita numérica «{numeric}»: no se puede verificar; cita con [Rn] y su "
                                              "entrada en la bibliografía (sección 20)", i + 1))
             paren = next(_paren_numeric_citations(scan.text), None)
-            if paren and i not in tables:
+            if paren and i not in tables and not doc.heading_at(i):
                 issues.append(Issue(sev_strict, f"Posible cita numérica «{paren}» al final de la frase: si es una "
                                                 "cita, escríbela como [Rn] (y su entrada en la bibliografía)", i + 1))
             for m in SUPERSCRIPT_CITATION_RE.finditer(scan.text):
