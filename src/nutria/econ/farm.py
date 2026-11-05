@@ -2,7 +2,8 @@
 
 Dosis: [coste] la declara en UNA base (nutria.dosis):
 - dosis_g_dia: g de producto por animal y día;
-- dosis_mg_kg_ms: mg por kg de MS de la ración total (exige [racion].ingestion_ms_kg_dia);
+- dosis_mg_kg_ms: mg por kg de MS de la ración total (exige [racion].ingestion_ms_kg_dia o la ingestión de la ración
+  completa, de la que se deduce);
 - dosis_g_t: g por tonelada del pienso portador (exige [racion].portador, [racion].base y la ingestión de ese
   pienso: ingestion_pienso_kg_dia o, para la ración completa, la ingestión de MS y, en base tal cual, ms_pienso).
 Con el pienso portador declarado se calcula además el coste del producto por tonelada de pienso
@@ -155,9 +156,18 @@ def _parse_dose(where: str, coste: dict, declared: set[str], prefix: str) -> tup
     return parse_dist(coste[present[0]]), DOSE_KEYS[present[0]]
 
 
+def _dmi_available(r: Ration) -> bool:
+    """Ingestión de MS declarada o deducible de la ración completa (su ingestión en MS, o tal cual con ms_pienso)."""
+    if r.dmi is not None:
+        return True
+    return r.carrier == "racion_completa" and r.feed_intake is not None and (r.basis == "ms" or
+                                                                              r.dm_fraction is not None)
+
+
 def _check_dose_requirements(where: str, basis: str, ration: Ration) -> None:
-    if basis == "mg_kg_ms" and ration.dmi is None:
-        raise ValueError(f"{where}: una dosis en mg/kg de MS exige [racion].ingestion_ms_kg_dia")
+    if basis == "mg_kg_ms" and not _dmi_available(ration):
+        raise ValueError(f"{where}: una dosis en mg/kg de MS exige [racion].ingestion_ms_kg_dia (o la ingestión de la "
+                         "ración completa, de la que se deduce)")
     if basis == "g_t":
         if ration.carrier is None:
             raise ValueError(f"{where}: una dosis en g/t exige [racion].portador (racion_completa o concentrado) y "
@@ -198,6 +208,10 @@ def _parse_ration(data: dict, declared: set[str]) -> Ration:
             declared.add(f"racion.{key}")
     if r.feed_intake is not None and r.carrier is None:
         raise ValueError("[racion].ingestion_pienso_kg_dia exige declarar el pienso portador ('portador' y 'base')")
+    if r.dm_fraction is not None and r.carrier is None:
+        raise ValueError("[racion].ms_pienso exige declarar el pienso portador ('portador' y 'base'): sin él no se usaría")
+    if r.dm_fraction is not None and r.basis == "ms":
+        raise ValueError("[racion].ms_pienso solo se usa con base = \"tal_cual\": en base MS no interviene; quítalo")
     if r.carrier == "racion_completa" and r.feed_intake is not None and r.dmi is not None and \
             (r.basis == "ms" or r.dm_fraction is not None):
         raise ValueError("[racion]: para la ración completa la ingestión del pienso se deduce de la ingestión de MS"
@@ -508,6 +522,16 @@ def _feed(model: FarmModel, v: dict):
                                     v.get("racion.ingestion_pienso_kg_dia"), v.get("racion.ms_pienso"))
 
 
+def _dmi(model: FarmModel, v: dict):
+    """Ingestión de MS declarada o, si falta, deducida de la ración completa (nutria.dosis.ingestion_ms_deducida)."""
+    dmi = v.get("racion.ingestion_ms_kg_dia")
+    if dmi is not None:
+        return dmi
+    r = model.ration
+    return dosis.ingestion_ms_deducida(r.carrier, r.basis, v.get("racion.ingestion_pienso_kg_dia"),
+                                       v.get("racion.ms_pienso"))
+
+
 def _ratio(num, den):
     if isinstance(num, np.ndarray) or isinstance(den, np.ndarray):
         num, den = np.broadcast_arrays(np.asarray(num, dtype=float), np.asarray(den, dtype=float))
@@ -518,8 +542,8 @@ def _ratio(num, den):
 def _evaluate(model: FarmModel, v: dict) -> dict:
     days = v["escenario.dias"]
     cost_days = v.get("coste.dias", days)
-    dmi = v.get("racion.ingestion_ms_kg_dia")
     feed = _feed(model, v)
+    dmi = _dmi(model, v)
     dose_g_d = dosis.a_g_animal_dia(v[model.dose_key], model.dose_basis, dmi, feed)
     price = v["coste.precio_eur_kg"]
     product_day = dose_g_d / 1000.0 * price
@@ -668,7 +692,7 @@ def monte_carlo(model: FarmModel, n: int = 10000, seed: int = 42) -> dict:
 def dose_g_day_quantiles(model: FarmModel, qs=(5, 95), n: int = 20000, seed: int = 42) -> tuple[float, ...]:
     """Percentiles de la dosis en g/animal/día simulada (convertida con las ingestiones muestreadas)."""
     v = _draw(model, n, seed)
-    g = dosis.a_g_animal_dia(v[model.dose_key], model.dose_basis, v.get("racion.ingestion_ms_kg_dia"), _feed(model, v))
+    g = dosis.a_g_animal_dia(v[model.dose_key], model.dose_basis, _dmi(model, v), _feed(model, v))
     return tuple(float(x) for x in np.percentile(np.asarray(g, dtype=float) * np.ones(n), list(qs)))
 
 

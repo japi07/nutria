@@ -11,8 +11,11 @@ kg/animal/día):
 
     g/animal/día = mg/kg MS × I_MS / 1000 = g/t × I_p / 1000;   1 mg/kg = 1 g/t (misma proporción en masa).
 
-Para la ración completa, I_p = I_MS en base MS e I_MS / MS en base tal cual (MS: fracción de MS del pienso). Para el
-concentrado, I_p se declara siempre (kg de concentrado/animal/día en su base).
+Para la ración completa, I_p = I_MS en base MS e I_MS / MS en base tal cual (MS: fracción de MS del pienso); a la
+inversa, si solo se declara la ingestión de la ración completa, I_MS = I_p (base MS) o I_p × MS (tal cual): es la misma
+ración, no un supuesto, y la salida lo indica. Para el concentrado, I_p se declara siempre (kg de concentrado/animal/día
+en su base). Una entrada que no se usaría (ingestión o MS del pienso sin pienso portador, MS del pienso en base MS) es
+un error, no se ignora.
 
 Coste del producto: por animal y día = g/animal/día × €/kg / 1000; por tonelada de pienso portador = g/t × €/kg / 1000.
 
@@ -87,6 +90,12 @@ def validar_racion(ingestion_ms=None, portador=None, base_pienso=None, ingestion
     if portador is not None:
         _check_choice("Portador", portador, PORTADORES)
         _check_choice("Base del pienso", base_pienso, BASES_PIENSO)
+    elif ingestion_pienso is not None or ms_pienso is not None:
+        raise ValueError("La ingestión del pienso portador y su fracción de MS (ms_pienso) exigen declarar el pienso "
+                         "portador (racion_completa o concentrado) y su base (tal_cual o ms): sin él no se usarían")
+    if base_pienso == "ms" and ms_pienso is not None:
+        raise ValueError("ms_pienso solo se usa con el pienso en base tal_cual: en base MS no interviene en la "
+                         "conversión; quítalo o declara la base tal_cual")
     _positive("La ingestión de MS (kg MS/animal/día)", _arr(ingestion_ms))
     _positive("La ingestión del pienso portador (kg/animal/día)", _arr(ingestion_pienso))
     ms = _arr(ms_pienso)
@@ -139,6 +148,20 @@ def ingestion_portador(portador: str, base_pienso: str, ingestion_ms=None, inges
     return _ret(feed, scalar)
 
 
+def ingestion_ms_deducida(portador: str | None, base_pienso: str | None, ingestion_pienso=None, ms_pienso=None):
+    """Ingestión de MS de la ración deducida de la ración completa (la ración completa ES la ración): en base MS, su
+    ingestión; tal cual, su ingestión × ms_pienso. None si el portador es un concentrado o faltan datos."""
+    if portador != "racion_completa" or ingestion_pienso is None:
+        return None
+    scalar = all(np.ndim(x) == 0 for x in (ingestion_pienso, ms_pienso) if x is not None)
+    feed = _arr(ingestion_pienso)
+    if base_pienso == "ms":
+        return _ret(feed, scalar)
+    if ms_pienso is None:
+        return None
+    return _ret(feed * _arr(ms_pienso), scalar)
+
+
 def a_g_animal_dia(valor, desde: str, ingestion_ms=None, ingestion_p=None):
     """Dosis en g/animal/día a partir de cualquier base. `ingestion_p`: ingestión del pienso portador en su base."""
     _check_choice("Base de la dosis", desde, BASES)
@@ -185,8 +208,13 @@ def convertir(valor: float, desde: str, ingestion_ms: float | None = None, porta
     if desde == "g_t" and portador is None:
         raise ValueError("Una dosis en g/t exige declarar el pienso portador (--portador) y su base (--base)")
     feed = ingestion_portador(portador, base_pienso, ingestion_ms, ingestion_pienso, ms_pienso) if portador else None
-    g = a_g_animal_dia(valor, desde, ingestion_ms, feed)
-    out = {b: desde_g_animal_dia(g, b, ingestion_ms, feed) for b in BASES}
+    dmi = ingestion_ms
+    derived = None
+    if dmi is None:
+        derived = ingestion_ms_deducida(portador, base_pienso, ingestion_pienso, ms_pienso)
+        dmi = derived
+    g = a_g_animal_dia(valor, desde, dmi, feed)
+    out = {b: desde_g_animal_dia(g, b, dmi, feed) for b in BASES}
     faltan = {}
     if out["mg_kg_ms"] is None:
         faltan["mg_kg_ms"] = "falta la ingestión de MS de la ración (kg MS/animal/día)"
@@ -196,7 +224,7 @@ def convertir(valor: float, desde: str, ingestion_ms: float | None = None, porta
     res = {"entrada": {"valor": float(valor), "base": desde, "ingestion_ms_kg_dia": ingestion_ms,
                        "portador": portador, "base_pienso": base_pienso, "ingestion_pienso_kg_dia": ingestion_pienso,
                        "ms_pienso": ms_pienso, "precio_eur_kg": precio_eur_kg},
-           "ingestion_portador_kg_dia": feed, "dosis": out, "faltan": faltan,
+           "ingestion_portador_kg_dia": feed, "ingestion_ms_deducida_kg_dia": derived, "dosis": out, "faltan": faltan,
            "etiquetas": {"g_animal_dia": etiqueta("g_animal_dia"), "mg_kg_ms": etiqueta("mg_kg_ms"),
                          "g_t": etiqueta("g_t", portador, base_pienso)}}
     if precio_eur_kg is not None:
@@ -222,6 +250,9 @@ def texto_conversion(res: dict) -> str:
         racion.append(f"MS del portador {e['ms_pienso']:g}")
     if racion:
         lines.append("Entradas: " + "; ".join(racion))
+    if res.get("ingestion_ms_deducida_kg_dia") is not None:
+        lines.append(f"Ingestión de MS deducida de la ración completa: {res['ingestion_ms_deducida_kg_dia']:g} kg "
+                     "MS/animal/día (la ración completa es toda la ración)")
     for base in BASES:
         value = res["dosis"][base]
         shown = f"{value:.6g}" if value is not None else f"[DESC] {res['faltan'][base]}"

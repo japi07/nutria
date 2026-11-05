@@ -597,6 +597,11 @@ def cmd_puntuar(args, cfg) -> int:
     # ranking
     from .scoring.engine import ranking_warnings
     _no_para_evaluadores(args, "consultar el ranking")
+    if args.min_evaluadores < 3:
+        raise ValueError(f"--min-evaluadores {args.min_evaluadores}: el ranking exige al menos 3 evaluadores "
+                         "independientes por criterio (regla 9); con menos, la oportunidad queda INSUFICIENTE")
+    if args.top < 1 or args.sim < 1 or not (args.alfa >= 0 and args.alfa != float("inf")):
+        raise ValueError("--top y --sim deben ser >= 1 y --alfa un número finito >= 0 (0 = pesos fijos)")
     profile = args.perfil or cfg.scoring_profile
     opps = []
     for o in registry.list_opportunities(conn):
@@ -884,8 +889,10 @@ def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
 
     from .econ.dist import source_ids
     problems, pub = [], []
+    # [DER] rastreable: la orden (`nutria <orden> ...`) o el fichero del script (con su extensión), no solo la palabra.
+    der_trace = re.compile(r"\bnutria\s+[a-z]|[\w./-]+\.(?:py|R|r|ipynb|jl|sh|m)\b")
     for where, text in sources:
-        if "[DER]" in text and not re.search(r"nutria\s|script|\.py\b|\.R\b|\.ipynb\b", text):
+        if "[DER]" in text and not der_trace.search(text):
             problems.append(f"{where}: [DER] sin la orden nutria o el script que da el valor")
         if "[PUB]" in text:
             ids = source_ids(text)
@@ -1271,7 +1278,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--semilla", type=int, default=42)
     r.add_argument("--alfa", type=float, default=50.0, help="concentración Dirichlet de los pesos (0 = fijos)")
     r.add_argument("--top", type=int, default=3)
-    r.add_argument("--min-evaluadores", dest="min_evaluadores", type=int, default=3)
+    r.add_argument("--min-evaluadores", dest="min_evaluadores", type=int, default=3,
+                   help="evaluadores distintos exigidos por criterio (al menos 3, regla 9)")
     rb = ps.add_parser("rubrica", parents=[common])
     rb.add_argument("--markdown", action="store_true")
     s.set_defaults(func=cmd_puntuar)

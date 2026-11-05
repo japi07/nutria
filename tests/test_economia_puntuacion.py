@@ -1063,3 +1063,97 @@ def test_aviso_si_el_top_k_del_monte_carlo_no_coincide_con_el_determinista():
                for f in flags["O-1"])
     assert any("Dentro del top-1 con original, recomendado, uniforme y fuera con Monte Carlo" in f
                for f in flags["O-2"])
+
+
+# ============================================================================ D4-2: entradas de la ración sin usar
+@pytest.mark.parametrize("kwargs, message", [
+    ({"ingestion_pienso": 5}, "exigen declarar el pienso portador"),
+    ({"ms_pienso": 0.88}, "exigen declarar el pienso portador"),
+    ({"ingestion_ms": 20, "portador": "concentrado", "base_pienso": "ms", "ingestion_pienso": 5, "ms_pienso": 0.88},
+     "solo se usa con el pienso en base tal_cual"),
+])
+def test_dosis_rechaza_entradas_que_no_se_usarian(kwargs, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        dosis.convertir(50, "g_animal_dia", **kwargs)
+
+
+def test_dosis_deduce_la_ingestion_de_ms_de_la_racion_completa():
+    """La ración completa es toda la ración: 40 kg tal cual al 50 % de MS son 20 kg de MS (no es un supuesto)."""
+    tc = dosis.convertir(50, "g_animal_dia", portador="racion_completa", base_pienso="tal_cual", ingestion_pienso=40,
+                         ms_pienso=0.5)
+    assert tc["ingestion_ms_deducida_kg_dia"] == pytest.approx(20)
+    assert tc["dosis"]["mg_kg_ms"] == pytest.approx(2500) and tc["faltan"] == {}
+    assert "deducida de la ración completa" in dosis.texto_conversion(tc)
+    ms = dosis.convertir(2500, "mg_kg_ms", portador="racion_completa", base_pienso="ms", ingestion_pienso=20)
+    assert ms["dosis"]["g_animal_dia"] == pytest.approx(50) and ms["dosis"]["g_t"] == pytest.approx(2500)
+    # Con la ingestión de MS declarada no se deduce nada; con el concentrado no hay deducción posible.
+    assert dosis.convertir(50, "g_animal_dia", ingestion_ms=20)["ingestion_ms_deducida_kg_dia"] is None
+    conc = dosis.convertir(50, "g_animal_dia", portador="concentrado", base_pienso="tal_cual", ingestion_pienso=8)
+    assert conc["dosis"]["mg_kg_ms"] is None and "ingestión de MS" in conc["faltan"]["mg_kg_ms"]
+
+
+def test_ganadero_racion_completa_sin_ingestion_de_ms_y_ms_pienso_huerfano(tmp_path):
+    racion = ('[racion]\nportador = "racion_completa"\nbase = "tal_cual"\ningestion_pienso_kg_dia = 40\n'
+              'ms_pienso = 0.5')
+    model = _farm(tmp_path, _FARM_BASE.format(dosis="dosis_mg_kg_ms = 2500", racion=racion))
+    summary = farm.dose_summary(model)
+    assert summary["g_animal_dia"] == pytest.approx(50) and summary["g_t"] == pytest.approx(1250)
+    assert summary["mg_kg_ms"] == pytest.approx(2500)
+    for bad, message in (('[racion]\nms_pienso = 0.5', "exige declarar el pienso portador"),
+                         ('[racion]\nportador = "concentrado"\nbase = "ms"\ningestion_pienso_kg_dia = 5\n'
+                          'ms_pienso = 0.9', "solo se usa con base")):
+        with pytest.raises(ValueError, match=re.escape(message)):
+            _farm(tmp_path, _FARM_BASE.format(dosis="dosis_g_dia = 50", racion=bad))
+
+
+# ============================================================================ D8-1: P(top-k) en el ranking completo
+def test_p_top_es_global_y_respeta_el_orden_de_los_grupos():
+    """Dos CONDICIONALES solo pendientes de firma van delante de una con una compuerta crítica sin resolver: con k = 2
+    esta no puede entrar en el top-2 (P = 0) aunque puntúe más, y su rango mediano es el 3."""
+    unsigned = dict.fromkeys(GATES, "no_resuelta")
+    proposed = dict.fromkeys(GATES, "superada")
+    opps = [_engine_opp("O-0001", 1.0, unsigned, {**proposed, "seguridad": "no_resuelta"}),
+            _engine_opp("O-0002", 0.5, unsigned, proposed),
+            _engine_opp("O-0003", 0.25, unsigned, proposed)]
+    rows = {r.opportunity_id: r for r in rank(opps, RUBRIC, n_sim=500, top_k=2)}
+    assert rows["O-0001"].p_top == 0.0 and rows["O-0001"].median_rank == 3
+    assert rows["O-0001"].p_top_in_group == 1.0                           # sola en su grupo
+    assert rows["O-0002"].p_top == rows["O-0003"].p_top == 1.0
+    assert sorted(r.median_rank for r in rows.values()) == [1, 2, 3]
+    # Con k = 3 entra (y se avisa de la compuerta crítica).
+    rows3 = rank(opps, RUBRIC, n_sim=500, top_k=3)
+    assert next(r for r in rows3 if r.opportunity_id == "O-0001").p_top == 1.0
+    assert any("compuertas CRÍTICAS sin resolver" in w for w in ranking_warnings(rows3, 3))
+
+
+# ============================================================================ D8-1 y D8-4: opciones del ranking
+@pytest.mark.parametrize("extra, message", [
+    (["--min-evaluadores", "1"], "al menos 3 evaluadores"),
+    (["--min-evaluadores", "2"], "al menos 3 evaluadores"),
+    (["--top", "0"], "--top y --sim deben ser >= 1"),
+    (["--sim", "0"], "--top y --sim deben ser >= 1"),
+    (["--alfa", "-1"], "--alfa un número finito >= 0"),
+    (["--alfa", "inf"], "--alfa un número finito >= 0"),
+    (["--alfa", "nan"], "--alfa un número finito >= 0"),
+])
+def test_ranking_rechaza_opciones_que_eluden_las_reglas(project, capsys, extra, message):
+    _register_opportunity("Opciones del ranking")
+    assert main(["--agente", "director-cientifico", "puntuar", "ranking", *extra]) == 2
+    assert message in capsys.readouterr().err
+    assert main(["--agente", "director-cientifico", "puntuar", "ranking", "--sim", "50", "--min-evaluadores", "4"]) == 0
+
+
+# ============================================================================ D8-13: [DER] rastreable
+@pytest.mark.parametrize("source, traceable", [
+    ("[DER] según el script", False),
+    ("[DER] cálculo propio", False),
+    ("[DER] nutria", False),
+    ("[DER] nutria meta analizar research/datos/O-0001/leche.csv", True),
+    ("[DER] `nutria destino ruminal --a 0.2 --b 0.7 --kd 0.05 --kp 0.06`", True),
+    ("[DER] script research/datos/O-0001/precio.py", True),
+    ("[DER] Rscript research/datos/O-0001/ajuste.R", True),
+])
+def test_der_exige_la_orden_o_el_fichero_del_script(tmp_path, project, capsys, source, traceable):
+    path = _farm_with_sources(tmp_path, "[SUP] prueba", source)
+    assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == (0 if traceable else 2)
+    assert ("[DER] sin la orden nutria o el script" in capsys.readouterr().err) is not traceable

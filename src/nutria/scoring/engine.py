@@ -216,8 +216,11 @@ class RankRow:
     p05: float | None = None
     p50: float | None = None
     p95: float | None = None
-    p_top: float | None = None       # probabilidad de quedar entre los k primeros DENTRO de su grupo
-    median_rank: float | None = None
+    # Probabilidad de quedar entre los k primeros del ranking COMPLETO, que respeta el orden de los grupos (APTA y
+    # después cada subgrupo de CONDICIONAL): con k o más candidatas en grupos anteriores es 0.
+    p_top: float | None = None
+    p_top_in_group: float | None = None  # la misma probabilidad dentro de su grupo (solo para ordenar el grupo)
+    median_rank: float | None = None     # rango mediano en el ranking completo
     value_axis: float | None = None
     feasibility_axis: float | None = None
     quadrant: str | None = None
@@ -258,7 +261,9 @@ def _triangular_inverse(u: np.ndarray, a: np.ndarray, c: np.ndarray, b: np.ndarr
 
 
 def _monte_carlo(group: list[tuple[RankRow, list]], w_nominal: np.ndarray, n_sim: int, rng: np.random.Generator,
-                 alpha: float, top_k: int) -> None:
+                 alpha: float, top_k: int, offset: int = 0) -> None:
+    """Simula un grupo. `offset`: candidatas de los grupos anteriores, que van siempre delante; P(top-k) y el rango
+    mediano se dan en el ranking completo (posición = offset + rango dentro del grupo)."""
     if not group or n_sim <= 0:
         return
     n_opp, n_crit = len(group), len(w_nominal)
@@ -279,8 +284,9 @@ def _monte_carlo(group: list[tuple[RankRow, list]], w_nominal: np.ndarray, n_sim
     ranks[np.arange(n_sim)[:, None], order] = np.arange(1, n_opp + 1)[None, :]
     for j, (row, _c) in enumerate(group):
         row.p05, row.p50, row.p95 = (float(x) for x in np.percentile(composites[:, j], [5, 50, 95]))
-        row.p_top = float(np.mean(ranks[:, j] <= top_k))
-        row.median_rank = float(np.median(ranks[:, j]))
+        row.p_top_in_group = float(np.mean(ranks[:, j] <= top_k))
+        row.p_top = float(np.mean(ranks[:, j] + offset <= top_k))
+        row.median_rank = float(np.median(ranks[:, j])) + offset
 
 
 def _classify_gates(row: RankRow, gate_states: dict[str, str], proposals: dict | None, critical: set[str]) -> None:
@@ -317,8 +323,9 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
     0 = solo pendientes de firma (todas propuestas `superada`); 1 = alguna compuerta sin resolver; 2 = alguna
     compuerta CRÍTICA sin resolver (seguridad, regulatoria, destino_digestivo). Sin `gate_proposals`, toda compuerta
     no superada cuenta como sin resolver (fallo en cerrado).
-    APTA y cada subgrupo de CONDICIONAL se simulan por separado: P(top-k) se refiere al propio grupo, de modo que
-    una CONDICIONAL nunca adelanta a una APTA ni una candidata de un subgrupo a otra de un subgrupo anterior. `alpha`
+    APTA y cada subgrupo de CONDICIONAL se simulan por separado, de modo que una CONDICIONAL nunca adelanta a una APTA
+    ni una candidata de un subgrupo a otra de un subgrupo anterior; P(top-k) y el rango mediano se dan en el ranking
+    completo (las candidatas de los grupos anteriores van siempre delante: con k o más, P(top-k) = 0). `alpha`
     es la concentración de la Dirichlet sobre los pesos (menor = más perturbación; 0 = pesos fijos). Con semilla
     fija el resultado es reproducible. Los avisos globales (top-k con compuertas críticas, orden que cambia con los
     pesos) los da `ranking_warnings`.
@@ -420,11 +427,14 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
             r.ranks_by_profile[name] = position
 
     rng = np.random.default_rng(seed)
-    for key in groups:
-        _monte_carlo(groups[key], w_nominal, n_sim, rng, alpha, top_k)
+    offset = 0
+    for key in groups:  # en el orden de los grupos: APTA y después cada subgrupo de CONDICIONAL
+        _monte_carlo(groups[key], w_nominal, n_sim, rng, alpha, top_k, offset)
+        offset += len(groups[key])
 
     def sort_key(r: RankRow):
-        return (*_order_key(r), -(r.p_top or 0), -(r.p50 or r.composite or 0))
+        central = r.p50 if r.p50 is not None else (r.composite or 0)
+        return (*_order_key(r), -(r.p_top_in_group or 0), -central)
 
     ordered = sorted(rows, key=sort_key)
     for r in ordered:
@@ -538,9 +548,10 @@ def format_table(rows: list[RankRow], top_k: int = 3, profile: str | None = None
     lines.append("")
     lines.append("Punt. = puntuación con los valores modales y los pesos nominales. P50 [P5-P95] = distribución "
                  "Monte Carlo con los rangos de incertidumbre y pesos perturbados (difiere de Punt. si los rangos son "
-                 "asimétricos). P(top-k) y Rango se calculan dentro de cada grupo (APTA y cada subgrupo de "
-                 "CONDICIONAL). Las columnas de perfiles dan la posición con cada perfil de pesos; si el orden o el "
-                 "top-k cambian entre perfiles, se avisa arriba.")
+                 "asimétricos). P(top-k) y Rango se refieren al ranking completo, que respeta el orden de los grupos "
+                 "(APTA y después cada subgrupo de CONDICIONAL): una candidata con k o más candidatas en grupos "
+                 "anteriores tiene P(top-k) = 0. Las columnas de perfiles dan la posición con cada perfil de pesos; "
+                 "si el orden o el top-k cambian entre perfiles, se avisa arriba.")
     lines.append("La puntuación es orientativa y no demuestra eficacia. Las APTA tienen todas las compuertas superadas "
                  "y firmadas por una persona; las CONDICIONALES no pueden pasar a validación experimental y se ordenan "
                  "en tres subgrupos, sea cual sea su puntuación: solo pendientes de firma, con compuertas sin resolver "
