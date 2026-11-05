@@ -1,0 +1,27 @@
+{
+  "texto": "EJEMPLO DE FORMATO: en vacas multíparas en transición, el compuesto X protegido redujo el BHB en sangre frente al control.",
+  "etiqueta": "PUB",
+  "nivel": "baja",
+  "transferibilidad": "especie_diana",
+  "fuentes": [
+    "doi:10.0000/ejemplo-de-formato"
+  ],
+  "cita_textual": "Ejemplo de formato: copia aquí la frase literal de la fuente que respalda la afirmación.",
+  "ubicacion": "Tabla 4 (ejemplo de formato)",
+  "entidad": "O-0001",
+  "contexto": {
+    "especie": "vacuno lechero",
+    "raza": "Holstein",
+    "edad": "no_consta",
+    "etapa": "periodo de transición (-21 a +21 días respecto al parto)",
+    "estado_fisiologico": "multíparas sanas",
+    "dieta_basal": "TMR de ensilado de maíz y concentrado",
+    "diseno": "ensayo en bloques aleatorizados",
+    "unidad_experimental": "animal",
+    "n": 20,
+    "dosis": 50,
+    "dosis_unidad": "g",
+    "dosis_base": "por animal y día",
+    "forma_producto": "protegido frente a la degradación ruminal (encapsulado lipídico)"
+  }
+}

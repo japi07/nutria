@@ -5,9 +5,9 @@ description: Reglas para extraer datos cuantitativos de estudios de nutrición a
 
 # Extracción de datos
 
-Esquema: `src/nutria/data/schemas/extraccion.schema.json`. Ejemplo de flujo:
-`nutria fuente agregar --doi <doi>` → JSON en `research/datos/<tema>/` →
-`nutria --agente extractor-datos extraccion agregar --datos <fichero>`.
+Esquema: `src/nutria/data/schemas/extraccion.schema.json`; plantilla: `ejemplos/extraccion_ejemplo.json`. Flujo:
+`nutria fuente agregar --doi <doi>` → copias A y B en `research/datos/<tema>/` → depósito de cada copia → comparación
+registrada → conciliación si hay discrepancias → exportación para el análisis.
 
 ## Reglas
 
@@ -18,21 +18,39 @@ Esquema: `src/nutria/data/schemas/extraccion.schema.json`. Ejemplo de flujo:
 3. `n` = unidades experimentales por tratamiento (corrales si el corral es la unidad).
 4. Diseño (`paralelo`, `cuadrado_latino`, `crossover`, `factorial`, `bloques`), duración, número y duración de
    periodos en `notas`.
-5. Dieta basal (forraje y concentrado, grasa, almidón, FND, proteína si constan), dosis con su base y forma del
-   producto (protegido, forma química, vehículo).
-6. Financiación y conflictos de interés.
-7. Lo que no consta se deja vacío y se explica. **Nunca se imputa ni se estima.**
+5. Dieta basal en texto y en los campos numéricos cuando consten: forraje, FND, almidón, grasa y PB (% de la MS),
+   proteína degradable en el rumen (`pdr_pct_pb`, % de la PB, y/o `pdr_pct_ms`, % de la MS; no puede superar
+   `pb_pct_ms`) y DCAD (mEq/kg de MS). Dosis con su base y forma del producto (protegido, forma química, vehículo).
+6. Momento respecto al parto o al hito declarado en `hito_referencia` (días con signo; negativo = antes):
+   suplementación (`suplementacion_inicio_dias`, `suplementacion_fin_dias`) y ventana de observación o muestreo
+   (`ventana_inicio_dias`, `ventana_fin_dias`).
+7. Incidencias (`eventos_control`, `eventos_tratamiento`): hito, ventana y `definicion_caso` con umbral y matriz
+   (p. ej. "BHB en sangre ≥ 1,2 mmol/L") son obligatorios. Se copia la definición del artículo, sin unificarla.
+8. Financiación y conflictos de interés.
+9. Un dato obligatorio que no consta va a `null` y se declara en `no_consta`; uno opcional se omite. Nada de cadenas
+   vacías, de relleno ni genéricas. **Nunca se imputa ni se estima.**
 
 ## Doble extracción
 
 1. Dos extracciones independientes (dos subagentes `extractor-datos`, ninguno ve la del otro), cada una en su
    fichero y sin registrar: `research/datos/<ID>/extraccion_<fuente>_A.json` y `..._B.json`, con los registros en
    el orden en que aparecen en la fuente.
-2. Comparación campo a campo: `nutria extraccion comparar <A.json> <B.json>` (código de salida 1 si hay
-   discrepancias).
-3. Si coinciden, los registros se marcan `doble_concordante`. Si no, cada discrepancia se resuelve releyendo la
-   fuente y se marca `resuelta`; lo que no se pueda resolver queda documentado como `discrepancia` y no se registra.
-4. Se registra solo la versión conciliada: `nutria --agente extractor-datos extraccion agregar --datos <conciliada.json>`.
-5. Exportación para el análisis: `nutria extraccion exportar --variable <V> --csv <f>` (formato de análisis:
-   `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable, unidad,
-   especie, diseno, dosis, ...` y la dieta basal numérica).
+2. Cada extractor deposita su copia: `nutria --agente extractor-datos-A extraccion depositar --datos <A.json>` (y
+   `extractor-datos-B` con la suya). Se guarda el sha256 del fichero y quién la depositó.
+3. Comparación registrada: `nutria extraccion comparar <A.json> <B.json> --registrar` (dos copias depositadas por
+   extractores distintos; código de salida 1 si hay discrepancias). Sin `--registrar` solo muestra las diferencias.
+4. Si coinciden, el sistema registra los registros como `doble_concordante`. Si no, cada discrepancia se resuelve
+   releyendo la fuente y se registra la conciliación: `nutria extraccion conciliar <CE-xxxx> --datos
+   <conciliacion.json>` (plantilla: `ejemplos/conciliacion_ejemplo.json`). El sistema construye cada registro a
+   partir de la copia A y de las resoluciones (origen `A`, `B` o `fuente` y motivo) y lo marca `resuelta`; lo que no
+   se pueda resolver va a `no_resueltos` y no se registra. `nutria extraccion comparaciones --pendientes` lista las
+   comparaciones sin conciliar.
+5. `estado_verificacion` y `verificado_por` los fija el sistema: `extraccion agregar` solo registra extracciones
+   simples, que no pasan al análisis.
+6. Exportación para el análisis: `nutria extraccion exportar --variable <V> --especie <especie> --csv <f>` (formato de
+   análisis: `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable,
+   unidad, especie, diseno, dosis, ...`, la dieta basal numérica con la PDR, las ventanas y la definición de caso).
+   Solo exporta extracciones con doble extracción verificada; se niega a mezclar especies salvo con
+   `--mezclar-especies` (y avisa); `--etapa` filtra por estado fisiológico; la columna `moderadores_no_informados` y
+   un aviso señalan los estudios sin algún moderador numérico, y `--casos-completos <moderador>` exporta solo los que
+   lo informan. También avisa si una variable de incidencia mezcla definiciones de caso o ventanas.

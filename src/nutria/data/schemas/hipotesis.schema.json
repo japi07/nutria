@@ -105,12 +105,14 @@
       "description": "p. ej. descubrimiento basado en literatura (ABC), contradicción entre estudios, reposicionamiento."
     },
     "especie": {
-      "type": "string",
-      "minLength": 3
+      "$ref": "#/$defs/texto_especifico",
+      "minLength": 3,
+      "description": "Especie diana concreta, nunca genérica ('animales', 'varias')."
     },
     "etapa": {
-      "type": "string",
-      "minLength": 3
+      "$ref": "#/$defs/texto_especifico",
+      "minLength": 3,
+      "description": "Etapa productiva o estado fisiológico concretos, nunca genéricos ('todas')."
     },
     "concentracion_activa_in_vitro": {
       "type": "string",
@@ -165,6 +167,18 @@
           ]
         }
       }
+    },
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "texto vacío o de relleno ('', '-', 'n/a', 'xxx', 'desconocido'...): escribe el dato o, si el campo admite null, déjalo a null y declara su ausencia"
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?|vari[oa]s(?: (?:especies|etapas|fases|estados|razas))?|tod[oa]s?(?: (?:l[oa]s )?(?:especies|etapas|fases|animales|estados|razas))?|cualquier(?:a| especie| etapa| raza| animal)?|animales(?: de (?:producci[oó]n|granja|abasto|renta))?|especies(?: de (?:producci[oó]n|granja|abasto|renta))?|producci[oó]n animal|ganader[ií]a|ganado|general|gen[eé]ric[oa]s?|multiespecie|mixt[oa]s?|divers[oa]s(?: (?:especies|etapas))?|distint[oa]s(?: (?:especies|etapas))?|otr[oa]s?|indeterminad[oa]s?|no determinad[oa]s?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "valor vacío, de relleno o genérico ('animales', 'varias', 'todas', 'n/a', '-'...): indica la especie, etapa o estado concretos"
     }
   }
 }

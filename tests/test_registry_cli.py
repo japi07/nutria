@@ -89,11 +89,12 @@ def test_hypothesis_lifecycle_and_report(project):
 def test_pub_claim_requires_verified_source_quote_and_location(project):
     f = project / "a.json"
     f.write_text(json.dumps({"texto": "Afirmación publicada", "etiqueta": "PUB", "fuentes": ["doi:10.1/nope"]}), "utf-8")
-    with pytest.raises(SystemExit):       # el esquema exige cita textual y ubicación
+    with pytest.raises(SystemExit):       # el esquema exige cita textual, ubicación y contexto biológico
         main(["afirmacion", "agregar", "--datos", str(f)])
     unverified = db.upsert_source(_conn(), {"doi": "10.1234/sin.verificar", "title": "t"})
-    claim = {"texto": "Afirmación publicada", "etiqueta": "PUB", "fuentes": [unverified],
-             "cita_textual": "texto literal de la fuente", "ubicacion": "Tabla 2"}
+    claim = json.loads((EXAMPLES / "afirmacion_ejemplo.json").read_text("utf-8"))
+    claim.pop("entidad")
+    claim["fuentes"] = [unverified]
     f.write_text(json.dumps(claim), "utf-8")
     assert main(["afirmacion", "agregar", "--datos", str(f)]) == 3
     claim["fuentes"] = [_verified_source()]
@@ -106,12 +107,8 @@ def test_pub_claim_requires_verified_source_quote_and_location(project):
 
 def test_extraction_batch_export_and_double_extraction(project, capsys):
     source = _verified_source()
-    base = {"fuente": source, "especie": "vacuno lechero", "estado_fisiologico": "inicio de lactación",
-            "dieta_basal": None, "diseno": "paralelo", "unidad_experimental": "animal", "intervencion": "X",
-            "dosis": 50, "dosis_unidad": "g", "dosis_base": "g/animal/d", "forma_producto": "protegido",
-            "variable": "leche", "unidad": "kg/d", "n_control": 12, "n_tratamiento": 12, "media_control": 30.0,
-            "media_tratamiento": 31.0, "tipo_dispersion": "SEM_combinado", "dispersion_tratamiento": 0.5,
-            "ubicacion": "Tabla 2"}
+    base = json.loads((EXAMPLES / "extraccion_ejemplo.json").read_text("utf-8"))[0]
+    base.update(fuente=source, dieta_basal=None, variable="leche")
     (project / "e.json").write_text(json.dumps(base), "utf-8")
     with pytest.raises(SystemExit):       # dieta_basal a null sin declararla en no_consta
         main(["extraccion", "agregar", "--datos", str(project / "e.json")])
@@ -129,9 +126,16 @@ def test_extraction_batch_export_and_double_extraction(project, capsys):
                  "--incluir-sin-conciliar"]) == 0
     header = csv_path.read_text("utf-8").splitlines()[0].split(",")
     assert {"estudio", "comparacion", "media_trt", "media_ctrl", "disp_trt", "tipo_disp", "n_trt"} <= set(header)
+    # el estado de doble extracción no se declara: solo sale de una comparación registrada de dos copias
     conciliated = dict(base, estado_verificacion="doble_concordante", media_tratamiento=32.0)
     (project / "c.json").write_text(json.dumps(conciliated), "utf-8")
-    assert main(["extraccion", "agregar", "--datos", str(project / "c.json")]) == 0
+    assert main(["extraccion", "agregar", "--datos", str(project / "c.json")]) == 3
+    copy = dict(base, media_tratamiento=32.0)
+    for label in ("A", "B"):
+        (project / f"c_{label}.json").write_text(json.dumps([copy], indent=1 if label == "A" else 2), "utf-8")
+        assert main(["--agente", f"extractor-datos-{label}", "extraccion", "depositar", "--datos",
+                     str(project / f"c_{label}.json")]) == 0
+    assert main(["extraccion", "comparar", str(project / "c_A.json"), str(project / "c_B.json"), "--registrar"]) == 0
     capsys.readouterr()
     assert main(["--json", "extraccion", "exportar", "--variable", "leche", "--csv", str(csv_path)]) == 0
     out = json.loads(capsys.readouterr().out)

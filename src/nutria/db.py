@@ -7,10 +7,14 @@ los cambios de estado quedan en `decisions` con su motivo, y las puntuaciones so
 se conservan en `scores_history`.
 
 Reglas que el registro hace cumplir (no solo recomienda):
-- una afirmación [PUB] exige fuentes registradas, verificadas y no retractadas, más cita textual y ubicación;
-- una extracción exige que su fuente esté verificada;
+- una afirmación [PUB] exige fuentes registradas, verificadas y no retractadas, cita textual, ubicación y
+  contexto biológico (especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis y su base, forma);
+- una extracción exige que su fuente esté verificada; su estado de doble extracción ('doble_concordante',
+  'resuelta') solo lo fija el sistema a partir de una comparación registrada de dos copias depositadas por
+  extractores distintos y, si hubo discrepancias, de una conciliación registrada;
 - una compuerta "superada" solo cuenta si la firma una persona; salir de "bloqueada" exige firma;
-- pasar una oportunidad a "priorizada" o "en_validacion" exige firma y compuertas en regla.
+- pasar una oportunidad a "priorizada" o "en_validacion" exige firma y compuertas en regla;
+- una ruta regulatoria fuera_de_alcance_* bloquea la compuerta regulatoria (al registrar o al clasificar).
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -111,6 +117,25 @@ CREATE TABLE IF NOT EXISTS decisions (
   ts TEXT NOT NULL, entity_id TEXT, decision TEXT NOT NULL, rationale TEXT NOT NULL,
   decided_by TEXT, human_signoff TEXT
 );
+
+CREATE TABLE IF NOT EXISTS extraction_copies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sha256 TEXT NOT NULL, path TEXT, records TEXT NOT NULL, n_records INTEGER NOT NULL, source_ids TEXT,
+  deposited_by TEXT NOT NULL, deposited_at TEXT NOT NULL,
+  UNIQUE (sha256, deposited_by)
+);
+
+CREATE TABLE IF NOT EXISTS extraction_comparisons (
+  id TEXT PRIMARY KEY,
+  copy_a INTEGER NOT NULL REFERENCES extraction_copies(id),
+  copy_b INTEGER NOT NULL REFERENCES extraction_copies(id),
+  file_a TEXT, sha256_a TEXT NOT NULL, actor_a TEXT NOT NULL,
+  file_b TEXT, sha256_b TEXT NOT NULL, actor_b TEXT NOT NULL,
+  discrepancies TEXT NOT NULL,
+  result TEXT NOT NULL CHECK (result IN ('concordante', 'con_discrepancias')),
+  compared_by TEXT, compared_at TEXT NOT NULL,
+  conciliation TEXT, conciliation_sha256 TEXT, conciliated_by TEXT, conciliated_at TEXT
+);
 """
 
 # Columnas añadidas después de la versión 1 del esquema (migración aditiva).
@@ -118,7 +143,14 @@ MIGRATIONS = {
     "gates": [("human_signoff", "TEXT"), ("signed_at", "TEXT")],
     "extractions": [("forage_pct_dm", "REAL"), ("ndf_pct_dm", "REAL"), ("starch_pct_dm", "REAL"),
                     ("fat_pct_dm", "REAL"), ("cp_pct_dm", "REAL"), ("dcad_meq_kg_dm", "REAL"),
-                    ("ev_ctrl", "REAL"), ("ev_trt", "REAL"), ("not_reported", "TEXT")],
+                    ("ev_ctrl", "REAL"), ("ev_trt", "REAL"), ("not_reported", "TEXT"),
+                    ("rdp_pct_cp", "REAL"), ("rdp_pct_dm", "REAL"), ("time_reference", "TEXT"),
+                    ("window_start_days", "REAL"), ("window_end_days", "REAL"), ("case_definition", "TEXT"),
+                    ("supp_start_days", "REAL"), ("supp_end_days", "REAL"), ("comparison_id", "TEXT"),
+                    ("pair_a", "INTEGER"), ("pair_b", "INTEGER")],
+    "claims": [("context", "TEXT")],
+    "opportunities": [("functional_group", "TEXT"), ("regulatory_situation", "TEXT"), ("classified_by", "TEXT"),
+                      ("classified_at", "TEXT")],
 }
 
 OPPORTUNITY_STATUSES = ("propuesta", "en_evaluacion", "priorizada", "bloqueada", "descartada",
@@ -209,7 +241,8 @@ def row_to_dict(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
     out = dict(row)
-    for key in ("authors", "pub_types", "source_ids", "candidates", "data", "evidence", "not_reported"):
+    for key in ("authors", "pub_types", "source_ids", "candidates", "data", "evidence", "not_reported", "context",
+                "discrepancies", "conciliation", "records"):
         if isinstance(out.get(key), str):
             try:
                 out[key] = json.loads(out[key])
@@ -357,23 +390,114 @@ EXTRACTION_FIELDS = {
     "eventos_control": "ev_ctrl", "eventos_tratamiento": "ev_trt",
     "forraje_pct_ms": "forage_pct_dm", "fnd_pct_ms": "ndf_pct_dm", "almidon_pct_ms": "starch_pct_dm",
     "grasa_pct_ms": "fat_pct_dm", "pb_pct_ms": "cp_pct_dm", "dcad_meq_kg_ms": "dcad_meq_kg_dm",
+    "pdr_pct_pb": "rdp_pct_cp", "pdr_pct_ms": "rdp_pct_dm", "hito_referencia": "time_reference",
+    "ventana_inicio_dias": "window_start_days", "ventana_fin_dias": "window_end_days",
+    "definicion_caso": "case_definition", "suplementacion_inicio_dias": "supp_start_days",
+    "suplementacion_fin_dias": "supp_end_days",
     "ubicacion": "location", "financiacion": "funding", "conflictos": "conflicts",
     "estado_verificacion": "check_status", "verificado_por": "checked_by", "notas": "notes",
 }
+# Campos que solo fija el sistema (doble extracción comparada o conciliada); se ignoran al comparar copias.
+EXTRACTION_SYSTEM_FIELDS = ("estado_verificacion", "verificado_por")
+COMPARE_IGNORED = frozenset({"notas", *EXTRACTION_SYSTEM_FIELDS})
+DOUBLE_CHECKED = ("doble_concordante", "resuelta")
+
+
+@lru_cache(maxsize=None)
+def load_schema(kind: str) -> dict:
+    """Esquema JSON del paquete (`src/nutria/data/schemas/<kind>.schema.json`)."""
+    return json.loads(resources.files("nutria.data").joinpath(f"schemas/{kind}.schema.json").read_text("utf-8"))
+
+
+def schema_error_text(err) -> str:
+    """Mensaje legible de un error de jsonschema: usa 'x-mensaje' del subesquema (o de una alternativa) si lo hay."""
+    for e in (err, *sorted(err.context or [], key=lambda c: len(c.path))):
+        msg = e.schema.get("x-mensaje") if isinstance(e.schema, dict) else None
+        if msg:
+            if isinstance(e.instance, (dict, list)):
+                return f"{msg} ({err.message})" if err.validator == "required" else msg
+            return f"{e.instance!r}: {msg}"
+    return err.message
+
+
+def schema_errors(kind: str, data: Any, schema: dict | None = None) -> list[str]:
+    """Errores de validación de `data` contra el esquema `kind` (o contra `schema`), legibles y ordenados."""
+    import jsonschema
+    validator = jsonschema.Draft202012Validator(schema if schema is not None else load_schema(kind))
+    return [f"{'/'.join(map(str, e.path)) or '(raíz)'}: {schema_error_text(e)}"
+            for e in sorted(validator.iter_errors(data), key=lambda e: list(e.path))]
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def extraction_problems(data: dict) -> list[str]:
+    """Reglas de una extracción que el esquema JSON no puede expresar."""
+    if not isinstance(data, dict):
+        return ["cada extracción debe ser un objeto JSON"]
+    problems = []
+    required = load_schema("extraccion")["required"]
+    declared = data.get("no_consta") if isinstance(data.get("no_consta"), list) else []
+    blank = [k for k in required if isinstance(data.get(k), str) and not data[k].strip()]
+    if blank:
+        problems.append("campos obligatorios vacíos: " + ", ".join(blank))
+    undeclared = [k for k in required if data.get(k) is None and k not in declared]
+    if undeclared:
+        problems.append("campos obligatorios a null sin declararlos en 'no_consta': " + ", ".join(undeclared))
+    contradicted = sorted(k for k in declared if isinstance(k, str) and data.get(k) is not None)
+    if contradicted:
+        problems.append("campos declarados en 'no_consta' que sí tienen valor: " + ", ".join(contradicted))
+    for start, end in (("ventana_inicio_dias", "ventana_fin_dias"),
+                       ("suplementacion_inicio_dias", "suplementacion_fin_dias")):
+        a, b = data.get(start), data.get(end)
+        if _is_number(a) and _is_number(b) and a > b:
+            problems.append(f"{start} ({a}) es posterior a {end} ({b})")
+    rdp, cp = data.get("pdr_pct_ms"), data.get("pb_pct_ms")
+    if _is_number(rdp) and _is_number(cp) and rdp > cp:
+        problems.append(f"pdr_pct_ms ({rdp}) supera pb_pct_ms ({cp}): la PDR es una fracción de la PB")
+    case, outcome = data.get("definicion_caso"), data.get("variable")
+    if isinstance(case, str) and isinstance(outcome, str) and \
+            " ".join(case.casefold().split()) == " ".join(outcome.casefold().split()):
+        problems.append("definicion_caso repite el nombre de la variable: indica el criterio y el umbral del artículo "
+                        "(p. ej. 'BHB en sangre ≥ 1,2 mmol/L')")
+    return problems
+
+
+def _insert_extraction(conn: sqlite3.Connection, data: dict, actor: str | None, status: str,
+                       comparison_id: str | None = None, pair: tuple[int | None, int | None] = (None, None),
+                       extractor: str | None = None, checked_by: str | None = None) -> int:
+    row = {col: data.get(key) for key, col in EXTRACTION_FIELDS.items()
+           if key not in EXTRACTION_SYSTEM_FIELDS and data.get(key) is not None}
+    if data.get("no_consta"):
+        row["not_reported"] = _dumps(data["no_consta"])
+    row.update(extractor=extractor or current_actor(actor), extracted_at=utc_now(), check_status=status,
+               checked_by=checked_by, comparison_id=comparison_id, pair_a=pair[0], pair_b=pair[1])
+    row = {k: v for k, v in row.items() if v is not None}
+    cur = conn.execute(f"INSERT INTO extractions ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
+                       list(row.values()))
+    return int(cur.lastrowid)
+
+
+def _check_extraction(data: dict) -> None:
+    problems = schema_errors("extraccion", data) + extraction_problems(data)
+    if problems:
+        raise RegistryError("Extracción no válida: " + "; ".join(problems[:10]))
 
 
 def add_extraction(conn: sqlite3.Connection, data: dict, actor: str | None = None) -> int:
+    """Registra una extracción simple. La doble extracción solo entra por `register_extraction_comparison`
+    (concordante) o `conciliate_extraction_comparison` (resuelta): su estado no se declara."""
+    if data.get("estado_verificacion") not in (None, "simple") or data.get("verificado_por") is not None:
+        raise RegistryError(
+            "estado_verificacion y verificado_por los fija el sistema: `extraccion agregar` solo registra "
+            "extracciones simples. 'doble_concordante' sale de `extraccion comparar A.json B.json --registrar` "
+            "(dos copias depositadas con `extraccion depositar` por extractores distintos) y 'resuelta', de "
+            "`extraccion conciliar <CE-xxxx> --datos <fichero>`. Quita esos campos del JSON.")
+    _check_extraction(data)
     _require_usable_source(conn, data["fuente"], "extraer datos")
-    row = {col: data.get(key) for key, col in EXTRACTION_FIELDS.items() if data.get(key) is not None}
-    if data.get("no_consta"):
-        row["not_reported"] = _dumps(data["no_consta"])
-    row.update(extractor=current_actor(actor), extracted_at=utc_now())
     with transaction(conn):
-        cur = conn.execute(
-            f"INSERT INTO extractions ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
-            list(row.values()),
-        )
-        return int(cur.lastrowid)
+        return _insert_extraction(conn, data, actor, "simple")
 
 
 def list_extractions(conn: sqlite3.Connection, source_id: str | None = None,
@@ -388,8 +512,335 @@ def list_extractions(conn: sqlite3.Connection, source_id: str | None = None,
     return [row_to_dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
 
 
+def verified_extraction_ids(conn: sqlite3.Connection) -> set[int]:
+    """Extracciones cuyo estado de doble extracción respalda el registro: 'doble_concordante' con una comparación
+    registrada concordante (o conciliada) y 'resuelta' con una conciliación registrada. Un estado declarado sin
+    esa comparación (p. ej. de una versión anterior) no cuenta."""
+    rows = conn.execute(
+        "SELECT e.id FROM extractions e JOIN extraction_comparisons c ON c.id = e.comparison_id "
+        "WHERE (e.check_status = 'doble_concordante' AND (c.result = 'concordante' OR c.conciliation IS NOT NULL)) "
+        "OR (e.check_status = 'resuelta' AND c.conciliation IS NOT NULL)").fetchall()
+    return {int(r[0]) for r in rows}
+
+
+# ---------------------------------------------------------------------------- doble extracción
+def _norm_value(key: str, value: Any) -> Any:
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if key == "no_consta" and isinstance(value, list):
+        return sorted(map(str, value))
+    return value
+
+
+def same_value(a: Any, b: Any) -> bool:
+    """Igualdad para comparar copias: números con tolerancia relativa 1e-9; booleanos solo con booleanos."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if _is_number(a) and _is_number(b):
+        return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(a)), abs(float(b)))
+    return a == b
+
+
+def _field_diffs(x: dict, y: dict) -> list[dict]:
+    out = []
+    for key in sorted((set(x) | set(y)) - COMPARE_IGNORED):
+        if not same_value(_norm_value(key, x.get(key)), _norm_value(key, y.get(key))):
+            out.append({"campo": key, "a": x.get(key), "b": y.get(key)})
+    return out
+
+
+# Campos que identifican un mismo dato: dos registros iguales en todos ellos son el mismo registro.
+DUPLICATE_KEY = ("fuente", "experimento", "variable", "intervencion", "comparador", "dosis", "dosis_unidad",
+                 "dosis_base", "n_control", "n_tratamiento", "media_control", "media_tratamiento", "eventos_control",
+                 "eventos_tratamiento", "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias")
+
+
+def _double_extracted_duplicate(conn: sqlite3.Connection, record: dict) -> sqlite3.Row | None:
+    """Extracción ya registrada por doble extracción con los mismos datos (evita contar dos veces un estudio)."""
+    rows = conn.execute("SELECT * FROM extractions WHERE source_id = ? AND outcome = ? AND comparison_id IS NOT NULL",
+                        (record.get("fuente"), record.get("variable"))).fetchall()
+    for row in rows:
+        if all(same_value(_norm_value(k, record.get(k)), _norm_value(k, row[EXTRACTION_FIELDS[k]]))
+               for k in DUPLICATE_KEY):
+            return row
+    return None
+
+
+def _insert_double_extracted(conn: sqlite3.Connection, record: dict, actor: str | None, status: str,
+                             comparison_id: str, pair: tuple[int, int], extractor: str, checked_by: str) -> int:
+    duplicate = _double_extracted_duplicate(conn, record)
+    if duplicate is not None:
+        raise RegistryError(
+            f"El registro A{pair[0]}/B{pair[1]} ({record.get('variable')}, {record.get('intervencion')}) repite la "
+            f"extracción #{duplicate['id']} ya registrada por doble extracción ({duplicate['comparison_id']}): no se "
+            "registra dos veces el mismo dato")
+    return _insert_extraction(conn, record, actor, status, comparison_id, pair, extractor=extractor,
+                              checked_by=checked_by)
+
+
+def compare_extraction_records(a: list[dict], b: list[dict]) -> list[dict]:
+    """Diferencias campo a campo entre dos copias (registro a registro, por posición). Se ignoran las notas y los
+    campos que fija el sistema; los textos se comparan sin tener en cuenta espacios repetidos."""
+    diffs: list[dict] = []
+    if len(a) != len(b):
+        diffs.append({"registro": None, "campo": "(número de registros)", "a": len(a), "b": len(b)})
+    for i, (x, y) in enumerate(zip(a, b), 1):
+        diffs.extend({"registro": i, **d} for d in _field_diffs(x, y))
+    return diffs
+
+
+def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha256: str, path: str | None = None,
+                            actor: str | None = None) -> dict:
+    """Deposita una copia de doble extracción (sin registrarla para el análisis). La huella sha256 del fichero
+    la identifica y queda ligada al extractor que la deposita; si el fichero cambia, es otra copia."""
+    who = current_actor(actor)
+    if not who.strip() or who == "cli":
+        raise RegistryError("Una copia de doble extracción necesita un extractor identificado: indica --agente <id> "
+                            "(p. ej. extractor-datos-A) o la variable NUTRIA_AGENT")
+    if not isinstance(records, list) or not records or not all(isinstance(r, dict) for r in records):
+        raise RegistryError("La copia debe contener un registro de extracción o una lista no vacía de registros")
+    problems = []
+    for i, rec in enumerate(records, 1):
+        problems += [f"registro {i}: {p}" for p in schema_errors("extraccion", rec) + extraction_problems(rec)]
+    if problems:
+        raise RegistryError("Copia no válida: " + "; ".join(problems[:10]))
+    sources = sorted({r["fuente"] for r in records})
+    for sid in sources:
+        _require_usable_source(conn, sid, "extraer datos")
+    with transaction(conn):
+        existing = conn.execute("SELECT * FROM extraction_copies WHERE sha256 = ? AND deposited_by = ?",
+                                (sha256, who)).fetchone()
+        if existing is not None:
+            return {"id": existing["id"], "sha256": sha256, "registros": existing["n_records"], "extractor": who,
+                    "nueva": False}
+        cur = conn.execute(
+            "INSERT INTO extraction_copies (sha256, path, records, n_records, source_ids, deposited_by, deposited_at) "
+            "VALUES (?,?,?,?,?,?,?)", (sha256, path, _dumps(records), len(records), _dumps(sources), who, utc_now()))
+        return {"id": int(cur.lastrowid), "sha256": sha256, "registros": len(records), "extractor": who, "nueva": True}
+
+
+def _pick_copies(conn: sqlite3.Connection, sha_a: str, sha_b: str) -> tuple[sqlite3.Row, sqlite3.Row]:
+    """Elige las copias depositadas que corresponden a los ficheros A y B: depositadas, sin usar en otra
+    comparación y de extractores distintos."""
+    used: dict[str, str] = {}
+    for r in conn.execute("SELECT id, sha256_a, sha256_b FROM extraction_comparisons ORDER BY compared_at"):
+        used.setdefault(r["sha256_a"], r["id"])
+        used.setdefault(r["sha256_b"], r["id"])
+    found = {}
+    for label, sha in (("A", sha_a), ("B", sha_b)):
+        if sha in used:
+            raise RegistryError(
+                f"La copia {label} ya se usó en la comparación {used[sha]}: una copia entra en una sola comparación "
+                "registrada (si tuvo discrepancias, se concilia con `extraccion conciliar`)")
+        rows = conn.execute("SELECT * FROM extraction_copies WHERE sha256 = ? ORDER BY id", (sha,)).fetchall()
+        if not rows:
+            raise RegistryError(
+                f"La copia {label} (sha256 {sha[:12]}…) no está depositada: cada extractor deposita la suya con "
+                "`nutria --agente <id> extraccion depositar --datos <fichero>` antes de comparar, y el fichero no "
+                "puede cambiar después")
+        found[label] = rows
+    for a in found["A"]:
+        for b in found["B"]:
+            if a["id"] != b["id"] and a["deposited_by"] != b["deposited_by"]:
+                return a, b
+    actors = sorted({r["deposited_by"] for r in found["A"] + found["B"]})
+    raise RegistryError(f"Las dos copias las depositó el mismo extractor ({', '.join(actors)}): la doble extracción "
+                        "exige dos extractores distintos que trabajen de forma independiente")
+
+
+def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: str, actor: str | None = None,
+                                   file_a: str | None = None, file_b: str | None = None) -> dict:
+    """Registra la comparación de dos copias depositadas. Sin discrepancias, registra los registros como
+    'doble_concordante'; con discrepancias, solo la comparación (se concilia con `conciliate_extraction_comparison`)."""
+    who = current_actor(actor)
+    with transaction(conn):
+        copy_a, copy_b = _pick_copies(conn, sha_a, sha_b)
+        records_a, records_b = json.loads(copy_a["records"]), json.loads(copy_b["records"])
+        diffs = compare_extraction_records(records_a, records_b)
+        result = "con_discrepancias" if diffs else "concordante"
+        comp_id = _next_id(conn, "extraction_comparisons", "CE")
+        conn.execute(
+            "INSERT INTO extraction_comparisons (id, copy_a, copy_b, file_a, sha256_a, actor_a, file_b, sha256_b, "
+            "actor_b, discrepancies, result, compared_by, compared_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (comp_id, copy_a["id"], copy_b["id"], file_a or copy_a["path"], sha_a, copy_a["deposited_by"],
+             file_b or copy_b["path"], sha_b, copy_b["deposited_by"], _dumps(diffs), result, who, utc_now()))
+        ids = []
+        if not diffs:
+            for sid in sorted({r["fuente"] for r in records_a}):
+                _require_usable_source(conn, sid, "extraer datos")
+            extractor = f"{copy_a['deposited_by']} | {copy_b['deposited_by']}"
+            for i, rec in enumerate(records_a, 1):
+                clean = {k: v for k, v in rec.items() if k not in EXTRACTION_SYSTEM_FIELDS}
+                ids.append(_insert_double_extracted(conn, clean, actor, "doble_concordante", comp_id, (i, i),
+                                                    extractor, who))
+        warning = ("las dos copias son idénticas byte a byte: compruébese que se extrajeron de forma independiente"
+                   if sha_a == sha_b else None)
+        _log_decision(conn, comp_id, f"doble extracción comparada: {result}",
+                      f"A: {file_a or copy_a['path']} ({copy_a['deposited_by']}, sha256 {sha_a[:12]}); "
+                      f"B: {file_b or copy_b['path']} ({copy_b['deposited_by']}, sha256 {sha_b[:12]}); "
+                      f"{len(diffs)} discrepancia(s); registradas: {ids or 'ninguna'}"
+                      + (f"; AVISO: {warning}" if warning else ""), actor)
+        return {"id": comp_id, "resultado": result, "discrepancias": diffs, "ids": ids,
+                "extractor_a": copy_a["deposited_by"], "extractor_b": copy_b["deposited_by"],
+                "sha256_a": sha_a, "sha256_b": sha_b, "aviso": warning}
+
+
+def _apply_resolutions(x: dict, y: dict, resolutions: list[dict], where: str) -> tuple[dict, str, list[str]]:
+    """Construye el registro conciliado: parte de la copia A y aplica solo las resoluciones declaradas."""
+    problems: list[str] = []
+    by_field: dict[str, dict] = {}
+    for res in resolutions:
+        field = res["campo"]
+        if field in by_field:
+            problems.append(f"{where}: dos resoluciones para '{field}'")
+        elif field in COMPARE_IGNORED or (field not in EXTRACTION_FIELDS and field != "no_consta"):
+            problems.append(f"{where}: '{field}' no es un campo conciliable del esquema de extracción")
+        by_field[field] = res
+    record = {k: v for k, v in x.items() if k not in EXTRACTION_SYSTEM_FIELDS}
+    for key in sorted((set(x) | set(y) | set(by_field)) - COMPARE_IGNORED):
+        va, vb = x.get(key), y.get(key)
+        differ = not same_value(_norm_value(key, va), _norm_value(key, vb))
+        res = by_field.get(key)
+        if res is None:
+            if differ:
+                problems.append(f"{where}: discrepancia sin resolver en '{key}' (A={va!r}, B={vb!r})")
+            continue
+        origin = res["origen_valor"]
+        if origin in ("A", "B"):
+            if not differ:
+                problems.append(f"{where}: resolución innecesaria para '{key}': A y B coinciden ({va!r})")
+                continue
+            value = va if origin == "A" else vb
+        else:
+            value = res.get("valor")
+            for label, other in (("A", va), ("B", vb)):
+                if same_value(_norm_value(key, value), _norm_value(key, other)):
+                    problems.append(f"{where}: el valor 'fuente' de '{key}' coincide con la copia {label}: indica "
+                                    f"origen_valor '{label}'")
+                    break
+            else:
+                if (_is_number(va) and _is_number(vb) and _is_number(value) and not res.get("confirmado_en_fuente")
+                        and same_value(float(value), (float(va) + float(vb)) / 2)):
+                    problems.append(f"{where}: '{key}' = {value!r} es el promedio de A ({va!r}) y B ({vb!r}); promediar "
+                                    "está prohibido. Si la fuente da exactamente ese valor, añade "
+                                    "\"confirmado_en_fuente\": true a la resolución")
+        if value is None:
+            record.pop(key, None)
+        else:
+            record[key] = value
+    return record, ("resuelta" if by_field else "doble_concordante"), problems
+
+
+def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: str, payload: dict,
+                                     sha256: str | None = None, actor: str | None = None) -> dict:
+    """Registra la conciliación de una comparación con discrepancias. Cada registro de A y B se empareja o se
+    declara no resuelto; el sistema construye cada registro conciliado desde la copia A aplicando las resoluciones
+    (una por campo en discrepancia, con origen del valor y motivo) y lo registra como 'resuelta' (o
+    'doble_concordante' si su pareja no tenía discrepancias)."""
+    errors = schema_errors("conciliacion", payload)
+    if errors:
+        raise RegistryError("Conciliación no válida: " + "; ".join(errors[:8]))
+    who = current_actor(actor)
+    with transaction(conn):
+        comp = conn.execute("SELECT * FROM extraction_comparisons WHERE id = ?", (comparison_id,)).fetchone()
+        if comp is None:
+            raise RegistryError(f"No existe la comparación {comparison_id} (`nutria extraccion comparaciones`)")
+        if comp["result"] != "con_discrepancias":
+            raise RegistryError(f"{comparison_id} es concordante: sus registros ya constan como 'doble_concordante'")
+        if comp["conciliation"] is not None:
+            raise RegistryError(f"{comparison_id} ya está conciliada ({comp['conciliated_by']}, {comp['conciliated_at']})")
+        copies = {r["id"]: json.loads(r["records"]) for r in conn.execute(
+            "SELECT id, records FROM extraction_copies WHERE id IN (?, ?)", (comp["copy_a"], comp["copy_b"]))}
+        records = {"a": copies[comp["copy_a"]], "b": copies[comp["copy_b"]]}
+        entries, unresolved = payload.get("conciliacion") or [], payload.get("no_resueltos") or []
+        seen: dict[str, dict[int, str]] = {"a": {}, "b": {}}
+        problems: list[str] = []
+        for where, entry in ([(f"conciliacion[{k}]", e) for k, e in enumerate(entries, 1)]
+                             + [(f"no_resueltos[{k}]", e) for k, e in enumerate(unresolved, 1)]):
+            for side in ("a", "b"):
+                idx = entry.get(side)
+                if idx is None:
+                    continue
+                if idx > len(records[side]):
+                    problems.append(f"{where}: {side}={idx} no existe (la copia {side.upper()} tiene "
+                                    f"{len(records[side])} registros)")
+                elif idx in seen[side]:
+                    problems.append(f"{where}: el registro {side.upper()}{idx} ya aparece en {seen[side][idx]}")
+                else:
+                    seen[side][idx] = where
+        missing = [f"{side.upper()}{i}" for side in ("a", "b") for i in range(1, len(records[side]) + 1)
+                   if i not in seen[side]]
+        if missing:
+            problems.append("registros sin emparejar ni declarar en 'no_resueltos': " + ", ".join(missing))
+        built = []
+        if not problems:
+            for k, entry in enumerate(entries, 1):
+                where = f"conciliacion[{k}] (A{entry['a']}, B{entry['b']})"
+                record, status, errs = _apply_resolutions(records["a"][entry["a"] - 1], records["b"][entry["b"] - 1],
+                                                          entry.get("resoluciones") or [], where)
+                errs += [f"{where}: registro resultante: {p}"
+                         for p in schema_errors("extraccion", record) + extraction_problems(record)]
+                problems += errs
+                built.append((entry, record, status))
+        if problems:
+            raise RegistryError("Conciliación rechazada (no se registra nada): " + "; ".join(problems[:12]))
+        extractor = f"{comp['actor_a']} | {comp['actor_b']}"
+        detail = []
+        for entry, record, status in built:
+            _require_usable_source(conn, record["fuente"], "extraer datos")
+            new_id = _insert_double_extracted(conn, record, actor, status, comparison_id, (entry["a"], entry["b"]),
+                                              extractor, who)
+            detail.append({"a": entry["a"], "b": entry["b"], "id": new_id, "estado": status,
+                           "resoluciones": entry.get("resoluciones") or []})
+        conciliation = {"sha256": sha256, "conciliacion": detail, "no_resueltos": unresolved}
+        conn.execute("UPDATE extraction_comparisons SET conciliation = ?, conciliation_sha256 = ?, conciliated_by = ?, "
+                     "conciliated_at = ? WHERE id = ?", (_dumps(conciliation), sha256, who, utc_now(), comparison_id))
+        ids = [d["id"] for d in detail]
+        _log_decision(conn, comparison_id, "doble extracción conciliada",
+                      f"{len(ids)} registro(s) registrados ({sum(d['estado'] == 'resuelta' for d in detail)} "
+                      f"resueltos); {len(unresolved)} no resuelto(s) sin registrar"
+                      + (f"; fichero sha256 {sha256[:12]}" if sha256 else ""), actor)
+        return {"id": comparison_id, "ids": ids, "registros": detail, "no_resueltos": unresolved}
+
+
+def list_extraction_comparisons(conn: sqlite3.Connection, pending_only: bool = False) -> list[dict]:
+    sql = "SELECT * FROM extraction_comparisons"
+    if pending_only:
+        sql += " WHERE result = 'con_discrepancias' AND conciliation IS NULL"
+    return [row_to_dict(r) for r in conn.execute(sql + " ORDER BY CAST(substr(id, 4) AS INTEGER)")]
+
+
 # ---------------------------------------------------------------------------- afirmaciones
+PUB_CONTEXT_REQUIRED = ("especie", "diseno", "unidad_experimental", "n", "dosis", "dosis_base", "forma_producto")
+
+
+def _blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def pub_context_problems(data: dict) -> list[str]:
+    """Contexto biológico que exige una afirmación [PUB] (regla 3 de CLAUDE.md); 'no_consta' lo declara ausente."""
+    ctx = data.get("contexto")
+    if not isinstance(ctx, dict):
+        return ["falta 'contexto': especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis con su "
+                "base de expresión y forma del producto ('no_consta' para lo que la fuente no informe)"]
+    problems = []
+    missing = [k for k in PUB_CONTEXT_REQUIRED if _blank(ctx.get(k))]
+    if _blank(ctx.get("etapa")) and _blank(ctx.get("estado_fisiologico")):
+        missing.append("etapa o estado_fisiologico")
+    if missing:
+        problems.append("faltan en 'contexto': " + ", ".join(missing))
+    if _blank(data.get("transferibilidad")):
+        problems.append("falta 'transferibilidad' (especie_diana, otra_especie, in_vitro, in_silico o humano)")
+    elif data["transferibilidad"] == "especie_diana" and ctx.get("especie") == "no_consta":
+        problems.append("con transferibilidad 'especie_diana' hay que nombrar la especie del estudio")
+    return problems
+
+
 def add_claim(conn: sqlite3.Connection, data: dict, actor: str | None = None) -> str:
+    errors = schema_errors("afirmacion", data)
+    if errors:
+        raise RegistryError("Afirmación no válida: " + "; ".join(errors[:8]))
     label = data["etiqueta"]
     sources = data.get("fuentes") or []
     if label == "PUB":
@@ -398,6 +849,9 @@ def add_claim(conn: sqlite3.Connection, data: dict, actor: str | None = None) ->
         if not (data.get("cita_textual") or "").strip() or not (data.get("ubicacion") or "").strip():
             raise RegistryError("Una afirmación [PUB] necesita la cita textual de la fuente y su ubicación "
                                 "(tabla, figura o página) para poder comprobar el respaldo")
+        problems = pub_context_problems(data)
+        if problems:
+            raise RegistryError("Una afirmación [PUB] necesita su contexto biológico: " + "; ".join(problems))
         for sid in sources:
             _require_usable_source(conn, sid, "respaldar una afirmación [PUB]")
     else:
@@ -408,10 +862,10 @@ def add_claim(conn: sqlite3.Connection, data: dict, actor: str | None = None) ->
         claim_id = _next_id(conn, "claims", "A")
         conn.execute(
             "INSERT INTO claims (id, text, label, evidence_level, transferability, source_ids, quote, "
-            "location, entity_id, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "location, entity_id, created_by, created_at, context) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (claim_id, data["texto"], label, data.get("nivel"), data.get("transferibilidad"),
              _dumps(sources), data.get("cita_textual"), data.get("ubicacion"), data.get("entidad"),
-             current_actor(actor), utc_now()),
+             current_actor(actor), utc_now(), _dumps(data.get("contexto"))),
         )
         return claim_id
 
@@ -425,6 +879,56 @@ def list_claims(conn: sqlite3.Connection, entity_id: str | None = None) -> list[
 
 
 # ---------------------------------------------------------------------------- oportunidades
+CLASSIFICATION_FIELDS = ("ruta_regulatoria_preliminar", "grupo_funcional", "situacion")
+
+
+def _block_regulatory_gate(conn: sqlite3.Connection, opp_id: str, route: str, actor: str | None) -> str | None:
+    """Bloqueo automático de la compuerta regulatoria por una ruta fuera_de_alcance_* (alta o reclasificación)."""
+    current = conn.execute("SELECT status FROM gates WHERE opportunity_id = ? AND gate = 'regulatoria'",
+                           (opp_id,)).fetchone()
+    if current is not None and current["status"] == "bloqueada":
+        return None
+    conn.execute(
+        "INSERT INTO gates (opportunity_id, gate, status, rationale, decided_by, updated_at) VALUES (?,?,?,?,?,?) "
+        "ON CONFLICT(opportunity_id, gate) DO UPDATE SET status = excluded.status, rationale = excluded.rationale, "
+        "evidence = NULL, decided_by = excluded.decided_by, updated_at = excluded.updated_at, human_signoff = NULL, "
+        "signed_at = NULL",
+        (opp_id, "regulatoria", "bloqueada", f"Ruta regulatoria '{route}': fuera del alcance de un pienso",
+         "registro", utc_now()))
+    _log_decision(conn, opp_id, "compuerta regulatoria -> bloqueada (automática)",
+                  f"Ruta regulatoria '{route}'" + (f" (antes: {current['status']})" if current is not None else ""),
+                  actor)
+    return "bloqueada"
+
+
+def _reopen_regulatory_gate(conn: sqlite3.Connection, opp_id: str, change: str, actor: str | None) -> str | None:
+    """Si cambia la clasificación, una compuerta regulatoria 'superada' (propuesta o firmada) deja de valer."""
+    current = conn.execute("SELECT status, human_signoff FROM gates WHERE opportunity_id = ? AND gate = 'regulatoria'",
+                           (opp_id,)).fetchone()
+    if current is None or current["status"] != "superada":
+        return None
+    reason = (f"La clasificación regulatoria cambió ({change}) después de la decisión "
+              f"{'firmada por ' + current['human_signoff'] if current['human_signoff'] else 'propuesta'}: "
+              "hay que revisar la compuerta")
+    conn.execute("UPDATE gates SET status = 'no_resuelta', rationale = ?, evidence = NULL, decided_by = 'registro', "
+                 "updated_at = ?, human_signoff = NULL, signed_at = NULL WHERE opportunity_id = ? AND gate = 'regulatoria'",
+                 (reason, utc_now(), opp_id))
+    _log_decision(conn, opp_id, "compuerta regulatoria -> no_resuelta (automática: clasificación modificada)", reason,
+                  actor)
+    return "no_resuelta"
+
+
+def classification_errors(candidate: dict) -> list[str]:
+    """Valida ruta, grupo funcional y situación (y su coherencia con la alegación prevista) con el esquema de
+    oportunidad, sin exigir el resto de campos."""
+    schema = load_schema("oportunidad")
+    keys = (*CLASSIFICATION_FIELDS, "alegacion_prevista")
+    sub = {"type": "object", "required": ["ruta_regulatoria_preliminar"],
+           "properties": {k: schema["properties"][k] for k in keys}, "allOf": schema.get("allOf", []),
+           "$defs": schema.get("$defs", {})}
+    return schema_errors("oportunidad", {k: v for k, v in candidate.items() if k in keys}, schema=sub)
+
+
 def add_opportunity(conn: sqlite3.Connection, data: dict, actor: str | None = None) -> str:
     with transaction(conn):
         opp_id = _next_id(conn, "opportunities", "O")
@@ -432,22 +936,75 @@ def add_opportunity(conn: sqlite3.Connection, data: dict, actor: str | None = No
         route = data.get("ruta_regulatoria_preliminar")
         conn.execute(
             "INSERT INTO opportunities (id, title, problem, species, production_stage, mechanism, "
-            "candidates, product_type, regulatory_route, data, created_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "candidates, product_type, regulatory_route, data, created_by, created_at, updated_at, "
+            "functional_group, regulatory_situation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (opp_id, data["titulo"], data.get("problema"), data.get("especie"), data.get("etapa"),
              data.get("mecanismo"), _dumps(data.get("candidatos")), data.get("tipo_producto"),
-             route, _dumps(data), current_actor(actor), now, now),
+             route, _dumps(data), current_actor(actor), now, now, data.get("grupo_funcional"),
+             data.get("situacion")),
         )
         _log_decision(conn, opp_id, "creada (propuesta)", data.get("justificacion") or "Alta inicial", actor)
         if route in OUT_OF_SCOPE_ROUTES:
-            conn.execute(
-                "INSERT INTO gates (opportunity_id, gate, status, rationale, decided_by, updated_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (opp_id, "regulatoria", "bloqueada", f"Ruta regulatoria '{route}': fuera del alcance de un pienso",
-                 "registro", now))
-            _log_decision(conn, opp_id, "compuerta regulatoria -> bloqueada (automática)",
-                          f"Ruta regulatoria '{route}'", actor)
+            _block_regulatory_gate(conn, opp_id, route, actor)
         return opp_id
+
+
+def classify_opportunity(conn: sqlite3.Connection, opp_id: str, route: str, reason: str,
+                         functional_group: str | None = None, situation: str | None = None,
+                         actor: str | None = None, human_signoff: str | None = None) -> dict:
+    """Actualiza la clasificación regulatoria (resultado del triage) con decisión registrada.
+
+    - Una ruta fuera_de_alcance_* bloquea en el acto la compuerta regulatoria (mismo mecanismo que el alta).
+    - Salir de una ruta fuera_de_alcance_* exige firma humana (rediseño revisado); la compuerta sigue bloqueada
+      hasta que una persona la revise.
+    - Cualquier otro cambio de clasificación devuelve a 'no_resuelta' una compuerta regulatoria 'superada'.
+    """
+    if not (reason or "").strip():
+        raise RegistryError("La clasificación necesita un motivo (resultado del triage regulatorio)")
+    signed = human_signoff.strip() if human_signoff and human_signoff.strip() else None
+    with transaction(conn):
+        opp = get_opportunity(conn, opp_id)
+        if opp is None:
+            raise RegistryError(f"No existe la oportunidad {opp_id}")
+        data = dict(opp.get("data") or {})
+        candidate = {"ruta_regulatoria_preliminar": route, "grupo_funcional": functional_group, "situacion": situation,
+                     "alegacion_prevista": data.get("alegacion_prevista")}
+        errors = classification_errors({k: v for k, v in candidate.items() if v is not None})
+        if errors:
+            raise RegistryError("Clasificación no válida: " + "; ".join(errors))
+        old = {"ruta": opp.get("regulatory_route"), "grupo_funcional": opp.get("functional_group"),
+               "situacion": opp.get("regulatory_situation")}
+        new = {"ruta": route, "grupo_funcional": functional_group, "situacion": situation}
+        if old["ruta"] in OUT_OF_SCOPE_ROUTES and route not in OUT_OF_SCOPE_ROUTES and not signed:
+            raise RegistryError(
+                f"{opp_id} tiene la ruta '{old['ruta']}' (fuera de alcance): pasar a '{route}' exige un rediseño "
+                "revisado y --firma-humana de una persona; la compuerta regulatoria seguirá bloqueada hasta que la "
+                "revise")
+        for key, value in zip(CLASSIFICATION_FIELDS, (route, functional_group, situation)):
+            if value is None:
+                data.pop(key, None)
+            else:
+                data[key] = value
+        now = utc_now()
+        conn.execute(
+            "UPDATE opportunities SET regulatory_route = ?, functional_group = ?, regulatory_situation = ?, "
+            "classified_by = ?, classified_at = ?, data = ?, updated_at = ? WHERE id = ?",
+            (route, functional_group, situation, current_actor(actor), now, _dumps(data), now, opp_id))
+
+        def fmt(c: dict) -> str:
+            return " / ".join(str(c[k]) for k in ("ruta", "grupo_funcional", "situacion") if c.get(k)) or "sin ruta"
+
+        change = f"{fmt(old)} -> {fmt(new)}"
+        _log_decision(conn, opp_id, f"clasificación regulatoria: {change}", reason, actor, signed)
+        if route in OUT_OF_SCOPE_ROUTES:
+            gate_change = _block_regulatory_gate(conn, opp_id, route, actor)
+        elif old != new:
+            gate_change = _reopen_regulatory_gate(conn, opp_id, change, actor)
+        else:
+            gate_change = None
+        return {"id": opp_id, "anterior": old, "nueva": new, "firmada": bool(signed),
+                "cambio_compuerta_regulatoria": gate_change,
+                "compuerta_regulatoria": effective_gates(conn, opp_id, ["regulatoria"])["regulatoria"]}
 
 
 def get_opportunity(conn: sqlite3.Connection, opp_id: str) -> dict | None:
@@ -689,8 +1246,10 @@ def summary(conn: sqlite3.Connection) -> dict:
         "fuentes_verificadas": conn.execute("SELECT COUNT(*) FROM sources WHERE verified = 1").fetchone()[0],
         "fuentes_retractadas": conn.execute("SELECT COUNT(*) FROM sources WHERE retracted = 1").fetchone()[0],
         "extracciones": conn.execute("SELECT COUNT(*) FROM extractions").fetchone()[0],
-        "extracciones_doble_verificadas": conn.execute(
-            "SELECT COUNT(*) FROM extractions WHERE check_status IN ('doble_concordante','resuelta')").fetchone()[0],
+        "extracciones_doble_verificadas": len(verified_extraction_ids(conn)),
+        "comparaciones_sin_conciliar": conn.execute(
+            "SELECT COUNT(*) FROM extraction_comparisons WHERE result = 'con_discrepancias' "
+            "AND conciliation IS NULL").fetchone()[0],
         "afirmaciones": count("SELECT label, COUNT(*) AS n FROM claims GROUP BY label"),
         "oportunidades": count("SELECT status, COUNT(*) AS n FROM opportunities GROUP BY status"),
         "hipotesis": count("SELECT status, COUNT(*) AS n FROM hypotheses GROUP BY status"),

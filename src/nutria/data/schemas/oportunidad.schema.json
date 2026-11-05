@@ -25,11 +25,38 @@
       "description": "Problema productivo o fisiológico, con su carga estimada y fuente o etiqueta."
     },
     "especie": {
-      "type": "string"
+      "$ref": "#/$defs/texto_especifico",
+      "minLength": 3,
+      "description": "Especie diana concreta (p. ej. 'vacuno lechero'), nunca genérica ('animales', 'varias', 'todas')."
     },
     "etapa": {
-      "type": "string",
-      "description": "Etapa productiva (p. ej. periodo de transición, cebo, destete)."
+      "$ref": "#/$defs/texto_especifico",
+      "minLength": 3,
+      "description": "Etapa productiva concreta (p. ej. periodo de transición, cebo, destete), nunca genérica ('todas', 'cualquiera')."
+    },
+    "raza": {
+      "anyOf": [
+        {
+          "const": "no_consta"
+        },
+        {
+          "$ref": "#/$defs/texto_especifico",
+          "minLength": 2
+        }
+      ],
+      "description": "Raza o tipo genético diana; 'no_consta' si no se ha definido."
+    },
+    "estado_fisiologico": {
+      "anyOf": [
+        {
+          "const": "no_consta"
+        },
+        {
+          "$ref": "#/$defs/texto_especifico",
+          "minLength": 3
+        }
+      ],
+      "description": "Estado fisiológico diana (p. ej. multíparas sanas en el preparto); 'no_consta' si no se ha definido."
     },
     "mecanismo": {
       "type": "string"
@@ -66,8 +93,13 @@
         "pienso_dietetico",
         "fuera_de_alcance_medicamento",
         "fuera_de_alcance_biocida",
-        "indeterminada"
-      ]
+        "indeterminada",
+        "aditivo_coccidiostatico_histomonostato",
+        "pienso_complementario",
+        "pienso_compuesto",
+        "premezcla"
+      ],
+      "description": "Clasificación preliminar (docs/REGULACION_UE.md). La propone regulacion-seguridad en el triage y se actualiza con `nutria oportunidad clasificar`; las rutas fuera_de_alcance_* bloquean automáticamente la compuerta regulatoria."
     },
     "evidencia_resumen": {
       "type": "string"
@@ -165,6 +197,48 @@
         "tipo"
       ],
       "additionalProperties": false
+    },
+    "grupo_funcional": {
+      "enum": [
+        "tecnologico.conservantes",
+        "tecnologico.antioxidantes",
+        "tecnologico.emulgentes",
+        "tecnologico.estabilizantes",
+        "tecnologico.espesantes",
+        "tecnologico.gelificantes",
+        "tecnologico.aglutinantes",
+        "tecnologico.control_radionucleidos",
+        "tecnologico.antiaglomerantes",
+        "tecnologico.reguladores_acidez",
+        "tecnologico.aditivos_ensilado",
+        "tecnologico.desnaturalizantes",
+        "tecnologico.reduccion_micotoxinas",
+        "tecnologico.potenciadores_condiciones_higienicas",
+        "tecnologico.otros_tecnologicos",
+        "sensorial.colorantes",
+        "sensorial.aromatizantes",
+        "nutricional.vitaminas",
+        "nutricional.oligoelementos",
+        "nutricional.aminoacidos",
+        "nutricional.urea",
+        "zootecnico.digestibilidad",
+        "zootecnico.estabilizadores_flora_intestinal",
+        "zootecnico.medio_ambiente",
+        "zootecnico.otros_zootecnicos",
+        "zootecnico.estabilizadores_condiciones_fisiologicas",
+        "coccidiostatico_histomonostato"
+      ],
+      "description": "Categoría y grupo funcional de aditivo del anexo I del Reglamento (CE) 1831/2003, cuando aplique (nombres abreviados como en docs/REGULACION_UE.md; comprueba el texto consolidado vigente). Debe corresponder a la categoría de la ruta aditivo_*."
+    },
+    "situacion": {
+      "enum": [
+        "autorizado",
+        "catalogado",
+        "registrado",
+        "nuevo",
+        "desconocido"
+      ],
+      "description": "autorizado: figura en el Registro de aditivos de la UE para esa especie y condiciones; catalogado: materia prima del Catálogo (Reglamento (UE) 68/2013); registrado: en el Registro de materias primas; nuevo: requiere autorización o notificación; desconocido: sin comprobar."
     }
   },
   "allOf": [
@@ -189,10 +263,155 @@
       "then": {
         "properties": {
           "ruta_regulatoria_preliminar": {
-            "const": "pienso_dietetico"
+            "const": "pienso_dietetico",
+            "x-mensaje": "una alegación de finalidad nutricional específica solo cabe en un pienso dietético (ruta pienso_dietetico; Reglamento (UE) 2020/354)"
           }
         }
       }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar",
+          "grupo_funcional"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "const": "aditivo_tecnologico"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grupo_funcional": {
+            "pattern": "^tecnologico\\.",
+            "x-mensaje": "la ruta aditivo_tecnologico exige un grupo funcional de la categoría 'tecnologico'"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar",
+          "grupo_funcional"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "const": "aditivo_sensorial"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grupo_funcional": {
+            "pattern": "^sensorial\\.",
+            "x-mensaje": "la ruta aditivo_sensorial exige un grupo funcional de la categoría 'sensorial'"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar",
+          "grupo_funcional"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "const": "aditivo_nutricional"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grupo_funcional": {
+            "pattern": "^nutricional\\.",
+            "x-mensaje": "la ruta aditivo_nutricional exige un grupo funcional de la categoría 'nutricional'"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar",
+          "grupo_funcional"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "const": "aditivo_zootecnico"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grupo_funcional": {
+            "pattern": "^zootecnico\\.",
+            "x-mensaje": "la ruta aditivo_zootecnico exige un grupo funcional de la categoría 'zootecnico'"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar",
+          "grupo_funcional"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "const": "aditivo_coccidiostatico_histomonostato"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grupo_funcional": {
+            "const": "coccidiostatico_histomonostato",
+            "x-mensaje": "la ruta aditivo_coccidiostatico_histomonostato solo admite el grupo coccidiostatico_histomonostato"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "ruta_regulatoria_preliminar"
+        ],
+        "properties": {
+          "ruta_regulatoria_preliminar": {
+            "enum": [
+              "materia_prima",
+              "indeterminada",
+              "fuera_de_alcance_medicamento",
+              "fuera_de_alcance_biocida"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "grupo_funcional"
+          ]
+        },
+        "x-mensaje": "grupo_funcional solo se indica con una ruta de aditivo, premezcla, pienso complementario, compuesto o dietético"
+      }
     }
-  ]
+  ],
+  "$defs": {
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "texto vacío o de relleno ('', '-', 'n/a', 'xxx', 'desconocido'...): escribe el dato o, si el campo admite null, déjalo a null y declara su ausencia"
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?|vari[oa]s(?: (?:especies|etapas|fases|estados|razas))?|tod[oa]s?(?: (?:l[oa]s )?(?:especies|etapas|fases|animales|estados|razas))?|cualquier(?:a| especie| etapa| raza| animal)?|animales(?: de (?:producci[oó]n|granja|abasto|renta))?|especies(?: de (?:producci[oó]n|granja|abasto|renta))?|producci[oó]n animal|ganader[ií]a|ganado|general|gen[eé]ric[oa]s?|multiespecie|mixt[oa]s?|divers[oa]s(?: (?:especies|etapas))?|distint[oa]s(?: (?:especies|etapas))?|otr[oa]s?|indeterminad[oa]s?|no determinad[oa]s?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "valor vacío, de relleno o genérico ('animales', 'varias', 'todas', 'n/a', '-'...): indica la especie, etapa o estado concretos"
+    }
+  }
 }

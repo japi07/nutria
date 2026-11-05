@@ -1,0 +1,28 @@
+{
+  "conciliacion": [
+    {
+      "a": 1,
+      "b": 1,
+      "resoluciones": [
+        {
+          "campo": "media_tratamiento",
+          "origen_valor": "A",
+          "motivo": "Tabla 3, fila 2: 36,4 kg/d; la copia B tomó el SEM de la columna contigua (ejemplo de formato)"
+        },
+        {
+          "campo": "duracion_dias",
+          "origen_valor": "fuente",
+          "valor": 42,
+          "motivo": "Materiales y métodos, p. 3: 21 días antes y 21 después del parto (ejemplo de formato)"
+        }
+      ]
+    }
+  ],
+  "no_resueltos": [
+    {
+      "a": 2,
+      "b": 2,
+      "motivo": "La figura 2 no permite leer los eventos de cada grupo con seguridad (ejemplo de formato)"
+    }
+  ]
+}

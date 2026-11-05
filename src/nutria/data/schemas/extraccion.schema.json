@@ -1,7 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Extracción de datos de un estudio",
+  "description": "Un registro por comparación (tratamiento frente a control) y por variable. Los campos obligatorios que el estudio no publica se dejan a null y se declaran en 'no_consta'. estado_verificacion y verificado_por los fija el sistema al registrar una doble extracción comparada (`extraccion comparar A B --registrar`) o conciliada (`extraccion conciliar`).",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "dieta_basal",
     "diseno",
@@ -32,7 +34,7 @@
       "type": "string"
     },
     "especie": {
-      "type": "string"
+      "$ref": "#/$defs/texto_especifico"
     },
     "raza": {
       "type": "string"
@@ -44,9 +46,13 @@
       "type": "string"
     },
     "estado_fisiologico": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/texto_especifico"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "paridad": {
@@ -77,48 +83,65 @@
       "minimum": 0
     },
     "dieta_basal": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/texto_informado"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "intervencion": {
-      "type": "string"
+      "$ref": "#/$defs/texto_informado"
     },
     "dosis": {
       "type": [
         "number",
         "null"
-      ]
+      ],
+      "minimum": 0
     },
     "dosis_unidad": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/texto_informado"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "dosis_base": {
-      "description": "p. ej. g/animal/d, mg/kg MS, % MS",
-      "type": [
-        "string",
-        "null"
-      ]
+      "anyOf": [
+        {
+          "$ref": "#/$defs/texto_informado"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "p. ej. g/animal/d, mg/kg MS, % MS"
     },
     "forma_producto": {
-      "description": "Forma química, protección ruminal, encapsulado...",
-      "type": [
-        "string",
-        "null"
-      ]
+      "anyOf": [
+        {
+          "$ref": "#/$defs/texto_informado"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Forma química, protección ruminal, encapsulado..."
     },
     "comparador": {
       "type": "string"
     },
     "variable": {
-      "type": "string"
+      "$ref": "#/$defs/texto_informado"
     },
     "unidad": {
-      "type": "string"
+      "$ref": "#/$defs/texto_informado"
     },
     "n_control": {
       "minimum": 1,
@@ -171,7 +194,7 @@
       "maximum": 1
     },
     "ubicacion": {
-      "type": "string",
+      "$ref": "#/$defs/texto_informado",
       "description": "Tabla, figura (indicar si digitalizada) o página."
     },
     "financiacion": {
@@ -186,10 +209,12 @@
         "doble_concordante",
         "discrepancia",
         "resuelta"
-      ]
+      ],
+      "description": "Lo fija el sistema: 'doble_concordante' solo sale de una comparación registrada sin discrepancias y 'resuelta' de una conciliación registrada. `extraccion agregar` solo admite 'simple'."
     },
     "verificado_por": {
-      "type": "string"
+      "type": "string",
+      "description": "Lo fija el sistema (quién registró la comparación); no se declara a mano."
     },
     "notas": {
       "type": "string"
@@ -199,35 +224,63 @@
         "number",
         "null"
       ],
-      "description": "Forraje (% de la MS)"
+      "description": "Forraje (% de la MS)",
+      "minimum": 0,
+      "maximum": 100
     },
     "fnd_pct_ms": {
       "type": [
         "number",
         "null"
       ],
-      "description": "FND (% de la MS)"
+      "description": "FND (% de la MS)",
+      "minimum": 0,
+      "maximum": 100
     },
     "almidon_pct_ms": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Almidón (% de la MS)"
+      "description": "Almidón (% de la MS)",
+      "minimum": 0,
+      "maximum": 100
     },
     "grasa_pct_ms": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Grasa o extracto etéreo (% de la MS)"
+      "description": "Grasa o extracto etéreo (% de la MS)",
+      "minimum": 0,
+      "maximum": 100
     },
     "pb_pct_ms": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Proteína bruta (% de la MS)"
+      "description": "Proteína bruta (% de la MS)",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "pdr_pct_pb": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Proteína degradable en el rumen (PDR), % de la PB"
+    },
+    "pdr_pct_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Proteína degradable en el rumen (PDR), % de la MS (no puede superar pb_pct_ms)"
     },
     "dcad_meq_kg_ms": {
       "type": [
@@ -251,12 +304,135 @@
       ],
       "minimum": 0
     },
+    "hito_referencia": {
+      "$ref": "#/$defs/texto_informado",
+      "description": "Hito respecto al que se cuentan los días de las ventanas (p. ej. 'parto'); obligatorio si hay ventanas"
+    },
+    "ventana_inicio_dias": {
+      "type": "number",
+      "description": "Inicio de la ventana de observación o muestreo, en días respecto al hito (negativo = antes; p. ej. 0 = parto)"
+    },
+    "ventana_fin_dias": {
+      "type": "number",
+      "description": "Fin de la ventana de observación o muestreo (días respecto al hito; para un único muestreo, igual al inicio)"
+    },
+    "suplementacion_inicio_dias": {
+      "type": "number",
+      "description": "Inicio de la suplementación, en días respecto al hito (p. ej. -21 = tres semanas antes del parto)"
+    },
+    "suplementacion_fin_dias": {
+      "type": "number",
+      "description": "Fin de la suplementación, en días respecto al hito"
+    },
+    "definicion_caso": {
+      "$ref": "#/$defs/texto_informado",
+      "minLength": 5,
+      "description": "Definición de caso con su umbral y matriz, p. ej. 'cetosis subclínica: BHB en sangre ≥ 1,2 mmol/L'. Obligatoria con eventos_control/eventos_tratamiento."
+    },
     "no_consta": {
       "type": "array",
+      "uniqueItems": true,
       "items": {
-        "type": "string"
+        "enum": [
+          "dieta_basal",
+          "dosis",
+          "dosis_base",
+          "dosis_unidad",
+          "estado_fisiologico",
+          "forma_producto",
+          "media_control",
+          "media_tratamiento",
+          "n_control",
+          "n_tratamiento",
+          "tipo_dispersion"
+        ]
       },
       "description": "Campos obligatorios que el estudio no publica (se dejan a null)"
+    }
+  },
+  "dependentRequired": {
+    "ventana_inicio_dias": [
+      "ventana_fin_dias",
+      "hito_referencia"
+    ],
+    "ventana_fin_dias": [
+      "ventana_inicio_dias",
+      "hito_referencia"
+    ],
+    "suplementacion_inicio_dias": [
+      "suplementacion_fin_dias",
+      "hito_referencia"
+    ],
+    "suplementacion_fin_dias": [
+      "suplementacion_inicio_dias",
+      "hito_referencia"
+    ]
+  },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "eventos_control"
+            ],
+            "properties": {
+              "eventos_control": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "required": [
+              "eventos_tratamiento"
+            ],
+            "properties": {
+              "eventos_tratamiento": {
+                "type": "number"
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "eventos_control",
+          "eventos_tratamiento",
+          "hito_referencia",
+          "ventana_inicio_dias",
+          "ventana_fin_dias",
+          "definicion_caso"
+        ],
+        "properties": {
+          "eventos_control": {
+            "type": "number"
+          },
+          "eventos_tratamiento": {
+            "type": "number"
+          },
+          "n_control": {
+            "type": "number"
+          },
+          "n_tratamiento": {
+            "type": "number"
+          }
+        },
+        "x-mensaje": "una variable de incidencia (eventos) exige eventos de ambos grupos, sus n, la ventana respecto al hito (hito_referencia, ventana_inicio_dias, ventana_fin_dias) y la definición de caso con su umbral"
+      }
+    }
+  ],
+  "$defs": {
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "texto vacío o de relleno ('', '-', 'n/a', 'xxx', 'desconocido'...): escribe el dato o, si el campo admite null, déjalo a null y declara su ausencia"
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?|vari[oa]s(?: (?:especies|etapas|fases|estados|razas))?|tod[oa]s?(?: (?:l[oa]s )?(?:especies|etapas|fases|animales|estados|razas))?|cualquier(?:a| especie| etapa| raza| animal)?|animales(?: de (?:producci[oó]n|granja|abasto|renta))?|especies(?: de (?:producci[oó]n|granja|abasto|renta))?|producci[oó]n animal|ganader[ií]a|ganado|general|gen[eé]ric[oa]s?|multiespecie|mixt[oa]s?|divers[oa]s(?: (?:especies|etapas))?|distint[oa]s(?: (?:especies|etapas))?|otr[oa]s?|indeterminad[oa]s?|no determinad[oa]s?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "valor vacío, de relleno o genérico ('animales', 'varias', 'todas', 'n/a', '-'...): indica la especie, etapa o estado concretos"
     }
   }
 }

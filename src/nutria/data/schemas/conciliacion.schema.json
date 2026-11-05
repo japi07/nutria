@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conciliación de una doble extracción con discrepancias",
+  "description": "Se registra con `nutria extraccion conciliar <CE-xxxx> --datos <fichero>`. Cada registro de las copias A y B aparece una sola vez: emparejado en 'conciliacion' o, si no se puede resolver o solo está en una copia, en 'no_resueltos' (no se registra). El sistema construye cada registro conciliado a partir de la copia A, aplicando solo las resoluciones: cada campo en que A y B difieren necesita una, con el origen del valor y el motivo (releyendo la fuente; nunca promediando ni eligiendo al azar).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "conciliacion"
+  ],
+  "properties": {
+    "conciliacion": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "a",
+          "b"
+        ],
+        "properties": {
+          "a": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Posición (desde 1) del registro en la copia A"
+          },
+          "b": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Posición (desde 1) del registro en la copia B"
+          },
+          "resoluciones": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "campo",
+                "origen_valor",
+                "motivo"
+              ],
+              "properties": {
+                "campo": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Campo del esquema de extracción"
+                },
+                "origen_valor": {
+                  "enum": [
+                    "A",
+                    "B",
+                    "fuente"
+                  ],
+                  "description": "A o B: se toma el valor de esa copia; fuente: valor releído en la fuente (va en 'valor')"
+                },
+                "valor": {
+                  "description": "Solo con origen_valor 'fuente': el valor releído (null si la fuente no lo publica)"
+                },
+                "motivo": {
+                  "$ref": "#/$defs/texto_informado",
+                  "minLength": 10,
+                  "description": "Qué se releyó y dónde (tabla, figura o página)"
+                },
+                "confirmado_en_fuente": {
+                  "type": "boolean",
+                  "description": "Solo si el valor releído coincide con el promedio de A y B: confirma que es el de la fuente y no un promedio"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "origen_valor": {
+                        "const": "fuente"
+                      }
+                    },
+                    "required": [
+                      "origen_valor"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "valor"
+                    ],
+                    "x-mensaje": "origen_valor 'fuente' exige el valor releído en 'valor'"
+                  },
+                  "else": {
+                    "not": {
+                      "required": [
+                        "valor"
+                      ]
+                    },
+                    "x-mensaje": "'valor' solo se indica con origen_valor 'fuente' (con A o B se toma el de la copia)"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "no_resueltos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "motivo"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "a"
+            ],
+            "x-mensaje": "indica el registro de la copia A ('a'), el de la B ('b') o ambos"
+          },
+          {
+            "required": [
+              "b"
+            ]
+          }
+        ],
+        "properties": {
+          "a": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "b": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "motivo": {
+            "$ref": "#/$defs/texto_informado",
+            "minLength": 10
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "texto vacío o de relleno ('', '-', 'n/a', 'xxx', 'desconocido'...): escribe el dato o, si el campo admite null, déjalo a null y declara su ausencia"
+    }
+  }
+}

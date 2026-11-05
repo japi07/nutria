@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Afirmación con etiqueta de evidencia",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "texto",
     "etiqueta"
@@ -53,6 +54,220 @@
     "entidad": {
       "type": "string",
       "pattern": "^[OH]-\\d{4}$"
+    },
+    "contexto": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Contexto biológico del dato (regla 3 de CLAUDE.md). Obligatorio en las afirmaciones [PUB]: especie, etapa o estado fisiológico, diseño, unidad experimental, n, dosis con su base de expresión y forma del producto. 'no_consta' declara lo que la fuente no informa.",
+      "properties": {
+        "especie": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ],
+          "description": "Especie del estudio (o sistema in vitro: 'líquido ruminal bovino')"
+        },
+        "raza": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "sexo": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "edad": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "etapa": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "estado_fisiologico": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "dieta_basal": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "diseno": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ],
+          "description": "p. ej. ensayo paralelo aleatorizado, cuadrado latino 4 × 4, metaanálisis de 12 ensayos, in vitro"
+        },
+        "unidad_experimental": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_especifico"
+            }
+          ]
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Unidades experimentales por tratamiento (o total, indicándolo)"
+        },
+        "dosis": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "dosis_unidad": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ]
+        },
+        "dosis_base": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Base de expresión: por animal y día, por kg de MS, % de la MS..."
+        },
+        "forma_producto": {
+          "anyOf": [
+            {
+              "const": "no_consta"
+            },
+            {
+              "$ref": "#/$defs/texto_informado"
+            }
+          ],
+          "description": "Forma química, protección ruminal, vehículo..."
+        }
+      },
+      "required": [
+        "especie",
+        "diseno",
+        "unidad_experimental",
+        "n",
+        "dosis",
+        "dosis_base",
+        "forma_producto"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "etapa"
+          ],
+          "x-mensaje": "falta la etapa o el estado fisiológico ('no_consta' si la fuente no lo informa)"
+        },
+        {
+          "required": [
+            "estado_fisiologico"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "dosis"
+            ],
+            "properties": {
+              "dosis": {
+                "type": "number"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "dosis_unidad"
+            ],
+            "properties": {
+              "dosis_unidad": {
+                "not": {
+                  "const": "no_consta"
+                }
+              },
+              "dosis_base": {
+                "not": {
+                  "const": "no_consta"
+                }
+              }
+            },
+            "x-mensaje": "una dosis numérica exige su unidad y su base de expresión"
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -71,7 +286,9 @@
         "required": [
           "fuentes",
           "cita_textual",
-          "ubicacion"
+          "ubicacion",
+          "contexto",
+          "transferibilidad"
         ],
         "properties": {
           "fuentes": {
@@ -85,6 +302,47 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "required": [
+          "transferibilidad",
+          "contexto"
+        ],
+        "properties": {
+          "transferibilidad": {
+            "const": "especie_diana"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "contexto": {
+            "properties": {
+              "especie": {
+                "not": {
+                  "const": "no_consta"
+                },
+                "x-mensaje": "con transferibilidad 'especie_diana' hay que nombrar la especie"
+              }
+            }
+          }
+        }
+      }
     }
-  ]
+  ],
+  "$defs": {
+    "texto_informado": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "texto vacío o de relleno ('', '-', 'n/a', 'xxx', 'desconocido'...): escribe el dato o, si el campo admite null, déjalo a null y declara su ausencia"
+    },
+    "texto_especifico": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!(?i:\\s*(?:[-–—_.?¿!/*\\\\]+|(\\w)\\1+|n\\W?[ad]\\W?|s/d\\.?|tb[dc]|null|none|nan|unknown|[íi]dem|pendiente|por (?:determinar|definir)|desconocid[oa]s?|no[ _-]?consta|sin (?:datos|especificar|informaci[oó]n)|no especificad[oa]s?|no aplica|no disponible|no informad[oa]s?|ningun[oa]?|vari[oa]s(?: (?:especies|etapas|fases|estados|razas))?|tod[oa]s?(?: (?:l[oa]s )?(?:especies|etapas|fases|animales|estados|razas))?|cualquier(?:a| especie| etapa| raza| animal)?|animales(?: de (?:producci[oó]n|granja|abasto|renta))?|especies(?: de (?:producci[oó]n|granja|abasto|renta))?|producci[oó]n animal|ganader[ií]a|ganado|general|gen[eé]ric[oa]s?|multiespecie|mixt[oa]s?|divers[oa]s(?: (?:especies|etapas))?|distint[oa]s(?: (?:especies|etapas))?|otr[oa]s?|indeterminad[oa]s?|no determinad[oa]s?)\\s*$))[\\s\\S]*\\S[\\s\\S]*$",
+      "x-mensaje": "valor vacío, de relleno o genérico ('animales', 'varias', 'todas', 'n/a', '-'...): indica la especie, etapa o estado concretos"
+    }
+  }
 }
