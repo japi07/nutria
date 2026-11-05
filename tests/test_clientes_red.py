@@ -2206,6 +2206,31 @@ def test_a_reader_that_closes_before_reading_gets_a_code_from_the_table(proj, un
     assert code == (cli.SALIDA_OK if unbuffered else cli.SALIDA_TUBERIA) and not any(n in err for n in noise), err
 
 
+def test_output_before_an_error_into_a_closed_pipe_keeps_the_error_code(tmp_path):
+    # Una orden que imprime algo (en el búfer) y después falla, con la tubería ya cerrada: código del error y su texto
+    # por stderr, sin «Exception ignored» al cerrar el intérprete (que cambiaría el código a 120).
+    script = tmp_path / "salida_y_error.py"
+    script.write_text(
+        "from nutria import cli\n"
+        "def orden(args, cfg):\n"
+        "    print('resultado parcial')\n"
+        "    raise SystemExit('la orden falla después de imprimir')\n"
+        "cli.cmd_estado = orden\n"
+        "raise SystemExit(cli.main(['estado']))\n", "utf-8")
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env.update(PYTHONPATH=str(ROOT / "src"), NUTRIA_HOME=str(tmp_path))
+    try:
+        proc = subprocess.run([sys.executable, str(script)], stdout=write_end, stderr=subprocess.PIPE, env=env,
+                              cwd=tmp_path, timeout=120)
+    finally:
+        os.close(write_end)
+    err = proc.stderr.decode("utf-8", "replace")
+    assert proc.returncode == cli.SALIDA_ENTRADA and "Error: la orden falla después de imprimir" in err
+    assert "Exception ignored" not in err and "Traceback" not in err
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="cierra descriptores con sh")
 def test_closed_standard_streams_do_not_mix_errors_into_the_json_output(proj):
     # Con stderr cerrada desde el arranque (`2>&-`), el texto del error no acaba en stdout mezclado con el JSON
