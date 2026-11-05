@@ -483,8 +483,22 @@ def test_coherencia_con_dosis_convertida_y_ventas_como_dato(tmp_path):
     model = farm.load_farm_model(_write(tmp_path, "g.toml", farm_text))
     res = rnpv.coherence(model, rnpv.load_project(COMPANY_EXAMPLE))
     dose = next(i for i in res["comparaciones"] if i["magnitud"].startswith("dosis"))
-    assert dose["estado"] == "coherente" and dose["ganadero"] == pytest.approx(50)
-    assert "solo se compara el valor central" in dose["detalle"]
+    # Mismo valor central (50 g/día), pero la dosis del ganadero varía con la ingestión (2,5 × pert(18, 20, 22)) y la
+    # empresa la declara fija: el P5-P95 simulado no coincide y se avisa.
+    assert dose["ganadero"] == pytest.approx(50) and dose["estado"] == "difiere"
+    assert "distinta incertidumbre" in dose["detalle"] and "simulaciones" in dose["detalle"]
+    # Con la misma distribución en g/animal/día (pert(45, 50, 55)) es coherente.
+    company = _write(tmp_path, "e_pert.toml", COMPANY_EXAMPLE.read_text("utf-8").replace(
+        "dosis_g_dia = { valor = 50", 'dosis_g_dia = { dist = "pert", min = 45, moda = 50, max = 55'))
+    dose = next(i for i in rnpv.coherence(model, rnpv.load_project(company))["comparaciones"]
+                if i["magnitud"].startswith("dosis"))
+    assert dose["estado"] == "coherente", dose
+    # Una dosis de la empresa mucho más incierta con el mismo valor central tampoco pasa.
+    wide = _write(tmp_path, "e_wide.toml", COMPANY_EXAMPLE.read_text("utf-8").replace(
+        "dosis_g_dia = { valor = 50", 'dosis_g_dia = { dist = "pert", min = 10, moda = 50, max = 200'))
+    dose = next(i for i in rnpv.coherence(model, rnpv.load_project(wide))["comparaciones"]
+                if i["magnitud"].startswith("dosis"))
+    assert dose["estado"] == "difiere"
     # Ventas pico como dato: no comprobable (falla) y da los animales-ciclo implícitos.
     as_data = _project(tmp_path, _COMPANY.format(mercado="ventas_pico_eur_anio = 105000\nanios_comercializacion = 2"))
     res = rnpv.coherence(farm.load_farm_model(FARM_EXAMPLE), as_data)

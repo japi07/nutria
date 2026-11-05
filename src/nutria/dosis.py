@@ -23,6 +23,8 @@ fallan con ValueError ante entradas incoherentes en lugar de devolver un valor d
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 BASES = ("g_animal_dia", "mg_kg_ms", "g_t")
@@ -198,8 +200,8 @@ def convertir(valor: float, desde: str, ingestion_ms: float | None = None, porta
            "etiquetas": {"g_animal_dia": etiqueta("g_animal_dia"), "mg_kg_ms": etiqueta("mg_kg_ms"),
                          "g_t": etiqueta("g_t", portador, base_pienso)}}
     if precio_eur_kg is not None:
-        if not precio_eur_kg >= 0:
-            raise ValueError("El precio (€/kg de producto) debe ser >= 0")
+        if not (math.isfinite(precio_eur_kg) and precio_eur_kg >= 0):
+            raise ValueError("El precio (€/kg de producto) debe ser un número finito >= 0")
         res["coste"] = {"eur_animal_dia": out["g_animal_dia"] * precio_eur_kg / 1000.0,
                         "eur_t_pienso": None if out["g_t"] is None else out["g_t"] * precio_eur_kg / 1000.0}
     return res

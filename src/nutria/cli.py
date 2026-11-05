@@ -611,7 +611,7 @@ def cmd_puntuar(args, cfg) -> int:
                      "gate_proposals": proposals, "status": o["status"]})
     rows = rank(opps, rubric, profile=profile, n_sim=args.sim, seed=args.semilla, alpha=args.alfa, top_k=args.top,
                 min_raters=args.min_evaluadores)
-    warnings = ranking_warnings(rows, args.top)
+    warnings = ranking_warnings(rows, args.top, profile)
     # Procedencia reproducible (D9-7): parámetros, huellas de la rúbrica, de las puntuaciones y de toda la entrada, y
     # el orden resultante. Las puntuaciones no se copian (los evaluadores no deben verlas en las trazas).
     def canonical(x) -> str:
@@ -630,7 +630,7 @@ def cmd_puntuar(args, cfg) -> int:
         print("\n".join(warnings), file=sys.stderr)
     _emit(args, [r.to_dict() for r in rows],
           f"Perfil: {profile} | {args.sim} simulaciones | semilla {args.semilla} | alfa {args.alfa} | "
-          f"mínimo {args.min_evaluadores} evaluadores\n" + format_table(rows, args.top))
+          f"mínimo {args.min_evaluadores} evaluadores\n" + format_table(rows, args.top, profile))
     return 0
 
 
@@ -876,40 +876,93 @@ def cmd_destino(args, cfg) -> int:
 
 
 # ============================================================================ economía
+def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
+    """Fuentes de un modelo económico que no se pueden rastrear: [PUB] sin el identificador de una fuente registrada y
+    verificada (doi:, pmid:, openalex:) o de una afirmación [PUB] registrada (A-xxxx), y [DER] sin la orden `nutria` o
+    el script que da el valor. Las fuentes [PUB] se comprueban en el registro del proyecto."""
+    import re
+
+    from .econ.dist import source_ids
+    problems, pub = [], []
+    for where, text in sources:
+        if "[DER]" in text and not re.search(r"nutria\s|script|\.py\b|\.R\b|\.ipynb\b", text):
+            problems.append(f"{where}: [DER] sin la orden nutria o el script que da el valor")
+        if "[PUB]" in text:
+            ids = source_ids(text)
+            if ids:
+                pub.append((where, ids))
+            else:
+                problems.append(f"{where}: [PUB] sin el identificador de una fuente registrada (doi:..., pmid:..., "
+                                "openalex:W...) o de una afirmación [PUB] registrada (A-xxxx)")
+    if not pub:
+        return problems
+    if not cfg.db_path.is_file():
+        return problems + ["hay fuentes [PUB] y no existe el registro del proyecto para comprobarlas (`nutria init`)"]
+    conn = registry.connect(cfg.db_path)
+    claims = {c["id"]: c for c in registry.list_claims(conn)}
+    for where, ids in pub:
+        for sid in ids:
+            try:
+                if sid.startswith("A-"):
+                    claim = claims.get(sid)
+                    if claim is None:
+                        raise registry.RegistryError(f"la afirmación {sid} no está registrada")
+                    if claim["label"] != "PUB":
+                        raise registry.RegistryError(f"la afirmación {sid} es [{claim['label']}], no [PUB]")
+                    for src in claim.get("source_ids") or []:
+                        registry._require_usable_source(conn, src, f"respaldar {where}")
+                else:
+                    registry._require_usable_source(conn, sid, f"respaldar {where}")
+            except registry.RegistryError as exc:
+                problems.append(f"{where}: {exc}")
+    return problems
+
+
 def cmd_econ(args, cfg) -> int:
     from .econ import farm, rnpv
+    central = args.valor_central
     if args.accion == "coherencia":
-        res = rnpv.coherence(farm.load_farm_model(Path(args.ganadero)), rnpv.load_project(Path(args.desarrollador)),
-                             rtol=args.tolerancia)
+        res = rnpv.coherence(farm.load_farm_model(Path(args.ganadero), central),
+                             rnpv.load_project(Path(args.desarrollador), central), rtol=args.tolerancia)
         log_event(cfg, "econ_coherencia", inputs={"ganadero": args.ganadero, "sha256_ganadero": sha256_file(
             Path(args.ganadero)), "desarrollador": args.desarrollador, "sha256_desarrollador": sha256_file(
-            Path(args.desarrollador)), "tolerancia": args.tolerancia}, outputs=res, actor=args.agente)
+            Path(args.desarrollador)), "tolerancia": args.tolerancia, "valor_central": central}, outputs=res,
+            actor=args.agente)
         _emit(args, res, rnpv.coherence_text(res))
         return 0 if res["coherente"] else 1
     status = 0
     if args.accion == "ganadero":
-        model = farm.load_farm_model(Path(args.archivo))
+        model = farm.load_farm_model(Path(args.archivo), central)
         missing = farm.missing_sources(model)
+        untraceable = _econ_source_problems(cfg, farm.declared_sources(model))
     else:
-        project = rnpv.load_project(Path(args.archivo))
+        project = rnpv.load_project(Path(args.archivo), central)
         missing = rnpv.missing_sources(project)
-    if args.exigir_fuentes and missing:
-        raise ValueError("--exigir-fuentes: entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o valores por "
-                         "defecto sin declarar: " + ", ".join(missing))
+        untraceable = _econ_source_problems(cfg, rnpv.declared_sources(project))
+    if args.exigir_fuentes and (missing or untraceable):
+        raise ValueError("--exigir-fuentes: " + "; ".join(
+            (["entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o valores por defecto sin declarar: "
+              + ", ".join(missing)] if missing else [])
+            + (["fuentes sin rastrear en el registro: " + "; ".join(untraceable)] if untraceable else [])))
+    sources_warning = ("\n\nAVISO: fuentes sin rastrear en el registro ([PUB] con fuente o afirmación registrada y "
+                       "verificada; [DER] con la orden o el script): " + "; ".join(untraceable)
+                       + ". `--exigir-fuentes` las rechaza.") if untraceable else ""
     if args.accion == "ganadero":
         data = {"escenarios": farm.scenarios(model, args.sim, args.semilla),
                 "monte_carlo": farm.monte_carlo(model, args.sim, args.semilla),
                 "dosis": farm.dose_summary(model), "sensibilidad": farm.sensitivity(model),
-                "entradas": farm.input_table(model), "entradas_sin_fuente": missing}
-        text = farm.report(model, args.sim, args.semilla)
-        summary = {k: data[k] for k in ("monte_carlo", "dosis", "entradas_sin_fuente")}
+                "entradas": farm.input_table(model), "entradas_sin_fuente": missing,
+                "fuentes_sin_rastrear": untraceable, "estadistico_central": central}
+        text = farm.report(model, args.sim, args.semilla) + sources_warning
+        summary = {k: data[k] for k in ("monte_carlo", "dosis", "entradas_sin_fuente", "fuentes_sin_rastrear",
+                                        "estadistico_central")}
     else:
         data = rnpv.evaluate(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida)
         data.update({"sensibilidad": rnpv.sensitivity(project), "entradas": rnpv.input_table(project),
-                     "entradas_sin_fuente": missing})
-        text = rnpv.report(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida)
+                     "entradas_sin_fuente": missing, "fuentes_sin_rastrear": untraceable})
+        text = rnpv.report(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida) + sources_warning
         if args.ganadero:
-            data["coherencia"] = rnpv.coherence(farm.load_farm_model(Path(args.ganadero)), project)
+            data["coherencia"] = rnpv.coherence(farm.load_farm_model(Path(args.ganadero), central), project)
             text += "\n\n" + rnpv.coherence_text(data["coherencia"])
             status = 0 if data["coherencia"]["coherente"] else 1
         else:
@@ -918,7 +971,7 @@ def cmd_econ(args, cfg) -> int:
                      "usa --ganadero <econ_ganadero.toml> o `nutria econ coherencia`.")
         summary = {k: v for k, v in data.items() if k not in ("sensibilidad", "entradas")}
     inputs = {"archivo": args.archivo, "sha256": sha256_file(Path(args.archivo)), "sim": args.sim,
-              "semilla": args.semilla, "exigir_fuentes": args.exigir_fuentes}
+              "semilla": args.semilla, "exigir_fuentes": args.exigir_fuentes, "valor_central": central}
     if args.accion == "desarrollador":
         inputs["umbral_perdida"] = args.umbral_perdida
         if args.ganadero:
@@ -1290,6 +1343,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("econ", parents=[common], help="evaluación económica")
     ec = s.add_subparsers(dest="accion", required=True)
+    central_help = ("estadístico del valor central de TODAS las entradas (valores centrales, respuesta umbral, "
+                    "tornado y coherencia): moda (por defecto) o mediana")
     for name in ("ganadero", "desarrollador"):
         x = ec.add_parser(name, parents=[common])
         x.add_argument("archivo", help="modelo en TOML (ver ejemplos/)")
@@ -1297,7 +1352,10 @@ def build_parser() -> argparse.ArgumentParser:
         x.add_argument("--semilla", type=int, default=42)
         x.add_argument("--exigir-fuentes", dest="exigir_fuentes", action="store_true",
                        help="falla si alguna entrada declarada no tiene 'fuente' con etiqueta ([PUB], [DER], [SUP], "
-                            "[DESC]) o si se usa un valor por defecto no neutro sin declararlo")
+                            "[DESC]), si se usa un valor por defecto no neutro sin declararlo, si una fuente [PUB] no "
+                            "cita una fuente o afirmación registrada y verificada o si una [DER] no indica la orden")
+        x.add_argument("--valor-central", dest="valor_central", choices=("moda", "mediana"), default="moda",
+                       help=central_help)
         if name == "desarrollador":
             x.add_argument("--umbral-perdida", dest="umbral_perdida", type=float,
                            help="umbral de pérdida en € para P(pérdida > umbral) (por defecto, [proyecto]."
@@ -1310,6 +1368,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("ganadero", help="modelo del ganadero (TOML)")
     x.add_argument("desarrollador", help="modelo de la empresa (TOML) con las ventas construidas")
     x.add_argument("--tolerancia", type=float, default=0.001, help="diferencia relativa admitida (0,001 = 0,1 %%)")
+    x.add_argument("--valor-central", dest="valor_central", choices=("moda", "mediana"), default="moda",
+                   help=central_help)
     s.set_defaults(func=cmd_econ)
 
     s = sub.add_parser("dosis", parents=[common], help="conversión de dosis entre g/animal/día, mg/kg de MS y g/t")

@@ -34,6 +34,10 @@ evaluate() hace dos simulaciones de Monte Carlo con los mismos parámetros muest
   desarrollo sin descontar).
 sensitivity() da el tornado del rNPV central: cada entrada con incertidumbre en su P10 y su P90 con las demás en su
 valor central (y la tasa de descuento ±2 puntos si es fija).
+
+Valores centrales: el mismo estadístico para todas las entradas (`Project.central`: "moda" por defecto o "mediana";
+ver nutria.econ.dist). La probabilidad de éxito de cada fase debe estar en [0, 1] en todas las simulaciones (no se
+recorta en silencio).
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .dist import Dist, parse_dist, source_has_label
+from .dist import CENTRAL_TEXT, Dist, check_central, parse_dist, source_has_label
 
 _SECTIONS = {"proyecto", "fase", "mercado", "supuestos"}
 _PROYECTO_KEYS = {"nombre", "tasa_descuento", "umbral_perdida_eur", "nota"}
@@ -109,6 +113,7 @@ class Project:
     loss_threshold: float | None = None
     species: str = ""
     declared: set[str] = field(default_factory=set)
+    central: str = "moda"  # estadístico central de TODAS las entradas: "moda" o "mediana"
 
     @property
     def peak_sales(self) -> Dist | None:
@@ -123,7 +128,10 @@ def _check_keys(where: str, table, allowed: set[str]) -> None:
         raise ValueError(f"{where}: claves desconocidas {sorted(unknown)}. Admitidas: {sorted(allowed)}")
 
 
-def load_project(path: Path) -> Project:
+def load_project(path: Path, central: str = "moda") -> Project:
+    from .farm import assumptions_list
+
+    check_central(central)
     data = tomllib.loads(Path(path).read_text("utf-8"))
     unknown = set(data) - _SECTIONS
     if unknown:
@@ -133,6 +141,7 @@ def load_project(path: Path) -> Project:
     market = data.get("mercado", {})
     _check_keys("[proyecto]", proj, _PROYECTO_KEYS)
     _check_keys("[mercado]", market, set(MARKET) | {"especie", "nota"})
+    _check_keys("[supuestos]", data.get("supuestos", {}), {"lista"})
     declared: set[str] = set()
     phases = []
     for i, f in enumerate(data.get("fase", []), 1):
@@ -173,14 +182,13 @@ def load_project(path: Path) -> Project:
         declared.add("proyecto.tasa_descuento")
     threshold = proj.get("umbral_perdida_eur")
     if threshold is not None and (isinstance(threshold, bool) or not isinstance(threshold, (int, float))
-                                  or not threshold >= 0):
-        raise ValueError("[proyecto].umbral_perdida_eur debe ser un número >= 0 (€)")
+                                  or not math.isfinite(threshold) or not threshold >= 0):
+        raise ValueError("[proyecto].umbral_perdida_eur debe ser un número finito >= 0 (€)")
     return Project(
         name=proj.get("nombre", Path(path).stem), discount=parse_dist(proj.get("tasa_descuento", 0.10)),
-        phases=phases, market=values, built_sales=built_sales,
-        assumptions=list(data.get("supuestos", {}).get("lista", [])),
+        phases=phases, market=values, built_sales=built_sales, assumptions=assumptions_list(data),
         loss_threshold=None if threshold is None else float(threshold), species=str(market.get("especie", "")),
-        declared=declared,
+        declared=declared, central=central,
     )
 
 
@@ -198,9 +206,14 @@ def inputs(project: Project) -> list[tuple[str, str, Dist]]:
 
 
 def input_table(project: Project) -> list[dict]:
-    return [{"entrada": key, "descripcion": label, "distribucion": d.describe(), "central": d.central(),
-             "p10": d.quantile(0.10), "p90": d.quantile(0.90), "fuente": d.source,
-             "declarada": key in project.declared} for key, label, d in inputs(project)]
+    return [{"entrada": key, "descripcion": label, "distribucion": d.describe(), "central": d.central(project.central),
+             "estadistico_central": project.central, "p10": d.quantile(0.10), "p90": d.quantile(0.90),
+             "fuente": d.source, "declarada": key in project.declared} for key, label, d in inputs(project)]
+
+
+def declared_sources(project: Project) -> list[tuple[str, str]]:
+    """(dónde, fuente) de cada fuente declarada (para comprobarlas en el registro)."""
+    return [(r["entrada"], r["fuente"]) for r in input_table(project) if r["fuente"]]
 
 
 def missing_sources(project: Project) -> list[str]:
@@ -220,7 +233,7 @@ def missing_sources(project: Project) -> list[str]:
 
 # ---------------------------------------------------------------------------------------------- cálculo
 def _central_values(project: Project) -> dict:
-    return {key: d.central() for key, _label, d in inputs(project)}
+    return {key: d.central(project.central) for key, _label, d in inputs(project)}
 
 
 def _sample(project: Project, rng: np.random.Generator, n: int) -> dict:
@@ -246,6 +259,11 @@ def _check_ranges(project: Project, v: dict) -> None:
             x = np.atleast_1d(np.asarray(v[f"fase[{i}].{part}"], dtype=float))
             if np.any(~np.isfinite(x) | (x < 0)):
                 raise ValueError(f"fase[{i}].{part} debe ser >= 0 en todas las simulaciones")
+        p = np.atleast_1d(np.asarray(v[f"fase[{i}].prob_exito"], dtype=float))
+        bad = ~np.isfinite(p) | (p < 0) | (p > 1)
+        if np.any(bad):
+            raise ValueError(f"fase[{i}].prob_exito fuera de [0, 1] en {int(bad.sum())} de {p.size} valores: usa una "
+                             "distribución acotada (pert, triangular, uniforme) en lugar de recortarla")
 
 
 def peak_sales(project: Project, v: dict):
@@ -345,7 +363,7 @@ def simulate(project: Project, n: int = 10000, seed: int = 42) -> dict:
 
 
 def development_cost_central(project: Project) -> float:
-    return float(sum(ph.cost.central() for ph in project.phases))
+    return float(sum(ph.cost.central(project.central) for ph in project.phases))
 
 
 def evaluate(project: Project, n: int = 10000, seed: int = 42, loss_threshold: float | None = None) -> dict:
@@ -357,8 +375,8 @@ def evaluate(project: Project, n: int = 10000, seed: int = 42, loss_threshold: f
     if loss_threshold is None:
         loss_threshold = project.loss_threshold
     if loss_threshold is not None:
-        if not loss_threshold >= 0:
-            raise ValueError("El umbral de pérdida debe ser >= 0 (€)")
+        if not (math.isfinite(loss_threshold) and loss_threshold >= 0):
+            raise ValueError("El umbral de pérdida debe ser un número finito >= 0 (€)")
         origin = "declarado"
     else:
         loss_threshold = DEFAULT_LOSS_FRACTION * development_cost_central(project)
@@ -378,7 +396,7 @@ def evaluate(project: Project, n: int = 10000, seed: int = 42, loss_threshold: f
     return {
         "rnpv_central": float(npv), "prob_exito_acumulada": float(p_success), "anios_hasta_mercado": float(ttm),
         "ventas_pico_central": float(peak_sales(project, central)), "ventas_construidas": project.built_sales,
-        "coste_desarrollo_central": development_cost_central(project),
+        "coste_desarrollo_central": development_cost_central(project), "estadistico_central": project.central,
         # Incertidumbre de los parámetros: distribución del rNPV (un valor esperado por simulación).
         "rnpv_p05": float(np.percentile(rn, 5)), "rnpv_p50": float(np.percentile(rn, 50)),
         "rnpv_p95": float(np.percentile(rn, 95)),
@@ -409,7 +427,7 @@ def sensitivity(project: Project) -> list[dict]:
             lo, hi = d.quantile(0.10), d.quantile(0.90)
             kind = "P10-P90"
         elif key == "proyecto.tasa_descuento":
-            lo, hi = max(0.0, d.central() - 0.02), d.central() + 0.02
+            lo, hi = max(0.0, d.central(project.central) - 0.02), d.central(project.central) + 0.02
             kind = "±2 puntos"
         else:
             continue
@@ -434,7 +452,15 @@ def _norm(text: str) -> str:
     return " ".join(str(text).lower().split())
 
 
-def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: float) -> dict:
+# Tolerancia mínima al comparar P5 y P95: 1 % si se calculan con la inversa de la distribución; 2 % si el P5-P95 del
+# ganadero sale de una simulación (dosis convertida con ingestiones inciertas), por el error de Monte Carlo.
+RANGE_TOL = 0.01
+RANGE_TOL_SIMULATED = 0.02
+_COHERENCE_SIMS = 20000
+_COHERENCE_SEED = 20240501
+
+
+def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: float, range_tol: float = RANGE_TOL) -> dict:
     scale = max(abs(farm_c), abs(proj_c), 1e-12)
     item = {"magnitud": name, "ganadero": farm_c, "empresa": proj_c,
             "ganadero_p05_p95": farm_q, "empresa_p05_p95": proj_q}
@@ -443,7 +469,8 @@ def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: floa
         item["detalle"] = (f"valor central {farm_c:.6g} en el modelo del ganadero y {proj_c:.6g} en el de la empresa "
                            f"(diferencia {100 * (proj_c - farm_c) / scale:+.2f} %)")
     elif farm_q is not None and proj_q is not None and any(
-            abs(a - b) > max(rtol, 0.01) * max(abs(a), abs(b), scale) for a, b in zip(farm_q, proj_q, strict=True)):
+            abs(a - b) > max(rtol, range_tol) * max(abs(a), abs(b), scale)
+            for a, b in zip(farm_q, proj_q, strict=True)):
         item["estado"] = "difiere"
         item["detalle"] = (f"mismo valor central pero distinta incertidumbre: P5-P95 {farm_q[0]:.6g}-{farm_q[1]:.6g} "
                            f"(ganadero) frente a {proj_q[0]:.6g}-{proj_q[1]:.6g} (empresa)")
@@ -455,19 +482,25 @@ def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: floa
 
 def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
     """Compara el precio, la dosis (g/animal/día) y los días de uso del modelo del ganadero (`farm.FarmModel`) con los
-    del modelo de la empresa. Con ventas_pico_eur_anio como dato no es comprobable: falla y da los animales-ciclo
-    tratados al año que implicaría con el precio, la dosis y los días del ganadero."""
+    del modelo de la empresa: valor central (con el mismo estadístico en los dos modelos) y P5-P95. Si la dosis del
+    ganadero está en mg/kg de MS o en g/t, se convierte a g/animal/día con sus ingestiones: el valor central con los
+    valores centrales y el P5-P95 con una simulación. Con ventas_pico_eur_anio como dato no es comprobable: falla y da
+    los animales-ciclo tratados al año que implicaría con el precio, la dosis y los días del ganadero."""
     from . import farm  # import local: farm no depende de rnpv
 
-    if not rtol >= 0:
-        raise ValueError("La tolerancia debe ser >= 0")
+    if not (math.isfinite(rtol) and rtol >= 0):
+        raise ValueError("La tolerancia debe ser un número finito >= 0")
+    if model.central != project.central:
+        raise ValueError(f"Los dos modelos deben usar el mismo estadístico central ({model.central} frente a "
+                         f"{project.central})")
+    stat = project.central
     dose = farm.dose_summary(model)
     farm_days = model.cost_days if model.cost_days is not None else model.days
     farm_price = model.price_eur_kg
     items = []
     if not project.built_sales:
-        per_animal = farm_price.central() * dose["g_animal_dia"] / 1000.0 * farm_days.central()
-        implied = project.peak_sales.central() / per_animal if per_animal > 0 else float("nan")
+        per_animal = farm_price.central(stat) * dose["g_animal_dia"] / 1000.0 * farm_days.central(stat)
+        implied = project.peak_sales.central(stat) / per_animal if per_animal > 0 else float("nan")
         items.append({"magnitud": "ventas", "estado": "no_comprobable", "ganadero": None, "empresa": None,
                       "detalle": "ventas_pico_eur_anio es un dato de entrada: no puede comprobarse que use el precio, "
                                  "la dosis y los días del ganadero. Constrúyelas con censo_direccionable × "
@@ -482,16 +515,21 @@ def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
         def q(d: Dist) -> tuple[float, float]:
             return (d.quantile(0.05), d.quantile(0.95))
 
-        items.append(_compare("precio que paga el ganadero (€/kg)", farm_price.central(),
-                              m["precio_eur_kg"].central(), q(farm_price), q(m["precio_eur_kg"]), rtol))
-        farm_dose_q = q(model.dose) if model.dose_basis == "g_animal_dia" else None
-        dose_item = _compare("dosis (g/animal/día)", dose["g_animal_dia"], m["dosis_g_dia"].central(), farm_dose_q,
-                             q(m["dosis_g_dia"]) if farm_dose_q is not None else None, rtol)
-        if model.dose_basis != "g_animal_dia":
-            dose_item["detalle"] += (f" (la dosis del ganadero está en {model.dose_basis} y se convierte con sus "
-                                     "ingestiones centrales; solo se compara el valor central)")
+        items.append(_compare("precio que paga el ganadero (€/kg)", farm_price.central(stat),
+                              m["precio_eur_kg"].central(stat), q(farm_price), q(m["precio_eur_kg"]), rtol))
+        if model.dose_basis == "g_animal_dia":
+            dose_item = _compare("dosis (g/animal/día)", dose["g_animal_dia"], m["dosis_g_dia"].central(stat),
+                                 q(model.dose), q(m["dosis_g_dia"]), rtol)
+        else:
+            farm_dose_q = farm.dose_g_day_quantiles(model, (5, 95), _COHERENCE_SIMS, _COHERENCE_SEED)
+            dose_item = _compare("dosis (g/animal/día)", dose["g_animal_dia"], m["dosis_g_dia"].central(stat),
+                                 farm_dose_q, q(m["dosis_g_dia"]), rtol, RANGE_TOL_SIMULATED)
+            dose_item["detalle"] += (f" (la dosis del ganadero está en {model.dose_basis} y se convierte a g/animal/día "
+                                     "con sus ingestiones: el valor central con los valores centrales y el P5-P95 con "
+                                     f"{_COHERENCE_SIMS} simulaciones, con una tolerancia de "
+                                     f"{100 * max(rtol, RANGE_TOL_SIMULATED):g} %)")
         items.append(dose_item)
-        items.append(_compare("días de uso por ciclo", farm_days.central(), m["dias_por_ciclo"].central(),
+        items.append(_compare("días de uso por ciclo", farm_days.central(stat), m["dias_por_ciclo"].central(stat),
                               q(farm_days), q(m["dias_por_ciclo"]), rtol))
     if project.species and model.species and _norm(project.species) != _norm(model.species):
         items.append({"magnitud": "especie", "estado": "difiere", "ganadero": model.species,
@@ -499,7 +537,7 @@ def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
                       "detalle": f"'{model.species}' en el modelo del ganadero y '{project.species}' en el de la "
                                  "empresa"})
     return {"coherente": all(i["estado"] == "coherente" for i in items), "comparaciones": items,
-            "tolerancia_relativa": rtol}
+            "tolerancia_relativa": rtol, "estadistico_central": stat}
 
 
 def coherence_text(res: dict) -> str:
@@ -507,7 +545,8 @@ def coherence_text(res: dict) -> str:
             "AVISO DE COHERENCIA ganadero-empresa: los dos modelos no usan el mismo precio, dosis y días (o no puede "
             "comprobarse); los criterios rentabilidad_ganadero y atractivo_empresa se apoyarían en supuestos "
             "incompatibles")
-    lines = [head, f"(tolerancia relativa {res['tolerancia_relativa']:g})"]
+    lines = [head, f"(tolerancia relativa {res['tolerancia_relativa']:g}; valores centrales: "
+                   f"{res.get('estadistico_central', 'moda')})"]
     for item in res["comparaciones"]:
         lines.append(f"- {item['magnitud']}: {item['estado'].upper()}: {item['detalle']}")
     return "\n".join(lines)
@@ -546,7 +585,8 @@ def _sensitivity_lines(project: Project, top: int = 10) -> list[str]:
 def report(project: Project, n: int = 10000, seed: int = 42, loss_threshold: float | None = None) -> str:
     res = evaluate(project, n, seed, loss_threshold)
     r = project.discount
-    rate = f"{r.central():.0%}" if r.fixed is not None else f"{r.central():.0%} central, {r.kind}"
+    rate = (f"{r.central(project.central):.0%}" if r.fixed is not None
+            else f"{r.central(project.central):.0%} central, {r.kind}")
     if project.built_sales:
         sales = ("Ventas pico (central): {:,.0f} €/año, construidas: censo direccionable × adopción en el pico × "
                  "ciclos por animal y año × días por ciclo × dosis × precio del ganadero × (1 − margen de la "
@@ -563,7 +603,7 @@ def report(project: Project, n: int = 10000, seed: int = 42, loss_threshold: flo
              f"Años hasta el mercado (central): {res['anios_hasta_mercado']:.1f}",
              sales,
              f"rNPV central: {res['rnpv_central']:,.0f} € (valor esperado del VPN con el riesgo de cada fase y "
-             "los valores centrales de los parámetros)",
+             f"los valores centrales de los parámetros: {CENTRAL_TEXT[project.central]})",
              "",
              f"1) Incertidumbre de los parámetros ({n} simulaciones, semilla {seed}): rNPV P50 "
              f"{res['rnpv_p50']:,.0f} € [P5 {res['rnpv_p05']:,.0f}; P95 {res['rnpv_p95']:,.0f}]; "

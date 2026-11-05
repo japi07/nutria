@@ -16,10 +16,10 @@ Periodos (días):
 
 Escenarios coherentes: percentiles del beneficio neto simulado por Monte Carlo
 - conservador: P10; intermedio: P50; optimista: P90;
-más una fila de valores centrales (moda declarada de cada entrada; mediana si la distribución no declara
-moda) como referencia determinista. Combinar percentiles de las entradas (p. ej., P10 de todos los
-beneficios con P90 de todos los costes) no da, en general, el percentil del resultado: suele dar un caso
-bastante más extremo y de probabilidad desconocida.
+más una fila de valores centrales como referencia determinista, con UN estadístico para todas las entradas
+(`FarmModel.central`: "moda" por defecto o "mediana"; ver nutria.econ.dist). Combinar percentiles de las entradas
+(p. ej., P10 de todos los beneficios con P90 de todos los costes) no da, en general, el percentil del resultado:
+suele dar un caso bastante más extremo y de probabilidad desconocida.
 
 Monte Carlo: las entradas son independientes salvo las correlaciones declaradas ([[correlacion]] por pares o
 [correlaciones] con la matriz completa), que se aplican con una cópula gaussiana; la matriz se comprueba (simétrica,
@@ -28,15 +28,21 @@ diagonal 1, |rho| <= 1 y definida positiva) y, si no lo es, el modelo no se eval
 Sensibilidad (tornado): cada entrada con incertidumbre en su P10 y en su P90 con las demás en su valor central;
 se ordena por la amplitud del neto. Es un análisis de una entrada cada vez (no aplica las correlaciones).
 
-Respuesta umbral de cada beneficio: con valores centrales coherentes (coste, valor unitario y días en su valor central:
-moda declarada o mediana), (a) con los demás beneficios a cero y (b) con los demás en su valor central.
+Respuesta umbral de cada beneficio: con valores centrales coherentes (coste, valor unitario y días con el mismo
+estadístico central: moda con moda o mediana con mediana, declarado en el informe), (a) con los demás beneficios a cero
+y (b) con los demás en su valor central.
+
+Coste: [coste] declara la dosis (en una base) junto con precio_eur_kg, o solo otros_eur_dia o fijo_eur_ciclo; un
+modelo sin ningún coste, o con dosis sin precio (o al revés), es un error.
 
 Alternativa ([alternativa], opcional): "no hacer nada" (no_hacer_nada = true; el neto ya se mide frente a no usar el
 producto) u otro producto con su coste y su respuesta en cada beneficio, evaluado en las mismas simulaciones
 (valores unitarios, días y ración compartidos): diferencia de neto y P(producto > alternativa).
 
 Fuentes: cada entrada puede declararse como tabla con "fuente" ({ dist = "pert", ..., fuente = "[SUP] ..." } o
-{ valor = 50, fuente = "[PUB] R3" }); el informe las muestra y señala las declaradas sin fuente.
+{ valor = 50, fuente = "[PUB] doi:10.xxxx/yyyy" }); el informe las muestra y señala las declaradas sin fuente. Una
+fuente [PUB] cita el identificador de una fuente o afirmación registrada (`nutria econ ... --exigir-fuentes` lo
+comprueba en el registro).
 ROI = beneficio/coste: ROI > 1 equivale a beneficio neto positivo.
 """
 
@@ -50,7 +56,8 @@ from pathlib import Path
 import numpy as np
 
 from .. import dosis
-from .dist import Dist, copula_uniforms, gaussian_copula, parse_dist, source_has_label
+from .dist import (CENTRAL_TEXT, Dist, check_central, copula_uniforms, gaussian_copula, parse_dist,
+                   source_has_label)
 
 # Escenario -> percentil del beneficio neto simulado.
 SCENARIO_PERCENTILES = (("conservador", 10), ("intermedio", 50), ("optimista", 90))
@@ -118,6 +125,7 @@ class FarmModel:
     corr_sources: list[str] = field(default_factory=list)
     corr_unsourced: list[str] = field(default_factory=list)
     declared: set[str] = field(default_factory=set)
+    central: str = "moda"  # estadístico central de TODAS las entradas: "moda" o "mediana"
 
     @property
     def dose_key(self) -> str:
@@ -318,7 +326,28 @@ def _parse_correlations(data: dict, model: FarmModel) -> None:
     model.corr_unsourced = unsourced
 
 
-def load_farm_model(path: Path) -> FarmModel:
+def assumptions_list(data: dict) -> list[str]:
+    """[supuestos].lista: lista de textos (se comprueba el tipo para que una errata no se lea letra a letra)."""
+    items = data.get("supuestos", {}).get("lista", [])
+    if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+        raise ValueError("[supuestos].lista debe ser una lista de textos")
+    return list(items)
+
+
+def _check_cost(where: str, coste: dict) -> None:
+    """La dosis y el precio van juntos (coste del producto = dosis × precio) y el modelo necesita algún coste."""
+    has_dose = any(k in coste for k in DOSE_KEYS)
+    if has_dose != ("precio_eur_kg" in coste):
+        raise ValueError(f"{where}: la dosis y precio_eur_kg van juntos (coste del producto = dosis × precio / 1000); "
+                         + ("falta precio_eur_kg" if has_dose else "falta la dosis (dosis_g_dia, dosis_mg_kg_ms o "
+                                                                    "dosis_g_t)"))
+    if not has_dose and not any(k in coste for k in ("otros_eur_dia", "fijo_eur_ciclo")):
+        raise ValueError(f"{where}: el modelo necesita un coste: la dosis y precio_eur_kg del producto, otros_eur_dia o "
+                         "fijo_eur_ciclo (sin coste, el ROI no tiene sentido)")
+
+
+def load_farm_model(path: Path, central: str = "moda") -> FarmModel:
+    check_central(central)
     data = tomllib.loads(Path(path).read_text("utf-8"))
     unknown = set(data) - _SECTIONS
     if unknown:
@@ -329,6 +358,7 @@ def load_farm_model(path: Path) -> FarmModel:
     coste = data.get("coste", {})
     _check_keys("[escenario]", esc, _ESCENARIO_KEYS)
     _check_keys("[coste]", coste, _COSTE_KEYS)
+    _check_keys("[supuestos]", data.get("supuestos", {}), {"lista"})
     raw_benefits = data.get("beneficio", [])
     if not isinstance(raw_benefits, list):
         raise ValueError("[[beneficio]] debe ser una lista de tablas")
@@ -338,6 +368,7 @@ def load_farm_model(path: Path) -> FarmModel:
     names = [b.name for b in benefits]
     if len(set(names)) != len(names):
         raise ValueError("Los [[beneficio]] deben tener nombres distintos")
+    _check_cost("[coste]", coste)
     ration = _parse_ration(data, declared)
     dose, basis = _parse_dose("[coste]", coste, declared, "coste")
     _check_dose_requirements("[coste]", basis, ration)
@@ -351,8 +382,9 @@ def load_farm_model(path: Path) -> FarmModel:
         days=parse_dist(esc.get("dias", 1)), dose=dose, dose_basis=basis,
         price_eur_kg=parse_dist(coste.get("precio_eur_kg", 0)), other_eur_day=parse_dist(coste.get("otros_eur_dia", 0)),
         fixed_eur_cycle=parse_dist(coste.get("fijo_eur_ciclo", 0)), benefits=benefits,
-        assumptions=list(data.get("supuestos", {}).get("lista", [])),
+        assumptions=assumptions_list(data),
         cost_days=parse_dist(coste["dias"]) if "dias" in coste else None, ration=ration, declared=declared,
+        central=central,
     )
     model.alternative = _parse_alternative(data, benefits, ration, declared)
     _parse_correlations(data, model)
@@ -401,10 +433,21 @@ def input_table(model: FarmModel) -> list[dict]:
     """Entradas con su distribución, valor central, P10-P90 y fuente (para el informe y la trazabilidad)."""
     rows = []
     for key, label, d in inputs(model):
-        rows.append({"entrada": key, "descripcion": label, "distribucion": d.describe(), "central": d.central(),
+        rows.append({"entrada": key, "descripcion": label, "distribucion": d.describe(),
+                     "central": d.central(model.central), "estadistico_central": model.central,
                      "p10": d.quantile(0.10), "p90": d.quantile(0.90), "fuente": d.source,
                      "declarada": key in model.declared})
     return rows
+
+
+def declared_sources(model: FarmModel) -> list[tuple[str, str]]:
+    """(dónde, fuente) de cada fuente declarada: entradas, correlaciones y alternativa (para comprobarlas en el
+    registro)."""
+    out = [(r["entrada"], r["fuente"]) for r in input_table(model) if r["fuente"]]
+    out += [("correlaciones", s) for s in model.corr_sources]
+    if model.alternative is not None and model.alternative.source:
+        out.append(("alternativa", str(model.alternative.source)))
+    return out
 
 
 def missing_sources(model: FarmModel) -> list[str]:
@@ -449,8 +492,12 @@ def _draw(model: FarmModel, n: int, seed: int) -> dict:
 
 
 def _central_values(model: FarmModel) -> dict:
-    """Valor central de cada entrada: moda declarada (pert, triangular, normal) o mediana (resto)."""
-    return {key: d.central() for key, _label, d in inputs(model)}
+    """Valor central de cada entrada con el mismo estadístico para todas (`model.central`: moda o mediana)."""
+    return {key: d.central(model.central) for key, _label, d in inputs(model)}
+
+
+def central_text(model: FarmModel) -> str:
+    return CENTRAL_TEXT[model.central]
 
 
 def _feed(model: FarmModel, v: dict):
@@ -542,15 +589,16 @@ def scenarios(model: FarmModel, n: int = 10000, seed: int = 42) -> dict:
     res = _evaluate(model, _central_values(model))
     central = {k: (None if x is None else float(x)) for k, x in res.items() if k != "componentes"}
     central["componentes"] = {name: float(y) for name, y in res["componentes"].items()}
-    central["definicion"] = ("Evaluación determinista con la moda declarada de cada entrada (mediana si la "
-                             "distribución no declara moda); no es un percentil del neto")
+    central["estadistico_central"] = model.central
+    central["definicion"] = (f"Evaluación determinista con la {central_text(model)}; no es un percentil del neto")
     out["valores_centrales"] = central
     return out
 
 
 def breakeven(model: FarmModel) -> list[dict]:
-    """Respuesta umbral de cada beneficio con valores centrales coherentes (coste, valor unitario y días en su valor
-    central): (a) con los demás beneficios a cero y (b) con los demás beneficios en su valor central."""
+    """Respuesta umbral de cada beneficio con valores centrales coherentes (coste, valor unitario y días con el MISMO
+    estadístico central, `model.central`): (a) con los demás beneficios a cero y (b) con los demás beneficios en su
+    valor central."""
     base = _central_values(model)
     res = _evaluate(model, base)
     cost = float(res["coste"])
@@ -564,9 +612,10 @@ def breakeven(model: FarmModel) -> list[dict]:
         out.append({"beneficio": b.name, "por_dia": b.per_day, "valor": alone,
                     "valor_con_otros_centrales": with_others,
                     "respuesta_central": base[f"beneficio[{i}].respuesta"], "coste_central": cost,
-                    "nota": "Respuesta mínima en este beneficio para cubrir el coste central. 'valor': con el resto "
-                            "de beneficios a cero; 'valor_con_otros_centrales': con el resto en su valor central. "
-                            "Coste, valor unitario y días en su valor central (moda declarada o mediana)."})
+                    "estadistico_central": model.central,
+                    "nota": "Respuesta mínima en este beneficio para cubrir el coste central. 'valor': SOLO con este "
+                            "beneficio (EXCLUYE los demás, a cero); 'valor_con_otros_centrales': con el resto en su "
+                            f"valor central. Coste, valor unitario y días con la {central_text(model)}."})
     return out
 
 
@@ -616,6 +665,13 @@ def monte_carlo(model: FarmModel, n: int = 10000, seed: int = 42) -> dict:
     return out
 
 
+def dose_g_day_quantiles(model: FarmModel, qs=(5, 95), n: int = 20000, seed: int = 42) -> tuple[float, ...]:
+    """Percentiles de la dosis en g/animal/día simulada (convertida con las ingestiones muestreadas)."""
+    v = _draw(model, n, seed)
+    g = dosis.a_g_animal_dia(v[model.dose_key], model.dose_basis, v.get("racion.ingestion_ms_kg_dia"), _feed(model, v))
+    return tuple(float(x) for x in np.percentile(np.asarray(g, dtype=float) * np.ones(n), list(qs)))
+
+
 def dose_summary(model: FarmModel) -> dict:
     """Dosis y coste del producto en valores centrales, en las tres bases cuando las entradas lo permiten."""
     res = _evaluate(model, _central_values(model))
@@ -636,15 +692,15 @@ def _days_for(model: FarmModel, b: Benefit) -> Dist:
     return b.days if b.days is not None else model.days
 
 
-def _days_label(d: Dist) -> str:
-    text = f"{d.central():g} días"
+def _days_label(d: Dist, stat: str = "moda") -> str:
+    text = f"{d.central(stat):g} días"
     return text if d.fixed is not None else f"{text} (valor central; distribución {d.kind})"
 
 
 def _periods_line(model: FarmModel) -> str:
-    parts = ["coste " + _days_label(model.cost_days if model.cost_days is not None else model.days)]
+    parts = ["coste " + _days_label(model.cost_days if model.cost_days is not None else model.days, model.central)]
     for b in model.benefits:
-        parts.append(f"'{b.name}' " + (_days_label(_days_for(model, b)) if b.per_day else "por ciclo"))
+        parts.append(f"'{b.name}' " + (_days_label(_days_for(model, b), model.central) if b.per_day else "por ciclo"))
     return "Periodos: " + "; ".join(parts)
 
 
@@ -671,9 +727,9 @@ def _dose_lines(model: FarmModel, mc: dict, unit: str) -> list[str]:
     return lines
 
 
-def _breakeven_lines(mc: dict) -> list[str]:
-    lines = ["Respuesta umbral (valores centrales coherentes: coste, valor unitario y días en su moda declarada o "
-             "mediana):"]
+def _breakeven_lines(model: FarmModel, mc: dict) -> list[str]:
+    lines = [f"Respuesta umbral (valores centrales coherentes: coste, valor unitario y días con la {central_text(model)}"
+             "; cambia el estadístico con --valor-central):"]
     for t in mc["respuestas_umbral"]:
         per = "unidades/animal/día" if t["por_dia"] else "unidades/animal/ciclo"
         if not math.isfinite(t["valor"]):
@@ -749,7 +805,7 @@ def report(model: FarmModel, n: int = 10000, seed: int = 42) -> str:
         value = sc[name]["neto"]
         lines.append(f"{name:<14}{f'P{q}':>10}{value:>16.2f}{'sí' if value > 0 else 'no':>12}")
     c = sc["valores_centrales"]
-    lines += ["", "Valores centrales (moda declarada de cada entrada; mediana si no la declara): "
+    lines += ["", f"Valores centrales ({central_text(model)}): "
                   f"beneficio {c['beneficio']:.2f} €; coste {c['coste']:.2f} €; neto {c['neto']:.2f} €; "
                   f"ROI (beneficio/coste) {c['roi']:.2f}"]
     neto, roi = mc["neto_por_animal"], mc["roi"]
@@ -760,7 +816,7 @@ def report(model: FarmModel, n: int = 10000, seed: int = 42) -> str:
                   f"ROI > 1); neto P5 {neto['p05']:.2f} €, P95 {neto['p95']:.2f} €"]
     if roi is not None:
         lines.append(f"ROI (beneficio/coste): P10 {roi['p10']:.2f}; P50 {roi['p50']:.2f}; P90 {roi['p90']:.2f}")
-    lines += [""] + _breakeven_lines(mc)
+    lines += [""] + _breakeven_lines(model, mc)
     lines += [""] + _sensitivity_lines(model, unit)
     lines += [""] + _alternative_lines(model, mc, unit)
     lines += ["", "Cómo leer los escenarios: cada uno es un percentil del neto simulado, no una combinación de "

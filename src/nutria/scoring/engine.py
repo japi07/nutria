@@ -432,6 +432,13 @@ def rank(opportunities: list[dict], rubric: Rubric, profile: str = "recomendado"
             r.flags.append("La posición cambia con el perfil de pesos ("
                            + ", ".join(f"{p} {pos}" for p, pos in r.ranks_by_profile.items())
                            + "): el orden depende de los pesos elegidos")
+    tops = _top_sets(ordered, top_k, profile)
+    for r in ordered:
+        inside = [name for name, t in tops.items() if r.opportunity_id in t]
+        outside = [name for name, t in tops.items() if r.opportunity_id not in t]
+        if inside and outside:
+            r.flags.append(f"Dentro del top-{top_k} con {', '.join(inside)} y fuera con {', '.join(outside)}: que entre "
+                           "en la propuesta depende de los pesos o de la incertidumbre de las puntuaciones")
     for r in [r for r in ordered if r.status in ("APTA", "CONDICIONAL")][:top_k]:
         if r.critical_unresolved:
             r.flags.append(f"En el top-{top_k} para planes con compuertas críticas sin resolver: "
@@ -450,9 +457,24 @@ def _join(ids: list[str], limit: int = 12) -> str:
     return " > ".join(ids[:limit]) + (" > ..." if len(ids) > limit else "")
 
 
-def ranking_warnings(rows: list[RankRow], top_k: int = 3) -> list[str]:
-    """Avisos globales del ranking (D8-1 y D8-4): top-k para planes con compuertas críticas sin resolver y orden o
-    conjunto del top-k que cambian entre perfiles de pesos (incluido el orden Monte Carlo del perfil elegido)."""
+def _mc_label(profile: str | None) -> str:
+    return f"Monte Carlo ({profile})" if profile else "Monte Carlo"
+
+
+def _top_sets(rows: list[RankRow], top_k: int, profile: str | None = None) -> dict[str, set[str]]:
+    """Conjunto del top-k con el orden determinista de cada perfil de pesos y con el orden Monte Carlo (filas en el
+    orden devuelto por rank)."""
+    tops = {p: set(o[:top_k]) for p, o in _profile_orders(rows).items()}
+    if tops:
+        ranked = [r for r in rows if r.status in ("APTA", "CONDICIONAL")]
+        tops[_mc_label(profile)] = {r.opportunity_id for r in ranked[:top_k]}
+    return tops
+
+
+def ranking_warnings(rows: list[RankRow], top_k: int = 3, profile: str | None = None) -> list[str]:
+    """Avisos globales del ranking (D8-1 y D8-4): top-k para planes con compuertas críticas sin resolver; orden o
+    conjunto del top-k que cambian entre perfiles de pesos; y top-k del Monte Carlo (incertidumbre de las puntuaciones
+    y pesos perturbados) distinto del orden determinista del perfil elegido (`profile`; sin él, de todos)."""
     warnings = []
     ranked = [r for r in rows if r.status in ("APTA", "CONDICIONAL")]
     top = ranked[:top_k]
@@ -468,20 +490,27 @@ def ranking_warnings(rows: list[RankRow], top_k: int = 3) -> list[str]:
                         + "; ".join(f"{p}: {_join(o)}" for p, o in orders.items())
                         + "): el ranking depende de los pesos elegidos; no lo presentes como robusto.")
     tops = {p: o[:top_k] for p, o in orders.items()}
-    tops["Monte Carlo (perfil elegido)"] = [r.opportunity_id for r in top]
     if len({frozenset(t) for t in tops.values()}) > 1:
-        warnings.append(f"AVISO: el conjunto del top-{top_k} cambia según los pesos ("
+        warnings.append(f"AVISO: el conjunto del top-{top_k} cambia según el perfil de pesos ("
                         + "; ".join(f"{p}: {', '.join(t) or '-'}" for p, t in tops.items())
                         + "): compara los perfiles antes de proponer candidatas.")
+    mc = [r.opportunity_id for r in top]
+    reference = {profile: tops[profile]} if profile in tops else tops
+    if reference and all(frozenset(mc) != frozenset(t) for t in reference.values()):
+        warnings.append(f"AVISO: el top-{top_k} del Monte Carlo ({', '.join(mc) or '-'}), con la incertidumbre de las "
+                        "puntuaciones y los pesos perturbados, no coincide con el orden determinista "
+                        + ("del perfil " + profile + f" ({', '.join(tops[profile]) or '-'})" if profile in tops
+                           else "de ningún perfil")
+                        + f": el top-{top_k} no es robusto.")
     return warnings
 
 
-def format_table(rows: list[RankRow], top_k: int = 3) -> str:
+def format_table(rows: list[RankRow], top_k: int = 3, profile: str | None = None) -> str:
     profiles = sorted({p for r in rows for p in r.ranks_by_profile})
     header = (f"{'Oportunidad':<10} {'Estado':<12} {'Punt.':>6} {'P50 [P5-P95]':>20} {f'P(top{top_k})':>9} "
               f"{'Rango':>6} {'Valor':>6} {'Viab.':>6}  " + " ".join(f"{p[:5]:>5}" for p in profiles) + "  Cuadrante")
     lines = []
-    warnings = ranking_warnings(rows, top_k)
+    warnings = ranking_warnings(rows, top_k, profile)
     if warnings:
         lines += ["AVISOS:"] + [f"- {w}" for w in warnings] + [""]
     lines += [header, "-" * len(header)]

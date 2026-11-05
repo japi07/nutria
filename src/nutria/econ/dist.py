@@ -10,13 +10,20 @@ Formatos admitidos en TOML:
     valor = { dist = "uniforme", min = ..., max = ... }
     valor = { dist = "fijo", valor = ... }
 
-Cualquier tabla admite además "fuente" (de dónde sale el valor: "[PUB] R3", "[DER] nutria meta ...", "[SUP] ...")
-y "nota". Una clave desconocida es un error: así una errata (p. ej. "fuentes") no se pierde en silencio.
+Cualquier tabla admite además "fuente" (de dónde sale el valor: "[PUB] doi:10.xxxx/yyyy" o "[PUB] A-0003" con el
+identificador de una fuente o afirmación registrada, "[DER] nutria meta ...", "[SUP] ...") y "nota". Una clave
+desconocida es un error: así una errata (p. ej. "fuentes") no se pierde en silencio.
+
+Valor central de una entrada (`Dist.central`), con UN estadístico para todas las entradas de un modelo:
+- "moda" (por defecto): la moda declarada (pert, triangular), la media de la normal (su moda), exp(media_log −
+  de_log²) en la lognormal y, en la uniforme, que no tiene moda única, el punto medio;
+- "mediana": la mediana de cada entrada.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +31,13 @@ from scipy import stats
 
 # Etiquetas de CLAUDE.md que identifican el origen de un valor.
 ETIQUETAS_FUENTE = ("[PUB]", "[DER]", "[SUP]", "[DESC]", "[HIP]")
+# Estadístico del valor central (el mismo para todas las entradas de un modelo).
+CENTRAL_STATS = ("moda", "mediana")
+CENTRAL_TEXT = {
+    "moda": "moda de cada entrada (la declarada en pert y triangular, la media en la normal, exp(media_log − "
+            "de_log²) en la lognormal y el punto medio en la uniforme, que no tiene moda única)",
+    "mediana": "mediana de cada entrada",
+}
 _COMMON_KEYS = {"fuente", "nota"}
 _KEYS = {
     "fijo": {"dist", "valor"}, "pert": {"dist", "min", "moda", "max"}, "triangular": {"dist", "min", "moda", "max"},
@@ -62,18 +76,38 @@ class Dist:
             return self.fixed
         return float(self.frozen.ppf(q))
 
-    def central(self) -> float:
+    def mode(self) -> float:
+        """Moda: la declarada (pert, triangular), la media de la normal, exp(media_log − de_log²) en la lognormal y
+        el punto medio en la uniforme (densidad constante: no tiene moda única)."""
         if self.fixed is not None:
             return self.fixed
         if self.declared_mode is not None:
             return self.declared_mode
+        if self.kind == "lognormal":
+            p = self.params or {}
+            return float(math.exp(p["media_log"] - p["de_log"] ** 2))
         return float(self.frozen.median())
+
+    def median(self) -> float:
+        if self.fixed is not None:
+            return self.fixed
+        return float(self.frozen.median())
+
+    def central(self, stat: str = "moda") -> float:
+        """Valor central con el estadístico `stat` ("moda" o "mediana"), el mismo para todas las entradas."""
+        check_central(stat)
+        return self.mode() if stat == "moda" else self.median()
 
     def describe(self) -> str:
         if self.fixed is not None:
             return f"{self.fixed:g} (fijo)"
         p = self.params or {}
         return f"{self.kind}(" + ", ".join(f"{k} {v:g}" for k, v in p.items()) + ")"
+
+
+def check_central(stat: str) -> None:
+    if stat not in CENTRAL_STATS:
+        raise ValueError(f"Estadístico central no válido: {stat!r}. Opciones: {', '.join(CENTRAL_STATS)}")
 
 
 def _number(spec: dict, key: str, kind: str) -> float:
@@ -152,6 +186,43 @@ def source_has_label(source: str | None) -> bool:
     return bool(source) and any(tag in source for tag in ETIQUETAS_FUENTE)
 
 
+# Identificadores del registro que una fuente [PUB] puede citar: fuentes (doi:, pmid:, openalex:) y afirmaciones (A-).
+_ID_RE = re.compile(r"(?i)(?<![\w/.-])(doi:\s*10\.\d{4,9}/\S+|pmid:\s*\d+|openalex:\s*W\d+|A-\d{4,})")
+
+
+def _trim_id(token: str) -> str:
+    """Quita la puntuación final que no forma parte del identificador (paréntesis o corchetes sin abrir, '.', ',')."""
+    while token:
+        last = token[-1]
+        if last in ".,;:":
+            token = token[:-1]
+        elif last == ")" and token.count(")") > token.count("("):
+            token = token[:-1]
+        elif last == "]" and token.count("]") > token.count("["):
+            token = token[:-1]
+        else:
+            break
+    return token
+
+
+def source_ids(source: str | None) -> list[str]:
+    """Identificadores de registro citados en una fuente, normalizados: 'doi:<doi en minúsculas>', 'pmid:<n>',
+    'openalex:W<n>' (fuentes registradas) o 'A-<n>' (afirmaciones registradas)."""
+    out: list[str] = []
+    for match in _ID_RE.finditer(source or ""):
+        token = _trim_id(re.sub(r"\s+", "", match.group(1)))
+        prefix, _, rest = token.partition(":")
+        if rest:
+            prefix = prefix.lower()
+            rest = {"doi": rest.lower(), "openalex": rest.upper()}.get(prefix, rest)
+            token = f"{prefix}:{rest}"
+        else:
+            token = token.upper()
+        if token not in out:
+            out.append(token)
+    return out
+
+
 def gaussian_copula(names: list[str], pairs: list[tuple[str, str, float]] | None = None,
                     matrix: list[list[float]] | None = None) -> np.ndarray:
     """Matriz de correlación de una cópula gaussiana a partir de pares (a, b, rho) o de una matriz completa.
@@ -165,12 +236,14 @@ def gaussian_copula(names: list[str], pairs: list[tuple[str, str, float]] | None
     else:
         m = np.eye(k)
         index = {name: i for i, name in enumerate(names)}
+        seen: set[frozenset] = set()
         for a, b, rho in pairs or []:
             i, j = index[a], index[b]
             if i == j:
                 raise ValueError(f"Correlación de '{a}' consigo misma")
-            if m[i, j] != 0.0:
+            if frozenset((i, j)) in seen:
                 raise ValueError(f"Correlación entre '{a}' y '{b}' declarada dos veces")
+            seen.add(frozenset((i, j)))
             m[i, j] = m[j, i] = float(rho)
     if not np.all(np.isfinite(m)):
         raise ValueError("La matriz de correlación tiene valores no finitos")
