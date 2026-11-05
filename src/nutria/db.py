@@ -716,13 +716,18 @@ INCIDENCE_UNIT_RE = re.compile(
     r"%|\b(?:porcentaje|proporcion|fraccion|casos?|animales|vacas|novillas|terneros|cerdas|lechones|aves|incidencia"
     r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?)\b|/ ?100\b|por (?:100|cada)\b")
 PER_TIME_UNIT_RE = re.compile(r"/ ?(?:h|hora|d|dia|min)\b|por (?:hora|dia|minuto)\b")
+# Porcentajes de composición o de tiempo ('% del peso fresco', '% de la MS', '% del tiempo'): no son proporciones de
+# animales con un evento.
+COMPOSITION_UNIT_RE = re.compile(r"\b(?:ms|mo|pb|pv|peso|materia|ingesta|dieta|racion|energia|grasa|proteina|leche"
+                                 r"|higado|tejido|fresco|seco|plasma|sangre|suero|tiempo|duracion|horas?|minutos?)\b")
 
 
 def incidence_like(outcome: Any, unit: Any) -> bool:
-    """Variable de incidencia o de un trastorno expresada como proporción o recuento (no como velocidad por tiempo)."""
+    """Variable de incidencia o de un trastorno expresada como proporción de animales o recuento (no como velocidad
+    por tiempo ni como porcentaje de composición)."""
     unit_text = plain_text(unit)
     return bool(INCIDENCE_OUTCOME_RE.search(plain_text(outcome)) and INCIDENCE_UNIT_RE.search(unit_text)
-                and not PER_TIME_UNIT_RE.search(unit_text))
+                and not PER_TIME_UNIT_RE.search(unit_text) and not COMPOSITION_UNIT_RE.search(unit_text))
 
 
 def is_incidence(get) -> bool:

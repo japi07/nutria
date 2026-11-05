@@ -639,6 +639,22 @@ def test_incidencia_exige_ventana_respecto_al_hito_y_definicion_de_caso():
             "hito_referencia", "suplementacion_inicio_dias", "suplementacion_fin_dias")})
 
 
+def test_incidencia_expresada_como_porcentaje_tambien_exige_definicion_y_ventana():
+    """Registrar la incidencia como medias de porcentajes (sin eventos) no evita la definición de caso ni la ventana."""
+    continua = _example("extraccion_ejemplo")[0]
+    sin_contexto = {k: v for k, v in continua.items() if k not in (
+        "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias", "suplementacion_inicio_dias",
+        "suplementacion_fin_dias")}
+    pct = dict(sin_contexto, variable="incidencia de cetosis subclínica", unidad="%", media_control=40.0,
+               media_tratamiento=20.0)
+    with pytest.raises(SystemExit, match="definicion_caso"):
+        _validate("extraccion", pct)
+    _validate("extraccion", dict(pct, definicion_caso="BHB en sangre ≥ 1,2 mmol/L", hito_referencia="parto",
+                                 ventana_inicio_dias=3, ventana_fin_dias=14))
+    # un porcentaje de composición no es una incidencia
+    _validate("extraccion", dict(sin_contexto, variable="lipidosis hepática (TG hepáticos)", unidad="% del peso fresco"))
+
+
 def test_exportacion_avisa_si_se_mezclan_definiciones_o_ventanas(project, capsys):
     _double(project, "c1", _records(_source(1)))
     _double(project, "c2", _records(_source(2), definicion_caso="BHB en sangre ≥ 1,4 mmol/L", ventana_inicio_dias=1,
