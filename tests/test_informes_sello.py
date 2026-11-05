@@ -1291,6 +1291,7 @@ def _body_issues(body: str, rows: str = ANNEX, status: str = "borrador") -> list
     "La temperatura rectal bajó a 38,1 ºC con la colina.",                                   # indicador ordinal
     "El margen subió €15 por vaca y año con la colina.",                                     # moneda delante
     "# Resultado del ensayo: +2,5 kg/d de leche",                                            # otro título de nivel 1
+    "En el ensayo de campo la producción aumentó 2,5 кg/d en vacas multíparas.",       # «к» cirílica
 ])
 def test_figures_split_spaced_or_disguised_need_a_label(body):
     # D3-4 (ronda 2): la cifra y su unidad se buscan en el párrafo entero, no línea a línea

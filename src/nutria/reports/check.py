@@ -246,8 +246,8 @@ class StampError(RuntimeError):
 # ============================================================================ texto visible y estructura
 _ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
 # Letras cirílicas y griegas que se confunden con latinas (para que «[РUB]» o «еstado» no escapen a la comprobación).
-_CONFUSABLES = str.maketrans("аеорсухіѕјԁһАВЕКМНОРСТХІЅЈΑΒΕΗΙΚΜΝΟΡΤΧΥΖοα",
-                             "aeopcyxisjdhABEKMHOPCTXISJABEHIKMNOPTXYZoa")
+_CONFUSABLES = str.maketrans("аеорсухіѕјԁһкԛԝАВЕКМНОРСТХІЅЈΑΒΕΗΙΚΜΝΟΡΤΧΥΖοακινρ",
+                             "aeopcyxisjdhkqwABEKMHOPCTXISJABEHIKMNOPTXYZoakivp")
 
 
 def _visible(line: str) -> str:
