@@ -154,22 +154,26 @@ def _destino_text(data: dict, gate_line: str) -> str:
 
 
 def _context(opp: dict, data: dict) -> tuple[str, str]:
-    """(líneas del front matter, texto visible) con el contexto biológico de la oportunidad."""
+    """(líneas del front matter, texto visible) con el contexto biológico de la oportunidad: especie y etapa y, si
+    constan en el registro, raza y estado fisiológico."""
     especie = data.get("especie") or opp.get("species")
     etapa = data.get("etapa") or opp.get("production_stage")
-    extra = [("raza", "Raza", data.get("raza")), ("estado_fisiologico", "Estado fisiológico",
+    extra = [("raza", "raza", data.get("raza")), ("estado_fisiologico", "estado fisiológico",
                                                     data.get("estado_fisiologico"))]
     fm = [f"especie: {_yaml(especie) if especie else 'null'}", f"etapa: {_yaml(etapa) if etapa else 'null'}"]
-    visible = [f"Especie diana: {_oneline(especie) if especie else MARK + ' especie no registrada en la oportunidad'}.",
-               f"Etapa productiva: {_oneline(etapa) if etapa else MARK + ' etapa no registrada en la oportunidad'}."]
+
+    def shown(value) -> str:
+        text = _oneline(value).rstrip(". ")
+        return "no consta" if text == "no_consta" else text
+    parts = [f"Especie diana: {shown(especie) if especie else MARK + ' especie no registrada en la oportunidad'}",
+             f"etapa productiva: {shown(etapa) if etapa else MARK + ' etapa no registrada en la oportunidad'}"]
     for key, label, value in extra:
         if value:
             fm.append(f"{key}: {_yaml(value)}")
-            visible.append(f"{label}: {_oneline(value)}.")
-    # Es el ámbito que fija la oportunidad (supuesto de trabajo hasta contrastarlo con la evidencia): con su etiqueta,
-    # una cifra de la etapa (p. ej. un peso vivo) no queda como cifra sin etiquetar.
-    visible.append("[SUP] (contexto biológico de la oportunidad en el registro)")
-    return "\n".join(fm), " ".join(visible)
+            parts.append(f"{label}: {shown(value)}")
+    # Una sola frase con su etiqueta: es el ámbito que fija la oportunidad (supuesto de trabajo hasta contrastarlo con
+    # la evidencia), y así una cifra de la etapa (p. ej. un peso vivo) no queda sin etiquetar.
+    return "\n".join(fm), "; ".join(parts) + " [SUP] (contexto biológico de la oportunidad en el registro)."
 
 
 def new_report(conn, opp_id: str, gate_ids=None) -> str:

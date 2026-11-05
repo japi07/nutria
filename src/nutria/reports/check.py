@@ -698,9 +698,9 @@ _TOKEN_RE = re.compile(
     r"|(?P<ref>\[R\d+\])"
     r"|(?P<stop>[.!?;:](?=\s|$))"
     r"|(?P<word>[^\W_]+)")
-# Abreviaturas tras las que un punto no cierra la frase.
+# Abreviaturas tras las que un punto no cierra la frase («p. ej.», «e. g.»: una letra minúscula).
 _ABBREVIATIONS = {"al", "ej", "eg", "ie", "art", "arts", "fig", "figs", "tab", "vol", "num", "aprox", "approx", "cf",
-                  "vs", "dr", "dra", "sr", "sra", "pag", "pags", "cap"}
+                  "vs", "dr", "dra", "sr", "sra", "pag", "pags", "cap", "p", "e"}
 _LINK_RE = re.compile(r"\[([^\[\]]*)\]\([^()\s]*\)")
 
 
@@ -719,17 +719,27 @@ def _scan(line: str) -> _Line:
                                    or LABEL_RE.fullmatch(f"[{m.group(1)}]") else m.group(1)), text)
     tokens: list[tuple[str, str, int]] = []
     labels: list[tuple[int, str, str]] = []
-    last_word = ""
+    last_word = last_raw = ""
+    initial = False
     for m in _TOKEN_RE.finditer(text):
         kind, raw = m.lastgroup, m.group(0)
         if kind == "word":
             pieces = _word_pieces(raw)
             tokens += [("word", piece, m.start()) for piece in pieces]
             last_word = pieces[-1] if pieces else last_word
+            last_raw = raw
+            # Una inicial es una mayúscula suelta que no sigue a «/» ni a una cifra («D. Sauvant», no «15 g/d.»).
+            initial = len(raw) == 1 and raw.isupper() and (m.start() == 0 or text[m.start() - 1] not in "/0123456789")
             continue
-        if kind == "stop" and raw == "." and (last_word in _ABBREVIATIONS
-                                             or (len(last_word) == 1 and last_word.isalpha())):
-            continue   # «et al.», «p. ej.», «art.» o una inicial («D. Sauvant») no cierran la frase
+        if kind == "stop" and raw == ".":
+            if last_word in _ABBREVIATIONS and (len(last_raw) > 1 or last_raw.islower()):
+                continue   # «et al.», «p. ej.», «art.»: no cierran la frase
+            if initial:
+                # «D. Sauvant»: no corta la afirmación del Anexo A, pero sí la frase al buscar cifras sin etiqueta.
+                tokens.append(("istop", raw, m.start()))
+                last_word = last_raw = ""
+                initial = False
+                continue
         if kind == "label":
             name = re.search(r"(?i)pub|der|hip|sup|desc", raw).group(0).upper()
             labels.append((m.start(), name, raw))
@@ -738,7 +748,8 @@ def _scan(line: str) -> _Line:
             tokens.append(("ref", raw[1:-1], m.start()))
         else:
             tokens.append(("stop", raw, m.start()))
-        last_word = ""
+        last_word = last_raw = ""
+        initial = False
     refs = [(pos, value) for kind, value, pos in tokens if kind == "ref"]
     return _Line(text, labels, refs, tokens)
 
@@ -812,20 +823,23 @@ class _Support:
     header: bool              # hay alguna cabecera con la columna Respaldo
     claim_col: bool           # ... y con la columna Afirmación
     lines: set[int]           # índices de las líneas de las tablas de respaldo (cabecera, separador y filas)
+    stray: list[tuple[int, bool]] = field(default_factory=list)   # filas antes de la cabecera: (línea, negativa)
 
 
 def _support_rows(doc: _Doc) -> _Support:
-    """Filas de las tablas de respaldo del Anexo A (las que siguen a una cabecera con la columna Respaldo)."""
+    """Filas de respaldo del Anexo A: las filas de tabla que siguen, dentro de la sección, a una cabecera con la
+    columna Respaldo (aunque haya líneas en blanco entre ellas: una fila no_respalda separada de la tabla también
+    cuenta). Las filas anteriores a la cabecera no cuentan como respaldo y se comprueban como texto."""
     rows: list[SupportRow] = []
     issues: list[Issue] = []
     lines: set[int] = set()
+    stray: list[tuple[int, bool]] = []
     header = claim_col = False
     for start, end in _annex_ranges(doc, r"anexo\s+a\b"):
         cols = None
         for i in range(start + 1, end):
             stripped = doc.lines[i].strip()
             if doc.fence[i] or not stripped.startswith("|"):
-                cols = None          # una línea en blanco, texto o código cierra la tabla (como al renderizar)
                 continue
             cells = _cells(stripped)
             if all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
@@ -844,9 +858,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 lines.add(i)
                 continue
             if cols is None:
-                issues.append(Issue("aviso", "Fila del Anexo A fuera de una tabla con la cabecera | Ref | Afirmación | "
-                                             "Respaldo | Motivo |: no cuenta como respaldo y se comprueba como texto",
-                                    i + 1))
+                stray.append((i + 1, any(_support_value(c) in ("no_respalda", "no_verificable") for c in cells)))
                 continue
             lines.add(i)
 
@@ -859,7 +871,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 continue
             rows.append(SupportRow(i + 1, refs, cell("claim"), _support_value(cell("value")), cell("value"),
                                    cell("reason")))
-    return _Support(rows, issues, header, claim_col, lines)
+    return _Support(rows, issues, header, claim_col, lines, stray)
 
 
 def _fragments(claim: str) -> list[list[str]] | None:
@@ -922,7 +934,7 @@ def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, l
             elif kind == "label":
                 events.append(("label", value, j, label_no))
                 label_no += 1
-            else:
+            elif kind != "istop":
                 events.append((kind, value, j, -1))
     sentences: list[list[tuple[str, str, int, int]]] = [[]]
     for ev in events:
@@ -1262,6 +1274,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     scans: dict[int, _Line] = {}
     unlabeled: list[int] = []
     unlabeled_refs: list[int] = []
+    stray_entries: set[int] = set()
     for i in sorted(body):
         line = doc.lines[i]
         if not line.strip():
@@ -1304,19 +1317,47 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue("aviso", "[DER] sin indicar el cálculo u orden usada", i + 1))
         if not scan.refs and any(rx.search(scan.text) for rx in AUTHOR_YEAR_RES):
             issues.append(Issue("error", "Cita autor-año sin referencia [Rn] verificable", i + 1))
-        if i not in no_numbers and not scan.labels and not scan.refs and UNIT_RE.search(scan.text):
-            unlabeled.append(i + 1)
         m = ENTRY_RE.match(line)
         if m and ID_HINT_RE.search(m.group(2)):
             issues.append(Issue(sev_strict, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no se "
                                             "verifica; muévela a la sección 20", i + 1))
-        elif scan.refs and not scan.labels and i not in record_lines:
-            unlabeled_refs.append(i + 1)
+            stray_entries.add(i)
+    # Cifras con unidades y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?») puede ocupar varias
+    # líneas de un párrafo, y una línea puede tener varias frases; cada frase con una cifra necesita una etiqueta o
+    # una referencia, y cada frase con una referencia, una etiqueta.
+    paragraphs = _paragraphs(doc, body)
+    for para in paragraphs:
+        events: list[tuple[int, int, str]] = []
+        for j in para:
+            scan = scans.get(j)
+            if scan is None:
+                continue
+            for kind, value, pos in scan.tokens:
+                if kind in ("label", "ref"):
+                    events.append((j, pos, kind))
+                elif kind == "istop" or (kind == "stop" and value in ".!?"):
+                    events.append((j, pos, "stop"))
+            if j not in no_numbers:
+                events += [(j, m.start(), "unit") for m in UNIT_RE.finditer(scan.text)]
+        events.sort(key=lambda e: (e[0], e[1]))
+        sentence: list[tuple[int, int, str]] = []
+        for ev in events + [(-1, -1, "stop")]:
+            if ev[2] != "stop":
+                sentence.append(ev)
+                continue
+            kinds = {kind for _j, _p, kind in sentence}
+            if "label" not in kinds:
+                if "unit" in kinds and "ref" not in kinds:
+                    unlabeled.append(next(j for j, _p, kind in sentence if kind == "unit") + 1)
+                refs_at = [j for j, _p, kind in sentence if kind == "ref"]
+                if refs_at and not all(j in record_lines or j in stray_entries for j in refs_at):
+                    unlabeled_refs.append(refs_at[0] + 1)
+            sentence = []
     for n, line_no in enumerate(unlabeled):
         if n < 10:
             issues.append(Issue(sev_strict, "Cifra con unidades sin etiqueta de evidencia ni referencia", line_no))
     if len(unlabeled) > 10:
-        issues.append(Issue(sev_strict, f"{len(unlabeled)} cifras con unidades sin etiqueta en total"))
+        issues.append(Issue(sev_strict, f"{len(unlabeled)} frases con cifras con unidades sin etiqueta en total"))
     # Una afirmación atribuida a una fuente sin etiqueta eludiría el Anexo A y el registro de fuentes: si es un
     # resultado publicado, va con [PUB] (y su fila de respaldo); si no, con su etiqueta ([DER], [HIP], [SUP]...).
     for n, line_no in enumerate(unlabeled_refs):
@@ -1324,7 +1365,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             issues.append(Issue(sev_strict, "Referencia [Rn] sin etiqueta de evidencia: marca la afirmación con [PUB] "
                                             "(y su fila del Anexo A) o con la etiqueta que le corresponda", line_no))
     if len(unlabeled_refs) > 10:
-        issues.append(Issue(sev_strict, f"{len(unlabeled_refs)} líneas con referencias sin etiqueta en total"))
+        issues.append(Issue(sev_strict, f"{len(unlabeled_refs)} frases con referencias sin etiqueta en total"))
 
     # ---- bibliografía: referencias, duplicados, identificadores
     by_ref: dict[str, list[BibEntry]] = {}
@@ -1360,6 +1401,12 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     # ---- Anexo A: respaldo por afirmación
     rows = support.rows
     issues += support.issues
+    for line_no, negative in support.stray:
+        issues.append(Issue("error" if negative else sev_strict,
+                            "Fila del Anexo A antes de la cabecera | Ref | Afirmación | Respaldo | Motivo |: no cuenta "
+                            "como respaldo y se comprueba como texto"
+                            + ("; declara que una fuente no respalda una afirmación o no es verificable, y esa "
+                               "valoración no puede quedar fuera de la tabla" if negative else ""), line_no))
     if support.header and not support.claim_col:
         issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la columna Afirmación: el respaldo se "
                                         "comprueba por afirmación, no por referencia"))
@@ -1374,7 +1421,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                             f"está vacía o tiene fragmentos de menos de {MIN_FRAGMENT_WORDS} palabras "
                                             "entre «...»: no reproduce ninguna afirmación", r.line))
     claims: list[_Claim] = []
-    for para in _paragraphs(doc, body):
+    for para in paragraphs:
         if any(pub_refs_by_label.get(j) for j in para):
             claims += _claims(para, scans, pub_refs_by_label)
     # Cada fila cuenta para la afirmación de su referencia que mejor reproduce (mayor fracción de sus palabras). Una

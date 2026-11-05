@@ -562,7 +562,8 @@ def test_skeleton_records_biological_context_and_digestive_fate(project):
                                              "fuente_o_calculo": "nutria destino ruminal (supuesto de trabajo)"})
     text = _skeleton(project).read_text("utf-8")
     assert "especie: 'vacuno lechero'" in text and "etapa: 'periodo de transición" in text
-    assert "Especie diana: vacuno lechero." in text
+    assert "Especie diana: vacuno lechero; etapa productiva: periodo de transición" in text
+    assert "[SUP] (contexto biológico de la oportunidad en el registro)." in text
     section7 = text.split("\n## 7.")[1].split("\n## 8.")[0]
     assert "<!--" not in section7.split("### 7.1")[1].split("-->")[1]          # contenido, no solo un comentario
     assert "Fracción que escapa a la degradación ruminal: 0,35 [SUP]" in section7
@@ -576,7 +577,7 @@ def test_skeleton_includes_breed_and_physiological_state_when_present(project):
     conn = _conn()
     opp = db.add_opportunity(conn, data)
     text = render.new_report(conn, opp)
-    assert "raza: 'Holstein'" in text and "Estado fisiológico: vacas multíparas en preparto." in text
+    assert "raza: 'Holstein'" in text and "; raza: Holstein; estado fisiológico: vacas multíparas en preparto [SUP]" in text
 
 
 def test_digestive_fate_is_required_in_ruminant_reports(project):
