@@ -495,7 +495,26 @@ def _texto_discrepancias(diffs: list[dict]) -> str:
 
 def _comparar_extracciones(args, cfg) -> int:
     if not args.registrar:
-        a, b = _load_json(args.a), _load_json(args.b)
+        if args.a == "-" and args.b == "-":
+            raise SystemExit("Solo una de las dos copias puede leerse de la entrada estándar")
+        def leer(p: str) -> bytes:
+            if p != "-":
+                return Path(p).read_bytes()
+            stdin = getattr(sys.stdin, "buffer", None)
+            return stdin.read() if stdin is not None else sys.stdin.read().encode("utf-8")
+
+        raw = {"a": leer(args.a), "b": leer(args.b)}
+        if cfg.db_path.is_file():
+            # Ver las discrepancias con una copia depositada antes de depositar la propia permitiría corregirla.
+            shas = {k: sha256_text(v) for k, v in raw.items()}
+            depositadas = registry.deposited_shas(_conn(cfg), sorted(set(shas.values())))
+            if len({shas["a"], shas["b"]} & depositadas) == 1 and shas["a"] != shas["b"]:
+                raise registry.RegistryError(
+                    "Una de las copias está depositada y la otra no: sin --registrar solo se comparan dos ficheros sin "
+                    "depositar o dos copias ya depositadas. Ver las discrepancias con una copia depositada antes de "
+                    "depositar la propia permitiría corregirla: deposita la otra copia (`nutria --agente <id> "
+                    "extraccion depositar --datos <fichero>`) y compáralas con --registrar")
+        a, b = json.loads(raw["a"].decode("utf-8")), json.loads(raw["b"].decode("utf-8"))
         a, b = (a if isinstance(a, list) else [a]), (b if isinstance(b, list) else [b])
         diffs = registry.compare_extraction_records(a, b)
         text = ("Extracciones concordantes. Para registrarlas como 'doble_concordante', cada extractor deposita su "

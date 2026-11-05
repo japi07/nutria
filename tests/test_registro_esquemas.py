@@ -21,6 +21,7 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "ejemplos"
 SIGN = "--firma-humana"
 GATES = ["seguridad", "regulatoria", "analitica", "propiedad_intelectual", "destino_digestivo", "etica"]
 REG = ["--agente", "regulacion-seguridad"]   # rol del triage regulatorio
+CONCILIADOR = ["--agente", "extractor-datos"]  # concilia quien no depositó ninguna de las dos copias
 LECHE = "producción de leche"
 CETOSIS = "cetosis subclínica"
 MOTIVO = "Tabla 3, fila 2, releída en la fuente"
@@ -186,14 +187,18 @@ def test_doble_extraccion_concordante_la_registra_el_sistema(project, capsys):
     assert len(db.list_extractions(_conn())) == 2
 
 
-@pytest.mark.parametrize("caso", ["mismo_fichero", "sin_depositar", "mismo_extractor", "editada_tras_depositar",
-                                  "sin_extractor"])
+@pytest.mark.parametrize("caso", ["mismo_fichero", "sin_depositar", "mismo_extractor", "mismo_extractor_otra_grafia",
+                                  "editada_tras_depositar", "sin_extractor", "extractor_cli", "homoglifo"])
 def test_doble_extraccion_exige_dos_copias_independientes_y_depositadas(project, capsys, monkeypatch, caso):
     monkeypatch.delenv("NUTRIA_AGENT", raising=False)
     source = _source()
     recs = _records(source)
-    if caso == "sin_extractor":  # sin --agente ni NUTRIA_AGENT no hay a quién atribuir la copia
-        assert main(["extraccion", "depositar", "--datos", _write(project / "x_A.json", recs)]) == 3
+    if caso in ("sin_extractor", "extractor_cli", "homoglifo"):
+        # sin --agente ni NUTRIA_AGENT (o como 'CLI') no hay a quién atribuir la copia; un homoglifo cirílico
+        # ('А') haría pasar por otro extractor a quien se llama igual
+        agente = {"sin_extractor": [], "extractor_cli": ["--agente", " CLI "],
+                  "homoglifo": ["--agente", "extractor-datos-А"]}[caso]
+        assert main([*agente, "extraccion", "depositar", "--datos", _write(project / "x_A.json", recs)]) == 3
         assert db.list_extraction_comparisons(_conn()) == []
         return
     a = _deposit(project, "x_A.json", recs, "extractor-datos-A", indent=1)
@@ -201,8 +206,14 @@ def test_doble_extraccion_exige_dos_copias_independientes_y_depositadas(project,
         b = a
     elif caso == "sin_depositar":
         b = _write(project / "x_B.json", recs)
-    elif caso == "mismo_extractor":
-        b = _deposit(project, "x_B.json", recs, "extractor-datos-A", indent=2)
+    elif caso.startswith("mismo_extractor"):
+        # una copia depositada es definitiva: su extractor no deposita otra de la misma fuente, se escriba como se
+        # escriba su nombre
+        b = _write(project / "x_B.json", recs, indent=2)
+        agente = "extractor-datos-A" if caso == "mismo_extractor" else " Extractor_Datos A "
+        capsys.readouterr()
+        assert main(["--agente", agente, "extraccion", "depositar", "--datos", b]) == 3
+        assert "es definitiva" in capsys.readouterr().err
     else:  # la copia B, con una discrepancia, se edita después de depositarla para igualarla a A
         distinta = copy.deepcopy(recs)
         distinta[0]["media_tratamiento"] = 30.0
@@ -211,6 +222,18 @@ def test_doble_extraccion_exige_dos_copias_independientes_y_depositadas(project,
     assert _code(["extraccion", "comparar", a, b, "--registrar"]) not in (0, 1)
     assert db.list_extractions(_conn()) == []
     assert db.list_extraction_comparisons(_conn()) == []
+
+
+def test_un_extractor_con_dos_grafias_no_hace_las_dos_copias(project, capsys):
+    """La identidad se compara sin mayúsculas, tildes ni signos: 'Extractor_Datos A' es 'extractor-datos-A'."""
+    one, two = _source(1), _source(2)
+    a = _deposit(project, "x_A.json", _records(one), "extractor-datos-A")
+    b = _deposit(project, "x_B.json", _records(two), "EXTRACTOR_DATOS a")     # otra fuente: el depósito se admite
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 3
+    assert "el mismo extractor" in capsys.readouterr().err
+    assert db.list_extraction_comparisons(_conn()) == [] and db.list_extractions(_conn()) == []
+    assert db.actor_key(" Extractor_Datos-Á ") == db.actor_key("extractor-datos-a") == "extractordatosa"
 
 
 def test_conciliacion_registrada_con_resolucion_de_cada_discrepancia(project, capsys):
@@ -283,7 +306,7 @@ def test_conciliacion_valor_releido_y_promedio_confirmado(project, capsys):
                 {"a": 2, "b": 2, "resoluciones": [{"campo": "eventos_tratamiento", "origen_valor": "fuente",
                                                    "valor": 3, "motivo": "Tabla 4: 3 casos; ninguna copia acertó"}]}]
     path = _write(project / "conciliacion.json", {"conciliacion": entradas})
-    assert main(["extraccion", "conciliar", "CE-0001", "--datos", path]) == 0
+    assert main([*CONCILIADOR, "extraccion", "conciliar", "CE-0001", "--datos", path]) == 0
     rows = db.list_extractions(_conn())
     assert [(r["mean_trt"], r["ev_trt"], r["check_status"]) for r in rows] == [(36.7, None, "resuelta"),
                                                                               (None, 3, "resuelta")]
@@ -296,10 +319,10 @@ def test_conciliacion_de_copias_con_distinto_numero_de_registros(project, capsys
     b = _deposit(project, "x_B.json", [recs_a[1]], "extractor-datos-B")  # B no extrajo el primer registro
     assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
     path = _write(project / "c.json", {"conciliacion": [{"a": 2, "b": 1}]})
-    assert main(["extraccion", "conciliar", "CE-0001", "--datos", path]) == 3      # A1 sin declarar
+    assert main([*CONCILIADOR, "extraccion", "conciliar", "CE-0001", "--datos", path]) == 3   # A1 sin declarar
     path = _write(project / "c.json", {"conciliacion": [{"a": 2, "b": 1}],
                                        "no_resueltos": [{"a": 1, "motivo": "Solo está en la copia A: se repetirá"}]})
-    assert main(["extraccion", "conciliar", "CE-0001", "--datos", path]) == 0
+    assert main([*CONCILIADOR, "extraccion", "conciliar", "CE-0001", "--datos", path]) == 0
     (row,) = db.list_extractions(_conn())
     assert (row["outcome"], row["check_status"], row["pair_a"], row["pair_b"]) == (CETOSIS, "doble_concordante", 2, 1)
 
@@ -323,31 +346,82 @@ def test_una_copia_con_discrepancias_no_se_blanquea_con_una_tercera(project, cap
 
 def test_copias_corregidas_tras_ver_discrepancias_no_sustituyen_a_la_conciliacion(project, capsys):
     """Ver las discrepancias, igualar las copias y volver a depositarlas no da 'doble_concordante': la comparación
-    con discrepancias se concilia (o se cierra declarando lo no resuelto) antes de comparar otras copias."""
+    con discrepancias se concilia (o se cierra declarando lo no resuelto), y quien participó en ella (copias A y B,
+    comparación o conciliación) ya no extrae esa fuente: una doble extracción nueva necesita extractores nuevos."""
     source = _source()
     recs = _records(source)
     distinta = copy.deepcopy(recs)
     distinta[0]["media_tratamiento"] = 30.0
     a = _deposit(project, "x_A.json", recs, "extractor-datos-A")
     b = _deposit(project, "x_B.json", distinta, "extractor-datos-B")
-    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1
-    a2 = _deposit(project, "x_A2.json", recs, "extractor-datos-A", indent=3)
-    b2 = _deposit(project, "x_B2.json", recs, "extractor-datos-B", indent=4)      # B igualada a A
+    assert main(["--agente", "orquestador", "extraccion", "comparar", a, b, "--registrar"]) == 1
+
+    def deposito_rechazado(name, actor, indent):
+        capsys.readouterr()
+        path = _write(project / name, recs, indent)
+        assert main(["--agente", actor, "extraccion", "depositar", "--datos", path]) == 3
+        assert "participó en una comparación con discrepancias" in capsys.readouterr().err
+        return path
+
+    # B, igualada a A después de ver la discrepancia, y A otra vez: no se depositan
+    deposito_rechazado("x_B2.json", "extractor-datos-B", 4)
+    deposito_rechazado("x_A2.json", "Extractor-Datos-A", 3)
+    deposito_rechazado("x_O.json", "orquestador", 5)                      # quien registró la comparación
+    # con la comparación sin conciliar, ni siquiera dos extractores nuevos registran otra de la misma fuente
+    c = _deposit(project, "x_C.json", recs, "extractor-datos-C", indent=1)
+    d = _deposit(project, "x_D.json", recs, "extractor-datos-D", indent=6)
     capsys.readouterr()
-    assert main(["extraccion", "comparar", a2, b2, "--registrar"]) == 3
+    assert main(["extraccion", "comparar", c, d, "--registrar"]) == 3
     assert "CE-0001 con discrepancias sin conciliar" in capsys.readouterr().err
     assert db.list_extractions(_conn()) == [] and len(db.list_extraction_comparisons(_conn())) == 1
-    # quien extrajo una de las copias no concilia su propia discrepancia
+    # quien extrajo una de las copias no concilia su propia discrepancia (con ninguna grafía), ni se concilia sin
+    # identificarse
     cierre = _write(project / "cierre.json", {"conciliacion": [], "no_resueltos": [
         {"a": 1, "b": 1, "motivo": "Se repite la doble extracción completa de la fuente"},
         {"a": 2, "b": 2, "motivo": "Se repite la doble extracción completa de la fuente"}]})
-    assert main(["--agente", "extractor-datos-A", "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 3
-    assert "no quien extrajo" in capsys.readouterr().err
-    # cerrarla con su motivo (sin registrar nada) permite una doble extracción nueva, que sí se registra
-    assert main(["--agente", "extractor-datos", "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 0
+    for agente, error in ((["--agente", "extractor-datos-A"], "no quien extrajo"),
+                          (["--agente", " EXTRACTOR_datos b "], "no quien extrajo"),
+                          ([], "necesita un responsable identificado")):
+        assert main([*agente, "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 3
+        assert error in capsys.readouterr().err
+    # cerrarla con su motivo (sin registrar nada) permite la doble extracción de C y D, que sí se registra
+    assert main([*CONCILIADOR, "extraccion", "conciliar", "CE-0001", "--datos", cierre]) == 0
     assert db.list_extractions(_conn()) == []
-    assert main(["extraccion", "comparar", a2, b2, "--registrar"]) == 0
+    assert main(["extraccion", "comparar", c, d, "--registrar"]) == 0
     assert {r["check_status"] for r in db.list_extractions(_conn())} == {"doble_concordante"}
+    # el conciliador tampoco pasa después a extraer esa fuente
+    deposito_rechazado("x_E.json", "extractor-datos", 7)
+
+
+def test_comparar_sin_registrar_no_deja_ver_una_copia_depositada_antes_de_depositar(project, capsys, monkeypatch):
+    """Sin --registrar, `comparar` no enfrenta una copia depositada a otra sin depositar (ni por la entrada estándar):
+    ver las discrepancias antes de depositar la propia permitiría corregirla. Y, aunque las dos estén depositadas,
+    ver las discrepancias no permite sustituir ninguna por una corregida."""
+    import io
+    source = _source()
+    recs = _records(source)
+    distinta = copy.deepcopy(recs)
+    distinta[0]["media_tratamiento"] = 30.0
+    a = _deposit(project, "x_A.json", recs, "extractor-datos-A")
+    borrador = _write(project / "x_B.json", distinta)
+    capsys.readouterr()
+    assert main(["extraccion", "comparar", a, borrador]) == 3
+    assert "Una de las copias está depositada y la otra no" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO((project / "x_B.json").read_text("utf-8")))
+    assert main(["extraccion", "comparar", "-", a]) == 3
+    # dos ficheros sin depositar: la orden sigue sirviendo para ver diferencias
+    otro = _write(project / "otro.json", recs, indent=5)
+    assert main(["extraccion", "comparar", otro, borrador]) == 1
+    # dos copias depositadas: se ven las discrepancias, pero ya no se sustituye ninguna
+    b = _deposit(project, "x_B.json", distinta, "extractor-datos-B")
+    assert main(["extraccion", "comparar", a, b]) == 1
+    capsys.readouterr()
+    corregida = _write(project / "x_B2.json", recs, indent=4)
+    assert main(["--agente", "extractor-datos-B", "extraccion", "depositar", "--datos", corregida]) == 3
+    assert "es definitiva" in capsys.readouterr().err
+    assert main(["extraccion", "comparar", a, corregida, "--registrar"]) == 3
+    assert db.list_extractions(_conn()) == [] and db.list_extraction_comparisons(_conn()) == []
+    assert main(["extraccion", "comparar", a, b, "--registrar"]) == 1   # el camino: comparación y conciliación
 
 
 def test_diseno_factorial_no_se_toma_por_un_dato_repetido(project, capsys):

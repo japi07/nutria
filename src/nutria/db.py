@@ -930,14 +930,89 @@ def compare_extraction_records(a: list[dict], b: list[dict]) -> list[dict]:
     return diffs
 
 
+# Identidad de quien deposita una copia o concilia (declarada con --agente o NUTRIA_AGENT). Se compara por su clave,
+# sin mayúsculas, tildes, espacios ni signos ('Extractor_Datos-A' es 'extractor-datos-a'), y solo admite letras
+# latinas y cifras, para que una grafía distinta o un homoglifo de otro alfabeto no pasen por otra persona.
+_ANONYMOUS_ACTORS = frozenset({"", "cli"})
+
+
+def actor_key(name: Any) -> str:
+    """Clave con la que se comparan dos identidades declaradas ('Extractor_Datos-A' y 'extractor datos a' son la
+    misma)."""
+    return "".join(text_words(name)) if name is not None else ""
+
+
+def _identified_actor(actor: str | None, role: str) -> tuple[str, str]:
+    """(nombre, clave) de quien deposita una copia o concilia: identificado y escrito con letras latinas y cifras."""
+    who = current_actor(actor).strip()
+    key = actor_key(who)
+    if key in _ANONYMOUS_ACTORS:
+        raise RegistryError(f"{role} necesita un responsable identificado: indica --agente <id> (p. ej. "
+                            "extractor-datos-A) o la variable NUTRIA_AGENT")
+    if not key.isascii():
+        raise RegistryError(f"La identidad '{who}' ({role.lower()}) solo puede llevar letras latinas, cifras y "
+                            "separadores (guion, guion bajo, punto o espacio): así no se confunde con otra que se le "
+                            "parezca")
+    return who, key
+
+
+def _used_copies(conn: sqlite3.Connection) -> tuple[set[int], set[str]]:
+    """Copias ya usadas en alguna comparación registrada: (ids, sha256)."""
+    ids: set[int] = set()
+    shas: set[str] = set()
+    for r in conn.execute("SELECT copy_a, copy_b, sha256_a, sha256_b FROM extraction_comparisons"):
+        ids.update((r["copy_a"], r["copy_b"]))
+        shas.update((r["sha256_a"], r["sha256_b"]))
+    return ids, shas
+
+
+def _exposed_actors(conn: sqlite3.Connection, sources: list[str]) -> dict[str, list[tuple[str, str]]]:
+    """Clave de actor -> [(CE-xxxx, fuente)]: comparaciones con discrepancias de esas fuentes en las que participó
+    (depositó la copia A o la B, registró la comparación o la concilió). Ya conoce los valores de la otra copia, así
+    que no vuelve a extraer esa fuente para una doble extracción."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for row in conn.execute(
+            "SELECT c.id, c.actor_a, c.actor_b, c.compared_by, c.conciliated_by, ca.source_ids AS sa, "
+            "cb.source_ids AS sb FROM extraction_comparisons c JOIN extraction_copies ca ON ca.id = c.copy_a "
+            "JOIN extraction_copies cb ON cb.id = c.copy_b WHERE c.result = 'con_discrepancias' "
+            "ORDER BY c.compared_at"):
+        involved = set(json.loads(row["sa"] or "[]")) | set(json.loads(row["sb"] or "[]"))
+        for sid in sources:
+            if sid not in involved:
+                continue
+            for who in (row["actor_a"], row["actor_b"], row["compared_by"], row["conciliated_by"]):
+                key = actor_key(who)
+                if key not in _ANONYMOUS_ACTORS and (row["id"], sid) not in out.get(key, []):
+                    out.setdefault(key, []).append((row["id"], sid))
+    return out
+
+
+def _exposure_error(who: str, hits: list[tuple[str, str]]) -> RegistryError:
+    where = "; ".join(f"{cid} ({sid})" for cid, sid in hits[:5])
+    return RegistryError(
+        f"'{who}' participó en una comparación con discrepancias de la misma fuente ({where}): depositó una de sus "
+        "copias, la registró o la concilió, así que ya conoce los valores de la otra copia y no hace una extracción "
+        "independiente de esa fuente. Una doble extracción nueva de la fuente necesita dos extractores que no hayan "
+        "participado en esa comparación; corregir las copias después de ver las discrepancias no sustituye a la "
+        "conciliación registrada")
+
+
+def deposited_shas(conn: sqlite3.Connection, shas: list[str]) -> set[str]:
+    """Cuáles de esas huellas sha256 son copias de doble extracción depositadas."""
+    return {r["sha256"] for r in conn.execute(
+        f"SELECT DISTINCT sha256 FROM extraction_copies WHERE sha256 IN ({', '.join('?' for _ in shas)})",
+        list(shas))} if shas else set()
+
+
 def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha256: str, path: str | None = None,
                             actor: str | None = None) -> dict:
     """Deposita una copia de doble extracción (sin registrarla para el análisis). La huella sha256 del fichero
-    la identifica y queda ligada al extractor que la deposita; si el fichero cambia, es otra copia."""
-    who = current_actor(actor)
-    if not who.strip() or who == "cli":
-        raise RegistryError("Una copia de doble extracción necesita un extractor identificado: indica --agente <id> "
-                            "(p. ej. extractor-datos-A) o la variable NUTRIA_AGENT")
+    la identifica y queda ligada al extractor que la deposita; si el fichero cambia, es otra copia.
+
+    Una copia depositada es definitiva: mientras no se haya usado en una comparación registrada, su extractor no
+    deposita otra de la misma fuente (no se sustituye por una corregida), y quien participó en una comparación con
+    discrepancias de una fuente (copia A o B, comparación o conciliación) no deposita más copias de esa fuente."""
+    who, key = _identified_actor(actor, "Una copia de doble extracción")
     if not isinstance(records, list) or not records or not all(isinstance(r, dict) for r in records):
         raise RegistryError("La copia debe contener un registro de extracción o una lista no vacía de registros")
     problems = []
@@ -949,11 +1024,24 @@ def deposit_extraction_copy(conn: sqlite3.Connection, records: list[dict], sha25
     for sid in sources:
         _require_usable_source(conn, sid, "extraer datos")
     with transaction(conn):
-        existing = conn.execute("SELECT * FROM extraction_copies WHERE sha256 = ? AND deposited_by = ?",
-                                (sha256, who)).fetchone()
-        if existing is not None:
-            return {"id": existing["id"], "sha256": sha256, "registros": existing["n_records"], "extractor": who,
-                    "nueva": False}
+        for existing in conn.execute("SELECT * FROM extraction_copies WHERE sha256 = ? ORDER BY id", (sha256,)):
+            if actor_key(existing["deposited_by"]) == key:
+                return {"id": existing["id"], "sha256": sha256, "registros": existing["n_records"],
+                        "extractor": existing["deposited_by"], "nueva": False}
+        hits = _exposed_actors(conn, sources).get(key)
+        if hits:
+            raise _exposure_error(who, hits)
+        used_ids, used_shas = _used_copies(conn)
+        for row in conn.execute("SELECT id, sha256, source_ids, deposited_by FROM extraction_copies ORDER BY id"):
+            if actor_key(row["deposited_by"]) != key or row["id"] in used_ids or row["sha256"] in used_shas:
+                continue
+            shared = sorted(set(json.loads(row["source_ids"] or "[]")) & set(sources))
+            if shared:
+                raise RegistryError(
+                    f"'{who}' ya depositó la copia #{row['id']} con registros de {', '.join(shared)}, aún sin comparar: "
+                    "una copia depositada es definitiva y no se sustituye por otra corregida. Compárala con la del otro "
+                    "extractor (`nutria extraccion comparar A.json B.json --registrar`) y, si hay discrepancias, "
+                    "concíliala releyendo la fuente (`nutria extraccion conciliar`)")
         cur = conn.execute(
             "INSERT INTO extraction_copies (sha256, path, records, n_records, source_ids, deposited_by, deposited_at) "
             "VALUES (?,?,?,?,?,?,?)", (sha256, path, _dumps(records), len(records), _dumps(sources), who, utc_now()))
@@ -994,11 +1082,12 @@ def _pick_copies(conn: sqlite3.Connection, sha_a: str, sha_b: str) -> tuple[sqli
         found[label] = rows
     for a in found["A"]:
         for b in found["B"]:
-            if a["id"] != b["id"] and a["deposited_by"] != b["deposited_by"]:
+            if a["id"] != b["id"] and actor_key(a["deposited_by"]) != actor_key(b["deposited_by"]):
                 return a, b
     actors = sorted({r["deposited_by"] for r in found["A"] + found["B"]})
-    raise RegistryError(f"Las dos copias las depositó el mismo extractor ({', '.join(actors)}): la doble extracción "
-                        "exige dos extractores distintos que trabajen de forma independiente")
+    raise RegistryError(f"Las dos copias las depositó el mismo extractor ({', '.join(actors)}; una identidad se "
+                        "compara sin mayúsculas, tildes ni signos): la doble extracción exige dos extractores distintos "
+                        "que trabajen de forma independiente")
 
 
 def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: str, actor: str | None = None,
@@ -1019,6 +1108,11 @@ def register_extraction_comparison(conn: sqlite3.Connection, sha_a: str, sha_b: 
                 "--datos <fichero>`, resolviendo cada discrepancia releyendo la fuente o declarando en 'no_resueltos' lo "
                 "que no se pueda resolver). Corregir las copias después de ver las discrepancias no sustituye a la "
                 "conciliación registrada")
+        exposed = _exposed_actors(conn, sources)
+        for copy_row in (copy_a, copy_b):
+            hits = exposed.get(actor_key(copy_row["deposited_by"]))
+            if hits:
+                raise _exposure_error(copy_row["deposited_by"], hits)
         diffs = compare_extraction_records(records_a, records_b)
         result = "con_discrepancias" if diffs else "concordante"
         comp_id = _next_id(conn, "extraction_comparisons", "CE")
@@ -1106,7 +1200,7 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
     errors = schema_errors("conciliacion", payload)
     if errors:
         raise RegistryError("Conciliación no válida: " + "; ".join(errors[:8]))
-    who = current_actor(actor)
+    who, key = _identified_actor(actor, "La conciliación")
     with transaction(conn):
         comp = conn.execute("SELECT * FROM extraction_comparisons WHERE id = ?", (comparison_id,)).fetchone()
         if comp is None:
@@ -1115,9 +1209,10 @@ def conciliate_extraction_comparison(conn: sqlite3.Connection, comparison_id: st
             raise RegistryError(f"{comparison_id} es concordante: sus registros ya constan como 'doble_concordante'")
         if comp["conciliation"] is not None:
             raise RegistryError(f"{comparison_id} ya está conciliada ({comp['conciliated_by']}, {comp['conciliated_at']})")
-        if who in (comp["actor_a"], comp["actor_b"]):
-            raise RegistryError(f"'{who}' depositó una de las copias de {comparison_id}: la conciliación la hace otro "
-                                "extractor o el orquestador, no quien extrajo la copia A o la B")
+        if key in (actor_key(comp["actor_a"]), actor_key(comp["actor_b"])):
+            raise RegistryError(f"'{who}' depositó una de las copias de {comparison_id} (las identidades se comparan "
+                                "sin mayúsculas, tildes ni signos): la conciliación la hace otro extractor o el "
+                                "orquestador, no quien extrajo la copia A o la B")
         copies = {r["id"]: json.loads(r["records"]) for r in conn.execute(
             "SELECT id, records FROM extraction_copies WHERE id IN (?, ?)", (comp["copy_a"], comp["copy_b"]))}
         records = {"a": copies[comp["copy_a"]], "b": copies[comp["copy_b"]]}
