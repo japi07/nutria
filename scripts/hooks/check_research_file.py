@@ -2,11 +2,14 @@
 """Hook PostToolUse de Claude Code: valida lo que se escribe en research/ (falla en cerrado).
 
 - research/informes/**/*.md (también en subcarpetas, sin distinguir mayúsculas en la extensión): estructura
-  completa (20 secciones), referencias, etiquetas (cifras con unidades y citas autor-año por frase, también partidas
-  entre líneas o en tablas), Anexo A por afirmación (y ninguna tabla de respaldo fuera de él) y, si hay registro,
-  fuentes registradas y verificadas, y la ruta y las compuertas de la sección 14 coherentes con el registro. Si el documento está en estado revisado o final (o su estado no se puede leer), exige además la
-  revisión humana registrada (`nutria informe revisar`) y un sello válido.
-- research/planes/**/*.md y research/revisiones/**/*.md: lo mismo sin exigir las 20 secciones.
+  completa (20 secciones), referencias, etiquetas (cifras con unidades y citas por frase, también partidas entre
+  líneas o en tablas; identificadores y enlaces de artículos fuera de la bibliografía), Anexo A por afirmación (y
+  ninguna tabla de respaldo fuera de él) y, si hay registro, fuentes registradas y verificadas, y la ruta y las
+  compuertas de la sección 14 coherentes con el registro. Si el documento está en estado revisado o final (o su
+  estado no se puede leer), exige además la revisión humana registrada (`nutria informe revisar`) y un sello válido.
+- research/planes/**/*.md y research/revisiones/**/*.md: lo mismo sin exigir las 20 secciones; sus tablas de
+  veredictos o de verificación (la crítica de red-team-auto, una nota de verificador-citas) no son tablas de respaldo
+  fuera del Anexo A, salvo que el documento tenga un «## Anexo A».
 - research/oportunidades/**/*.json y research/hipotesis/**/*.json: validación contra su esquema.
 
 El estado se lee con la misma función que usan `nutria informe comprobar` y `nutria informe sello`. La ruta se
