@@ -181,6 +181,13 @@ def test_solo_cuentan_las_filas_que_salieron_de_la_comparacion(project, capsys):
     assert db.verified_extraction_ids(conn) == verified - {leche["id"]}
     out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "x.csv"), "--incluir-sin-conciliar")
     assert {r["doble_extraccion_verificada"] for r in _csv_rows(project / "x.csv")} == {"no"} and out["filas"] == 3
+    assert {r["estado_verificacion"] for r in _csv_rows(project / "x.csv")} == {
+        "doble_concordante_no_coincide_con_su_comparacion"}
+    with pytest.raises(SystemExit, match="no_coincide_con_su_comparacion"):
+        main(["extraccion", "exportar", "--variable", LECHE, "--csv", str(project / "x.csv")])
+    capsys.readouterr()
+    assert main(["extraccion", "listar", "--variable", LECHE]) == 0
+    assert "NO coincide con su comparación CE-0001" in capsys.readouterr().out
 
 
 def test_la_fusion_de_fuentes_duplicadas_conserva_la_doble_extraccion_y_sus_reglas(project, capsys):

@@ -445,9 +445,22 @@ def _moderadores_ausentes(row: dict) -> list[str]:
     return [name for name, col in NUMERIC_MODERATORS.items() if row.get(col) is None]
 
 
-def _estado_doble(row: dict, verificadas: set[int]) -> str:
+def _estado_efectivo(row: dict, verificadas: set[int], comparaciones: set[str]) -> str:
+    """Estado de doble extracción que respalda el registro: un 'doble_concordante' o 'resuelta' que no salió de una
+    comparación registrada (o cuyos valores ya no son los de su comparación) no se presenta como tal."""
+    status = row["check_status"]
+    if status not in CONCILIATED or row["id"] in verificadas:
+        return status
+    if row.get("comparison_id") in comparaciones:
+        return f"{status}_no_coincide_con_su_comparacion"
+    return f"{status}_sin_comparacion_registrada"
+
+
+def _estado_doble(row: dict, verificadas: set[int], comparaciones: set[str] = frozenset()) -> str:
     status = row["check_status"]
     if status in CONCILIATED and row["id"] not in verificadas:
+        if row.get("comparison_id") in comparaciones:
+            return f"{status} declarado, pero la fila NO coincide con su comparación {row['comparison_id']} (no cuenta)"
         return f"{status} declarado SIN comparación registrada (no cuenta)"
     return f"{status} ({row['comparison_id']})" if row.get("comparison_id") else status
 
@@ -591,7 +604,8 @@ def _conciliar_extracciones(args, cfg, conn) -> int:
     return 0
 
 
-def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_de_filtro: list[dict]) -> int:
+def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_de_filtro: list[dict],
+                           comparaciones: set[str] = frozenset()) -> int:
     if not rows:
         raise SystemExit("No hay extracciones con esos filtros"
                          + (f" (--especie/--etapa dejan fuera {len(fuera_de_filtro)}: especies "
@@ -605,8 +619,7 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
             if r["id"] in verificadas:
                 kept.append(r)
                 continue
-            motivo = (r["check_status"] if r["check_status"] not in CONCILIATED
-                      else f"{r['check_status']}_sin_comparacion_registrada")
+            motivo = _estado_efectivo(r, verificadas, comparaciones)
             excluded[motivo] = excluded.get(motivo, 0) + 1
         rows = kept
         if not rows:
@@ -692,9 +705,7 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
         out_rows = [{"estudio": r["source_id"], "comparacion": f"E{r['id']}",
                      **{name: r.get(col) for name, col in ANALYSIS_COLUMNS[1:]},
                      # el estado efectivo: un 'doble_concordante' sin comparación registrada no se presenta como tal
-                     "estado_verificacion": (r["check_status"] if r["id"] in verificadas
-                                             or r["check_status"] not in CONCILIATED
-                                             else f"{r['check_status']}_sin_comparacion_registrada"),
+                     "estado_verificacion": _estado_efectivo(r, verificadas, comparaciones),
                      "doble_extraccion_verificada": "si" if r["id"] in verificadas else "no",
                      "moderadores_no_informados": ";".join(_moderadores_ausentes(r))} for r in rows]
     with open(args.csv, "w", newline="", encoding="utf-8") as fh:
@@ -740,11 +751,13 @@ def cmd_extraccion(args, cfg) -> int:
     if args.etapa:
         rows = [r for r in rows if _coincide(r.get("physiological_stage"), args.etapa)]
     verificadas = registry.verified_extraction_ids(conn)
+    comparaciones = {c["id"] for c in registry.list_extraction_comparisons(conn)}
     if args.accion == "exportar":
         dentro = {r["id"] for r in rows}
-        return _exportar_extracciones(args, rows, verificadas, [r for r in todas if r["id"] not in dentro])
+        return _exportar_extracciones(args, rows, verificadas, [r for r in todas if r["id"] not in dentro],
+                                      comparaciones)
     _emit(args, rows, "\n".join(f"#{r['id']} {r['source_id']} | {r['species']} | {r['intervention']} | {r['outcome']} "
-                                f"({r['outcome_unit']}) | {_estado_doble(r, verificadas)}" for r in rows)
+                                f"({r['outcome_unit']}) | {_estado_doble(r, verificadas, comparaciones)}" for r in rows)
           or "(sin extracciones)")
     return 0
 
