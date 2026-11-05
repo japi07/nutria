@@ -1793,3 +1793,30 @@ def test_p8_mision1_entradas_no_validas_no_se_descartan_en_silencio(args, mensaj
 def test_p8_mision1_fecha_bisiesta_valida(project, capsys):  # D2-15
     out = run_workflow("mision-1-auto", {"fase": "mapa", "fecha": "2028-02-29"}, [_regla_paso0(project, capsys)])
     assert out["resultado"]["fecha"] == "2028-02-29"
+
+
+@requires_node
+def test_p8_mision1_repetir_la_fase_no_duplica_ni_sobrescribe(project, capsys):  # D2-15 (reproducción del hallazgo)
+    args = {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 2}
+    gen = {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}}
+    primera = run_workflow("mision-1-auto", args, [_regla_paso0(project, capsys), gen, {"labelPrefix": "M1b:gen:P1:r", "respuesta": {"oportunidades": []}},
+                                                   *_reglas_novedad(), *_registro_secuencial(1)])
+    ruta_a = "research/oportunidades/M1_2026-11-04_oportunidad-a.json"
+    assert ruta_a in call(primera, "registro:1")["prompt"]
+    # lo que hizo el agente de registro en la primera ejecución: el JSON en disco y el alta en el registro
+    datos = {**_ejemplo("oportunidad_ejemplo"), "titulo": "Oportunidad A"}
+    (project / ruta_a).write_text(json.dumps(datos, ensure_ascii=False), "utf-8")
+    code, out = _cli(capsys, "--agente", "fisiologia-bioquimica", "oportunidad", "nueva", "--datos", ruta_a)
+    assert code == 0, out
+    # segunda ejecución con el mismo generador y una oportunidad más
+    gen2 = {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B")]}}
+    sin_mas = {"labelPrefix": "M1b:gen:P1:r", "respuesta": {"oportunidades": []}}  # las rondas extra no aportan nada
+    segunda = run_workflow("mision-1-auto", args, [_regla_paso0(project, capsys), gen2, sin_mas, *_reglas_novedad(),
+                                                   {"label": "registro:1", "respuesta": {"id": "O-0002"}}])
+    ls = labels(segunda)
+    assert [l for l in ls if l.startswith("registro:")] == ["registro:1"]
+    assert "Oportunidad B" in call(segunda, "registro:1")["prompt"] and ruta_a not in call(segunda, "registro:1")["prompt"]
+    assert "M1b:novedad-literatura:P1.1" not in ls  # la ya registrada no se vuelve a comprobar
+    assert {"titulo": "Oportunidad A", "motivo": "ya registrada (O-0001)"} in segunda["resultado"]["no_registradas"]
+    code, out = _cli(capsys, "--json", "oportunidad", "listar")
+    assert [o["title"] for o in json.loads(out)].count("Oportunidad A") == 1
