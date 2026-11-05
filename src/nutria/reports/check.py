@@ -168,8 +168,9 @@ UNIT_RE = re.compile(
 # Unidad escrita sin cifra: la cabecera de una columna («Leche (kg/d)», «Dosis, g/d», «Grasa %», «Coste €/vaca»), la
 # primera celda de una fila («Leche (kg/d) | 30,1 | 32,4») o una celda de unidades («| 2,5 | kg/d |»).
 _HEADER_UNIT_RE = re.compile(
-    r"(?:(?<![^\W\d_])(?:" + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True) if len(u) > 1)
-    + r")(?![^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
+    r"(?:(?<![^\W\d_])(?<![^\W\d_][-‐])(?:"
+    + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True) if len(u) > 1)
+    + r")(?![^\W\d_])(?![-‐][^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
     re.IGNORECASE)
 _MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
            r"january|february|march|april|may|june|july|august|september|october|november|december)")
@@ -1020,6 +1021,17 @@ def _has_figure(cell: str) -> bool:
     return bool(re.search(r"\d", REF_RE.sub("", cell)))
 
 
+def _unit_cell(cell: str) -> bool:
+    """Celda que solo da una unidad, sin cifras: «kg/d», «% MS», «Leche (kg/d)» o una etiqueta de fila que termina con
+    su unidad entre paréntesis («Leche corregida por grasa (kg/d)»). Una celda de texto que menciona una unidad
+    («coste por tonelada de pienso») no lo es."""
+    text = REF_RE.sub("", cell).strip()
+    if not text or re.search(r"\d", text) or not _HEADER_UNIT_RE.search(text):
+        return False
+    tail = re.search(r"\(([^()]*)\)\s*$", text)
+    return len(text.split()) <= 4 or bool(tail and _HEADER_UNIT_RE.search(tail.group(1)))
+
+
 def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers: set[int],
                   tables: set[int] | None = None) -> dict[int, list[tuple[int, str]]]:
     """Cifras con unidades y citas que solo se ven por la estructura de una tabla (GFM: cabecera y fila de
@@ -1057,10 +1069,12 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
                 continue
             spans = _cell_spans(scan.text)
             cells = [scan.text[a:b] for a, b in spans]
-            row_unit = any(_HEADER_UNIT_RE.search(REF_RE.sub("", c)) for c in cells)
-            if row_unit and not any(_has_figure(c) for c in cells):
-                # fila de unidades bajo la cabecera («| | kg/d | % |»): sus columnas llevan esas unidades
-                unit_cols |= {k for k, c in enumerate(cells) if _HEADER_UNIT_RE.search(c)}
+            row_unit = any(_unit_cell(c) for c in cells)
+            if (row_unit and not any(_has_figure(c) for c in cells)
+                    and all(_unit_cell(c) for c in cells[1:] if c.strip())):
+                # fila de unidades bajo la cabecera («| | kg/d | % |» o «| Unidad | kg/d | % |»): sus columnas llevan
+                # esas unidades
+                unit_cols |= {k for k, c in enumerate(cells) if _unit_cell(c)}
                 continue
             events = out.setdefault(row, [])
             for k, ((a, b), cell) in enumerate(zip(spans, cells)):
@@ -1204,8 +1218,10 @@ def _support_rows(doc: _Doc) -> _Support:
     header = claim_col = False
     annex = _annex_ranges(doc, r"anexo\s+a\b")
     in_annex = {i for start, end in annex for i in range(start, end)}
+    # filas de tabla que se ven como tabla (no una mención en código: «la tabla `| Ref | ... |`»)
+    rendered = _table_lines(doc, {i for i in range(len(doc.lines)) if not doc.in_front_matter(i)})
     for i, line in enumerate(doc.lines):
-        if i in in_annex or doc.in_front_matter(i) or not _PIPE_RE.search(line):
+        if i in in_annex or i not in rendered:
             continue
         cells = _cells(line.strip().lstrip(">").strip())
         if "respaldo" in _header_cells(cells):
