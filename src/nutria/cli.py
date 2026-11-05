@@ -1389,7 +1389,7 @@ def cmd_hipotesis(args, cfg) -> int:
 
 
 def cmd_puntuar(args, cfg) -> int:
-    from .scoring.engine import format_table, rank
+    from .scoring.engine import format_table, rank, validate_anchors
     rubric = _rubric(cfg)
     if args.accion == "rubrica":
         if args.markdown:
@@ -1402,6 +1402,8 @@ def cmd_puntuar(args, cfg) -> int:
     if args.accion == "registrar":
         data = _load_json(args.json_file)
         _validate("puntuacion", data)
+        data["puntuaciones"] = validate_anchors(rubric, data["puntuaciones"],
+                                                warn=lambda m: _imprimir(sys.stderr, m))
         quien = _evaluador_que_registra(args)
         n = registry.add_scores(conn, data["oportunidad"], data["evaluador"], data["puntuaciones"],
                                 rubric.criterion_ids, actor=quien)
@@ -1430,7 +1432,13 @@ def cmd_puntuar(args, cfg) -> int:
                      "firmada": bool(args.firma_humana)}, f"{args.id}: compuerta {args.compuerta} -> {args.estado}{note}")
         return 0
     # ranking
+    from .scoring.engine import ranking_warnings
     _no_para_evaluadores(args, "consultar el ranking")
+    if args.min_evaluadores < 3:
+        raise ValueError(f"--min-evaluadores {args.min_evaluadores}: el ranking exige al menos 3 evaluadores "
+                         "independientes por criterio (regla 9); con menos, la oportunidad queda INSUFICIENTE")
+    if args.top < 1 or args.sim < 1 or not (args.alfa >= 0 and args.alfa != float("inf")):
+        raise ValueError("--top y --sim deben ser >= 1 y --alfa un número finito >= 0 (0 = pesos fijos)")
     profile = args.perfil or cfg.scoring_profile
     opps = []
     for o in registry.list_opportunities(conn):
@@ -1439,15 +1447,32 @@ def cmd_puntuar(args, cfg) -> int:
         scores = [{"rater": s["rater"], "criterion": s["criterion"], "value": s["value"], "low": s["low"],
                    "high": s["high"]} for s in registry.list_scores(conn, o["id"])]
         gates = registry.effective_gates(conn, o["id"], rubric.gate_ids)
-        opps.append({"id": o["id"], "title": o["title"], "scores": scores, "gates": gates, "status": o["status"]})
+        # Estado registrado (propuesta o decisión) de cada compuerta: distingue "pendiente de firma" de "sin resolver".
+        proposals = {g["gate"]: g["status"] for g in registry.list_gates(conn, o["id"])}
+        opps.append({"id": o["id"], "title": o["title"], "scores": scores, "gates": gates,
+                     "gate_proposals": proposals, "status": o["status"]})
     rows = rank(opps, rubric, profile=profile, n_sim=args.sim, seed=args.semilla, alpha=args.alfa, top_k=args.top,
                 min_raters=args.min_evaluadores)
-    log_event(cfg, "ranking", inputs={"perfil": profile, "sim": args.sim, "semilla": args.semilla, "alfa": args.alfa,
-                                      "min_evaluadores": args.min_evaluadores},
-              outputs={"orden": [(r.opportunity_id, r.status) for r in rows]}, actor=args.agente)
+    warnings = ranking_warnings(rows, args.top, profile)
+    # Procedencia reproducible (D9-7): parámetros, huellas de la rúbrica, de las puntuaciones y de toda la entrada, y
+    # el orden resultante. Las puntuaciones no se copian (los evaluadores no deben verlas en las trazas).
+    def canonical(x) -> str:
+        return json.dumps(x, sort_keys=True, ensure_ascii=False, default=str)
+
+    log_event(cfg, "ranking", inputs={
+        "perfil": profile, "sim": args.sim, "semilla": args.semilla, "alfa": args.alfa, "top": args.top,
+        "min_evaluadores": args.min_evaluadores, "rubrica_version": rubric.version,
+        "sha256_rubrica": rubric.fingerprint(), "n_oportunidades": len(opps),
+        "n_puntuaciones": sum(len(o["scores"]) for o in opps),
+        "sha256_puntuaciones": sha256_text(canonical([[o["id"], o["scores"]] for o in opps])),
+        "sha256_entrada": sha256_text(canonical(opps))},
+        outputs={"orden": [[r.opportunity_id, r.status, r.gate_tier] for r in rows], "avisos": warnings,
+                 "sha256_resultado": sha256_text(canonical([r.to_dict() for r in rows]))}, actor=args.agente)
+    if args.json and warnings:
+        print("\n".join(warnings), file=sys.stderr)
     _emit(args, [r.to_dict() for r in rows],
           f"Perfil: {profile} | {args.sim} simulaciones | semilla {args.semilla} | alfa {args.alfa} | "
-          f"mínimo {args.min_evaluadores} evaluadores\n" + format_table(rows, args.top))
+          f"mínimo {args.min_evaluadores} evaluadores\n" + format_table(rows, args.top, profile))
     return 0
 
 
@@ -2113,24 +2138,131 @@ def cmd_destino(args, cfg) -> int:
 
 
 # ============================================================================ economía
+def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
+    """Fuentes de un modelo económico que no se pueden rastrear: [PUB] sin el identificador de una fuente registrada y
+    verificada (doi:, pmid:, openalex:) o de una afirmación [PUB] registrada (A-xxxx), y [DER] sin la orden `nutria` o
+    el script que da el valor. Las fuentes [PUB] se comprueban en el registro del proyecto."""
+    import re
+
+    from .econ.dist import source_ids
+    problems, pub = [], []
+    # [DER] rastreable: la orden (`nutria <orden> ...`) o el fichero del script (con su extensión), no solo la palabra.
+    der_trace = re.compile(r"\bnutria\s+[a-z]|[\w./-]+\.(?:py|R|r|ipynb|jl|sh|m)\b")
+    for where, text in sources:
+        if "[DER]" in text and not der_trace.search(text):
+            problems.append(f"{where}: [DER] sin la orden nutria o el script que da el valor")
+        if "[PUB]" in text:
+            ids = source_ids(text)
+            if ids:
+                pub.append((where, ids))
+            else:
+                problems.append(f"{where}: [PUB] sin el identificador de una fuente registrada (doi:..., pmid:..., "
+                                "openalex:W...) o de una afirmación [PUB] registrada (A-xxxx)")
+    if not pub:
+        return problems
+    if not cfg.db_path.is_file():
+        return problems + ["hay fuentes [PUB] y no existe el registro del proyecto para comprobarlas (`nutria init`)"]
+    conn = registry.connect(cfg.db_path)
+    claims = {c["id"]: c for c in registry.list_claims(conn)}
+    # Una fuente registrada por su PMID puede citarse por su DOI (y al revés): se resuelve por cualquiera de los dos.
+    aliases: dict[str, str] = {}
+    if any(not sid.startswith("A-") for _where, ids in pub for sid in ids):
+        for src in registry.list_sources(conn):
+            for column, prefix, norm in (("doi", "doi:", str.lower), ("pmid", "pmid:", str),
+                                         ("openalex_id", "openalex:", str.upper)):
+                if src.get(column):
+                    aliases.setdefault(prefix + norm(str(src[column])), src["id"])
+    for where, ids in pub:
+        for sid in ids:
+            try:
+                if sid.startswith("A-"):
+                    claim = claims.get(sid)
+                    if claim is None:
+                        raise registry.RegistryError(f"la afirmación {sid} no está registrada")
+                    if claim["label"] != "PUB":
+                        raise registry.RegistryError(f"la afirmación {sid} es [{claim['label']}], no [PUB]")
+                    for src in claim.get("source_ids") or []:
+                        registry._require_usable_source(conn, src, f"respaldar {where}")
+                else:
+                    registry._require_usable_source(conn, aliases.get(sid, sid), f"respaldar {where}")
+            except registry.RegistryError as exc:
+                problems.append(f"{where}: {exc}")
+    return problems
+
+
 def cmd_econ(args, cfg) -> int:
+    from .econ import farm, rnpv
+    central = args.valor_central
+    if args.accion == "coherencia":
+        res = rnpv.coherence(farm.load_farm_model(Path(args.ganadero), central),
+                             rnpv.load_project(Path(args.desarrollador), central), rtol=args.tolerancia)
+        log_event(cfg, "econ_coherencia", inputs={"ganadero": args.ganadero, "sha256_ganadero": sha256_file(
+            Path(args.ganadero)), "desarrollador": args.desarrollador, "sha256_desarrollador": sha256_file(
+            Path(args.desarrollador)), "tolerancia": args.tolerancia, "valor_central": central}, outputs=res,
+            actor=args.agente)
+        _emit(args, res, rnpv.coherence_text(res))
+        return 0 if res["coherente"] else 1
+    status = 0
     if args.accion == "ganadero":
-        from .econ import farm
-        model = farm.load_farm_model(Path(args.archivo))
-        data = {"escenarios": farm.scenarios(model, args.sim, args.semilla),
-                "monte_carlo": farm.monte_carlo(model, args.sim, args.semilla)}
-        text = farm.report(model, args.sim, args.semilla)
-        summary = data["monte_carlo"]
+        model = farm.load_farm_model(Path(args.archivo), central)
+        missing = farm.missing_sources(model)
+        untraceable = _econ_source_problems(cfg, farm.declared_sources(model))
     else:
-        from .econ import rnpv
-        project = rnpv.load_project(Path(args.archivo))
-        data = rnpv.evaluate(project, args.sim, args.semilla)
-        text = rnpv.report(project, args.sim, args.semilla)
-        summary = data
-    log_event(cfg, f"econ_{args.accion}", inputs={"archivo": args.archivo, "sha256": sha256_file(Path(args.archivo)),
-                                                  "sim": args.sim, "semilla": args.semilla},
-              outputs={"resumen": summary}, actor=args.agente)
+        project = rnpv.load_project(Path(args.archivo), central)
+        missing = rnpv.missing_sources(project)
+        untraceable = _econ_source_problems(cfg, rnpv.declared_sources(project))
+    if args.exigir_fuentes and (missing or untraceable):
+        raise ValueError("--exigir-fuentes: " + "; ".join(
+            (["entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o valores por defecto sin declarar: "
+              + ", ".join(missing)] if missing else [])
+            + (["fuentes sin rastrear en el registro: " + "; ".join(untraceable)] if untraceable else [])))
+    sources_warning = ("\n\nAVISO: fuentes sin rastrear en el registro ([PUB] con fuente o afirmación registrada y "
+                       "verificada; [DER] con la orden o el script): " + "; ".join(untraceable)
+                       + ". `--exigir-fuentes` las rechaza.") if untraceable else ""
+    if args.accion == "ganadero":
+        data = {"escenarios": farm.scenarios(model, args.sim, args.semilla),
+                "monte_carlo": farm.monte_carlo(model, args.sim, args.semilla),
+                "dosis": farm.dose_summary(model), "sensibilidad": farm.sensitivity(model),
+                "entradas": farm.input_table(model), "entradas_sin_fuente": missing,
+                "fuentes_sin_rastrear": untraceable, "resumen_fuentes": farm.sources_overview(model),
+                "estadistico_central": central}
+        text = farm.report(model, args.sim, args.semilla) + sources_warning
+        summary = {k: data[k] for k in ("monte_carlo", "dosis", "entradas_sin_fuente", "fuentes_sin_rastrear",
+                                        "resumen_fuentes", "estadistico_central")}
+    else:
+        data = rnpv.evaluate(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida)
+        data.update({"sensibilidad": rnpv.sensitivity(project), "entradas": rnpv.input_table(project),
+                     "entradas_sin_fuente": missing, "fuentes_sin_rastrear": untraceable,
+                     "resumen_fuentes": rnpv.sources_overview(project)})
+        text = rnpv.report(project, args.sim, args.semilla, loss_threshold=args.umbral_perdida) + sources_warning
+        if args.ganadero:
+            data["coherencia"] = rnpv.coherence(farm.load_farm_model(Path(args.ganadero), central), project)
+            text += "\n\n" + rnpv.coherence_text(data["coherencia"])
+            status = 0 if data["coherencia"]["coherente"] else 1
+        else:
+            data["coherencia"] = None
+            text += ("\n\nAVISO: no se ha comprobado la coherencia con el modelo del ganadero (precio, dosis y días): "
+                     "usa --ganadero <econ_ganadero.toml> o `nutria econ coherencia`.")
+        summary = {k: v for k, v in data.items() if k not in ("sensibilidad", "entradas")}
+    inputs = {"archivo": args.archivo, "sha256": sha256_file(Path(args.archivo)), "sim": args.sim,
+              "semilla": args.semilla, "exigir_fuentes": args.exigir_fuentes, "valor_central": central}
+    if args.accion == "desarrollador":
+        inputs["umbral_perdida"] = args.umbral_perdida
+        if args.ganadero:
+            inputs.update({"ganadero": args.ganadero, "sha256_ganadero": sha256_file(Path(args.ganadero))})
+    log_event(cfg, f"econ_{args.accion}", inputs=inputs, outputs={"resumen": summary}, actor=args.agente)
     _emit(args, data, text)
+    return status
+
+
+def cmd_dosis(args, cfg) -> int:
+    from . import dosis
+    res = dosis.convertir(args.valor, args.desde, ingestion_ms=args.ingestion_ms, portador=args.portador,
+                          base_pienso=args.base_pienso, ingestion_pienso=args.ingestion_pienso,
+                          ms_pienso=args.ms_pienso, precio_eur_kg=args.precio_eur_kg)
+    log_event(cfg, "dosis_convertir", inputs=res["entrada"],
+              outputs={"dosis": res["dosis"], "faltan": res["faltan"], "coste": res.get("coste")}, actor=args.agente)
+    _emit(args, res, dosis.texto_conversion(res))
     return 0
 
 
@@ -2516,7 +2648,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--semilla", type=int, default=42)
     r.add_argument("--alfa", type=float, default=50.0, help="concentración Dirichlet de los pesos (0 = fijos)")
     r.add_argument("--top", type=int, default=3)
-    r.add_argument("--min-evaluadores", dest="min_evaluadores", type=int, default=3)
+    r.add_argument("--min-evaluadores", dest="min_evaluadores", type=int, default=3,
+                   help="evaluadores distintos exigidos por criterio (al menos 3, regla 9)")
     rb = ps.add_parser("rubrica", parents=[common])
     rb.add_argument("--markdown", action="store_true")
     s.set_defaults(func=cmd_puntuar)
@@ -2627,12 +2760,52 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("econ", parents=[common], help="evaluación económica")
     ec = s.add_subparsers(dest="accion", required=True)
+    central_help = ("estadístico del valor central de TODAS las entradas (valores centrales, respuesta umbral, "
+                    "tornado y coherencia): moda (por defecto) o mediana")
     for name in ("ganadero", "desarrollador"):
         x = ec.add_parser(name, parents=[common])
         x.add_argument("archivo", help="modelo en TOML (ver ejemplos/)")
         x.add_argument("--sim", type=int, default=10000)
         x.add_argument("--semilla", type=int, default=42)
+        x.add_argument("--exigir-fuentes", dest="exigir_fuentes", action="store_true",
+                       help="falla si alguna entrada declarada no tiene 'fuente' con etiqueta ([PUB], [DER], [SUP], "
+                            "[DESC]), si se usa un valor por defecto no neutro sin declararlo, si una fuente [PUB] no "
+                            "cita una fuente o afirmación registrada y verificada o si una [DER] no indica la orden")
+        x.add_argument("--valor-central", dest="valor_central", choices=("moda", "mediana"), default="moda",
+                       help=central_help)
+        if name == "desarrollador":
+            x.add_argument("--umbral-perdida", dest="umbral_perdida", type=float,
+                           help="umbral de pérdida en € para P(pérdida > umbral) (por defecto, [proyecto]."
+                                "umbral_perdida_eur o el 50 %% del coste central de desarrollo)")
+            x.add_argument("--ganadero", help="modelo del ganadero: comprueba que precio, dosis y días coinciden "
+                                              "(código de salida 1 si no)")
+    x = ec.add_parser("coherencia", parents=[common],
+                      help="compara precio, dosis y días del modelo del ganadero y del de la empresa (salida 1 si "
+                           "difieren o no puede comprobarse)")
+    x.add_argument("ganadero", help="modelo del ganadero (TOML)")
+    x.add_argument("desarrollador", help="modelo de la empresa (TOML) con las ventas construidas")
+    x.add_argument("--tolerancia", type=float, default=0.001, help="diferencia relativa admitida (0,001 = 0,1 %%)")
+    x.add_argument("--valor-central", dest="valor_central", choices=("moda", "mediana"), default="moda",
+                   help=central_help)
     s.set_defaults(func=cmd_econ)
+
+    s = sub.add_parser("dosis", parents=[common], help="conversión de dosis entre g/animal/día, mg/kg de MS y g/t")
+    dsub = s.add_subparsers(dest="accion", required=True)
+    x = dsub.add_parser("convertir", parents=[common],
+                        help="convierte una dosis a las tres bases (salida [DER]); las ingestiones se declaran")
+    x.add_argument("valor", type=float, help="dosis en la base indicada con --desde")
+    x.add_argument("--desde", required=True, choices=("g_animal_dia", "mg_kg_ms", "g_t"),
+                   help="base de la dosis: g/animal/día, mg/kg de MS de la ración o g/t del pienso portador")
+    x.add_argument("--ingestion-ms", dest="ingestion_ms", type=float,
+                   help="ingestión de MS de la ración (kg MS/animal/día), con fuente o [SUP]")
+    x.add_argument("--portador", choices=("racion_completa", "concentrado"), help="pienso que lleva el producto")
+    x.add_argument("--base", dest="base_pienso", choices=("tal_cual", "ms"), help="base del g/t del pienso portador")
+    x.add_argument("--ingestion-pienso", dest="ingestion_pienso", type=float,
+                   help="ingestión del pienso portador en su base (kg/animal/día)")
+    x.add_argument("--ms-pienso", dest="ms_pienso", type=float, help="fracción de MS del pienso portador (0-1)")
+    x.add_argument("--precio-eur-kg", dest="precio_eur_kg", type=float,
+                   help="precio del producto (€/kg): da el coste por animal y día y por tonelada de pienso")
+    s.set_defaults(func=cmd_dosis)
 
     s = sub.add_parser("informe", parents=[common], help="informes de investigación")
     ins = s.add_subparsers(dest="accion", required=True)

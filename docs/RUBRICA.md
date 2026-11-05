@@ -1,6 +1,8 @@
-# Rúbrica de priorización (v2.1)
+# Rúbrica de priorización (v2.2)
 
 Puntuaciones como fracción del máximo con rango de incertidumbre `[min, max]`. La puntuación es orientativa y no demuestra eficacia; las compuertas bloquean con independencia de la puntuación.
+
+**Anclas en los datos**: el `valor` de cada criterio es una de sus anclas (0, 0.25, 0.5, 0.75, 1). Un valor intermedio solo se admite con una justificación explícita en `justificacion_entre_anclas` (al menos 10 caracteres): sin ella, `nutria puntuar registrar` rechaza el fichero entero y no registra nada; con ella, avisa y añade la justificación a la del criterio. El ranking señala los valores entre anclas. `min` y `max` expresan la incertidumbre y pueden tomar cualquier valor entre 0 y 1.
 
 ## Pesos por perfil
 
@@ -20,7 +22,7 @@ Puntuaciones como fracción del máximo con rango de incertidumbre `[min, max]`.
 
 ### Solidez de la evidencia en la especie y etapa diana (`evidencia`, eje viabilidad)
 
-Calidad, cantidad y coherencia de la evidencia publicada sobre el efecto productivo o fisiológico en la especie y etapa objetivo, ponderada por riesgo de sesgo.
+Calidad, cantidad y coherencia de la evidencia publicada sobre el efecto productivo o fisiológico en la especie y etapa objetivo, ponderada por riesgo de sesgo. Un ensayo con un análogo (otra forma química o sin la misma protección ruminal) solo cuenta como evidencia del candidato si comparte forma química y protección o si se ha evaluado el destino digestivo del candidato a la dosis prevista; si no, es evidencia indirecta.
 
 - **0**: Sin estudios en la especie diana; solo razonamiento, in silico o analogía.
 - **0.25**: Solo in vitro/ex vivo o estudios en otra especie; o un único estudio in vivo con alto riesgo de sesgo.
@@ -90,7 +92,7 @@ Claridad de la clasificación (materia prima, aditivo y grupo funcional, pienso 
 
 ### Rentabilidad para el ganadero (`rentabilidad_ganadero`, eje valor)
 
-Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90 y respuesta umbral frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo.
+Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los escenarios P10, P50 y P90, coste por animal y día y por tonelada de pienso, y respuesta umbral (solo con ese beneficio y con los demás en su valor central) frente a la respuesta esperada según la evidencia. ROI = beneficio/coste; ROI > 1 equivale a beneficio neto positivo. El precio, la dosis y los días son los mismos que en el modelo de la empresa (`nutria econ coherencia`).
 
 - **0**: Beneficio neto negativo incluso en el escenario optimista (P90), o coste por animal y día inasumible.
 - **0.25**: Beneficio neto positivo solo en el escenario optimista (P90).
@@ -100,7 +102,7 @@ Presupuesto parcial por animal con `nutria econ ganadero`: beneficio neto en los
 
 ### Atractivo para la empresa (`atractivo_empresa`, eje valor)
 
-Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores.
+Mercado direccionable, margen, coste y plazo del desarrollo y de la autorización, probabilidad de éxito y valor ajustado por riesgo (`nutria econ desarrollador`), barreras de entrada a competidores. Las ventas se construyen con el mismo precio, dosis y días que el modelo del ganadero (`nutria econ coherencia` sin aviso; si avisa o no se ha comprobado, decláralo en la justificación). Además del rNPV, pesa la distribución del VPN realizado y P(pérdida > umbral): P(rNPV > 0) mide la incertidumbre de los parámetros y no es la probabilidad de ganar dinero.
 
 - **0**: VPN ajustado por riesgo central negativo y sin vía razonable para mejorarlo.
 - **0.25**: VPN ajustado por riesgo negativo o marginal; mercado pequeño o plazo regulatorio muy largo.
@@ -112,10 +114,26 @@ Mercado direccionable, margen, coste y plazo del desarrollo y de la autorizació
 
 Estados: `superada`, `no_resuelta` (candidato condicional: no puede avanzar a validación experimental), `bloqueada` (fuera del ranking).
 
-- **Seguridad** (`seguridad`): bloquea si señal de toxicidad relevante a dosis previsibles; residuos preocupantes en alimentos; riesgo inaceptable para usuario o medio ambiente.
-- **Clasificación y vía regulatoria** (`regulatoria`): bloquea si el efecto buscado o la alegación implican medicamento veterinario; sustancia prohibida en piensos; ninguna vía legal en los mercados objetivo.
+Compuertas **críticas**: `seguridad`, `regulatoria`, `destino_digestivo`. Dentro de CONDICIONAL, el ranking forma tres subgrupos que se ordenan siempre en este orden, sea cual sea la puntuación: (1) solo pendientes de firma humana (todas las compuertas propuestas como `superada`); (2) alguna compuerta no crítica sin resolver (sin propuesta o propuesta `no_resuelta`); (3) alguna compuerta crítica sin resolver. Si el top-k para planes incluye una candidata del subgrupo (3), el ranking lo avisa.
+
+- **Seguridad** (`seguridad`, crítica): bloquea si señal de toxicidad relevante a dosis previsibles; residuos preocupantes en alimentos; riesgo inaceptable para usuario o medio ambiente.
+- **Clasificación y vía regulatoria** (`regulatoria`, crítica): bloquea si el efecto buscado o la alegación implican medicamento veterinario; sustancia prohibida en piensos; ninguna vía legal en los mercados objetivo.
 - **Cuantificación analítica** (`analitica`): bloquea si imposible identificar y cuantificar el activo (o un marcador) en el producto y en el pienso.
 - **Libertad de operación (FTO)** (`propiedad_intelectual`): bloquea si patente vigente que bloquea la explotación en mercados clave sin licencia ni alternativa de diseño.
-- **Destino digestivo** (`destino_digestivo`): bloquea si el activo no llega a la diana en cantidad relevante a una dosis viable (degradación o transformación ruminal, digestión o absorción), según datos publicados o el cálculo de `nutria destino ruminal`.
+- **Destino digestivo** (`destino_digestivo`, crítica): bloquea si el activo no llega a la diana en cantidad relevante a una dosis viable (degradación o transformación ruminal, digestión o absorción), según datos publicados o el cálculo de `nutria destino ruminal`.
 - **Ética y bienestar animal** (`etica`): bloquea si la validación exige procedimientos no autorizables o el producto compromete el bienestar animal.
+
+## Escala de madurez del candidato (EMC)
+
+| Nivel | Significado |
+|---|---|
+| EMC-0 | Idea |
+| EMC-1 | Mecanismo plausible apoyado en literatura |
+| EMC-2 | Efecto in vivo en la especie diana en al menos un estudio del candidato (misma forma química y protección); el de un análogo solo cuenta si comparte forma química y protección o si se ha evaluado el destino digestivo del candidato a la dosis prevista |
+| EMC-3 | Evidencia cuantitativa sintetizada y compuertas sin bloqueo (máximo alcanzable en la fase computacional) |
+| EMC-4 | Validación in vitro o ex vivo propia |
+| EMC-5 | Ensayos in vivo de tolerancia y eficacia |
+| EMC-6 | Dossier regulatorio |
+
+- **EMC-2**: El efecto in vivo de un análogo con otra forma química o sin la misma protección no basta por sí solo: en rumiantes, la forma y la protección cambian la degradación ruminal y la llegada al intestino. Con solo esa evidencia y sin destino digestivo evaluado, el candidato se queda en EMC-1.
 

@@ -186,3 +186,57 @@ def test_buscar_registrar_con_conflicto_y_stderr_cerrada_deja_un_solo_json(proye
         sys.stderr = saved
     data = json.loads(out)                      # un único objeto JSON
     assert code == 3 and len(data["registradas"]) == 1 and data["conflictos"][0]["registro"] == "pmid:222"
+
+
+# ============================================================================ P1 + P6: puntuar registrar
+def _oportunidad(project: Path) -> str:
+    from nutria.cli import main
+    path = project / "oportunidad.json"
+    path.write_text((ROOT / "ejemplos" / "oportunidad_ejemplo.json").read_text("utf-8"), "utf-8")
+    assert main(["oportunidad", "nueva", "--datos", str(path)]) == 0
+    return "O-0001"
+
+
+def _puntuaciones(project: Path, evaluador: str, **primera) -> Path:
+    data = json.loads((ROOT / "ejemplos" / "puntuacion_ejemplo.json").read_text("utf-8"))
+    data.update(oportunidad="O-0001", evaluador=evaluador)
+    data["puntuaciones"][0].update(primera)
+    path = project / f"puntuacion_{evaluador}.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+    return path
+
+
+def test_puntuar_registrar_aplica_las_anclas_de_p6_y_la_identidad_de_p1(project, capsys):
+    from nutria import db
+    from nutria.config import load_config
+    _oportunidad(project)
+    entre_anclas = {"valor": 0.6, "min": 0.5, "max": 0.75}
+    # P6: un valor entre anclas sin justificación rechaza el fichero entero (código 2) y no registra nada
+    sin_justificar = _puntuaciones(project, "evaluador-1", **entre_anclas)
+    code, _, err = _run(capsys, ["--agente", "evaluador-1", "puntuar", "registrar", "--datos", str(sin_justificar)])
+    assert code == 2 and "fuera de las anclas" in err
+    conn = db.connect(load_config().db_path)
+    try:
+        assert db.list_scores(conn, "O-0001") == []
+    finally:
+        conn.close()
+    # Con la justificación se registra; el aviso va solo por stderr (también con stderr cerrada) y el actor es el
+    # evaluador declarado (P1)
+    justificado = _puntuaciones(project, "evaluador-1", **entre_anclas,
+                                justificacion_entre_anclas="dos ensayos con el mismo diseño discrepan")
+    code, out, err = _run(capsys, ["--agente", "evaluador-1", "--json", "puntuar", "registrar", "--datos",
+                                   str(justificado)])
+    assert code == 0 and json.loads(out)["evaluador"] == "evaluador-1" and "entre las anclas" in err
+    saved, sys.stderr = sys.stderr, None
+    try:
+        code, out, _ = _run(capsys, ["--agente", "evaluador-1", "--json", "puntuar", "registrar", "--datos",
+                                     str(justificado)])
+    finally:
+        sys.stderr = saved
+    assert code == 0 and json.loads(out)["criterios"] == 9          # un único objeto JSON en stdout
+    eventos = [json.loads(line) for line in (project / "research" / "procedencia.jsonl").read_text("utf-8")
+               .splitlines() if line.strip()]
+    assert [e["actor"] for e in eventos if e["action"] == "puntuacion"] == ["evaluador-1", "evaluador-1"]
+    # P1: un rol que no es evaluador no registra puntuaciones, aunque el fichero cumpla las anclas
+    code, _, err = _run(capsys, ["--agente", "critico-red-team", "puntuar", "registrar", "--datos", str(justificado)])
+    assert code == 3 and "Solo los evaluadores independientes" in err
