@@ -21,6 +21,23 @@ def bcg():
     return np.array(yi), np.array(vi), np.array(ablat)
 
 
+@pytest.fixture(autouse=True)
+def _entorno_de_persona(monkeypatch, tmp_path_factory):
+    """Cada prueba se ejecuta como en la terminal de una persona, se lance pytest donde se lance (también dentro de
+    Claude Code): sin las variables de entorno de Claude Code ni NUTRIA_AGENT y sin recorrer los procesos antecesores
+    reales (PROC_ROOT apunta a un directorio vacío, como en un sistema sin /proc).
+
+    La CLI rechaza la firma humana en cuanto ve alguna de esas señales. Las pruebas de la vía de los agentes las
+    activan explícitamente (monkeypatch.setenv, --agente o un /proc simulado). Un subproceso no hereda PROC_ROOT: si
+    firma, ve los procesos reales y, lanzado desde Claude Code, se rechaza; por eso las pruebas que firman como una
+    persona llaman a `main()` en el mismo proceso."""
+    from nutria import provenance
+    for var in (*provenance.AGENT_ENV_VARS, "NUTRIA_AGENT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(provenance, "PROC_ROOT", str(tmp_path_factory.mktemp("sin_proc") / "proc"))
+    monkeypatch.setattr(provenance, "_PROCESS_CACHE", {})
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     """Proyecto nutria inicializado en un directorio temporal, sin red."""

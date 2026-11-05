@@ -35,7 +35,8 @@
     ],
     "deny": [
       "Read(~/.config/nutria/**)",
-      "Edit(~/.config/nutria/**)"
+      "Edit(~/.config/nutria/**)",
+      "Bash(sqlite3 *)"
     ]
   },
   "hooks": {
@@ -69,6 +70,16 @@
             "type": "command",
             "command": "sh \"${CLAUDE_PROJECT_DIR}/scripts/hooks/run_hook.sh\" check_research_file.py",
             "timeout": 120
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR}/scripts/hooks/registrar_web.sh\"",
+            "timeout": 30
           }
         ]
       }

@@ -3,8 +3,10 @@
 Ejecuta `nutria --help` o `nutria <orden> --help`. Añade `--json` para salida legible por máquina
 y `--agente <nombre>` (o la variable NUTRIA_AGENT) para atribuir la acción en la procedencia.
 
-Las firmas humanas (`--firma-humana`) solo puede escribirlas una persona en su propia terminal: el hook
-de Claude Code de este proyecto bloquea cualquier orden de un agente que las incluya.
+Las firmas humanas (`--firma-humana`) solo puede escribirlas una persona en su propia terminal. La CLI rechaza
+cualquier firma con --agente, con NUTRIA_AGENT, dentro de Claude Code o sin terminal de control
+(`_firma_solo_de_personas`), ningún analizador admite abreviaturas de las opciones (`_Parser`) y el hook de Claude
+Code del proyecto bloquea además esas órdenes. La firma es una atestación sin autenticar: no identifica a la persona.
 """
 
 from __future__ import annotations
@@ -35,14 +37,57 @@ def _emit(args, data, text: str | None = None) -> None:
 
 
 def _es_evaluador(args) -> bool:
-    """Los evaluadores independientes se identifican con --agente evaluador-<n> (regla 9 de CLAUDE.md)."""
-    return str(getattr(args, "agente", None) or "").strip().lower().startswith("evaluador")
+    """Los evaluadores independientes se identifican con --agente evaluador-<n> o NUTRIA_AGENT (regla 9 de CLAUDE.md)."""
+    from .provenance import declared_agent
+    return declared_agent(getattr(args, "agente", None)).lower().startswith("evaluador")
 
 
 def _no_para_evaluadores(args, what: str) -> None:
     if _es_evaluador(args):
         raise SystemExit(f"Los evaluadores independientes no pueden {what}: puntúan a ciegas "
                          "(regla 9 de CLAUDE.md). Usa `oportunidad ver <ID> --sin-puntuaciones`.")
+
+
+class _FirmaRechazada(SystemExit):
+    """Salida con el código 3 cuyo texto (str) es el motivo del rechazo de la firma."""
+
+    def __init__(self, message: str):
+        super().__init__(3)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def _firma_solo_de_personas(args) -> None:
+    """Regla 12: la firma humana solo se acepta desde la terminal de una persona (comprobación central).
+
+    Se aplica tras analizar los argumentos y antes de tocar nada, a cualquier opción de firma de cualquier orden
+    (destinos que empiezan por 'firma', como firma_humana), también a las que se añadan después. Rechaza la orden
+    (código 3) si hay señales de agente: --agente, NUTRIA_AGENT, alguna variable de Claude Code en el entorno o en el
+    entorno inicial de un proceso antecesor, Claude Code entre los antecesores o, en Linux, ningún proceso de la
+    cadena con terminal de control (`provenance.human_terminal_problems`).
+
+    Residuo: la firma es una atestación sin autenticar. Excluye a los agentes que usan la CLI desde Claude Code, pero
+    no identifica a la persona; un proceso desvinculado de Claude Code con una pseudoterminal propia, una persona
+    malintencionada o quien escriba directamente en la base de datos pueden falsificarla. Sin /proc (macOS, Windows)
+    solo se comprueba el entorno del propio proceso.
+    """
+    from .provenance import signature_problems
+    firmas = [dest for dest, value in vars(args).items() if dest.startswith("firma") and value not in (None, False)]
+    if not firmas:
+        return
+    motivos = signature_problems(getattr(args, "agente", None))
+    if motivos:
+        message = ("Firma humana rechazada (regla 12): la firma humana no la registra un agente; solo se acepta desde la "
+                   "terminal de una persona (interactiva, fuera de Claude Code, sin --agente ni NUTRIA_AGENT). "
+                   "Detectado: " + ", ".join(dict.fromkeys(motivos)) + ". Registra la acción sin firma (queda como "
+                   "propuesta) y pide a la persona responsable que la firme en su propia terminal.")
+        if getattr(args, "json", False):   # mismo formato que el resto de errores con --json
+            print(json.dumps({"error": message, "codigo": 3, "tipo": "registro"}, ensure_ascii=False))
+        else:
+            print(message, file=sys.stderr)
+        raise _FirmaRechazada(message)
 
 
 def _load_json(path: str):
@@ -548,6 +593,8 @@ def _entity_cmd(args, cfg, kind: str) -> int:
     else:
         gate_ids = _rubric(cfg).gate_ids if kind == "oportunidad" else None
         set_status(conn, args.id, args.nuevo_estado, args.motivo, args.agente, args.firma_humana, gate_ids)
+        log_event(cfg, "cambio_estado", inputs={"entidad": args.id, "estado": args.nuevo_estado, "motivo": args.motivo},
+                  outputs={"firmada": bool(args.firma_humana), "firma": args.firma_humana}, actor=args.agente)
         _emit(args, {"id": args.id, "estado": args.nuevo_estado}, f"{args.id} -> {args.nuevo_estado}")
     return 0
 
@@ -574,19 +621,27 @@ def cmd_puntuar(args, cfg) -> int:
     if args.accion == "registrar":
         data = _load_json(args.json_file)
         _validate("puntuacion", data)
-        n = registry.add_scores(conn, data["oportunidad"], data["evaluador"], data["puntuaciones"], rubric.criterion_ids)
+        quien = _evaluador_que_registra(args)
+        n = registry.add_scores(conn, data["oportunidad"], data["evaluador"], data["puntuaciones"],
+                                rubric.criterion_ids, actor=quien)
         # Los valores quedan en la base de datos (scores y scores_history), no en la procedencia, que es legible por
         # otros agentes: así un evaluador no puede ver las puntuaciones de otro consultando las trazas.
         log_event(cfg, "puntuacion", inputs={"oportunidad": data["oportunidad"], "evaluador": data["evaluador"]},
                   outputs={"criterios": n, "sha256_puntuaciones": sha256_text(json.dumps(data["puntuaciones"],
                                                                                          sort_keys=True))},
-                  actor=args.agente)
+                  actor=quien)
         _emit(args, {"oportunidad": data["oportunidad"], "evaluador": data["evaluador"], "criterios": n},
               f"{n} puntuaciones registradas para {data['oportunidad']} (evaluador {data['evaluador']})")
         return 0
     if args.accion == "compuerta":
+        _comprobar_evidencia(cfg, args.estado, args.evidencia)
         registry.set_gate(conn, args.id, args.compuerta, args.estado, args.motivo, rubric.gate_ids,
                           evidence=args.evidencia, actor=args.agente, human_signoff=args.firma_humana)
+        efectiva = registry.effective_gates(conn, args.id, rubric.gate_ids).get(args.compuerta)
+        log_event(cfg, "compuerta", inputs={"oportunidad": args.id, "compuerta": args.compuerta, "estado": args.estado,
+                                            "motivo": args.motivo, "evidencia": args.evidencia},
+                  outputs={"firmada": bool(args.firma_humana), "firma": args.firma_humana, "efectiva": efectiva},
+                  actor=args.agente)
         note = ""
         if args.estado == "superada" and not args.firma_humana:
             note = " (propuesta: no cuenta como superada hasta que la firme una persona)"
@@ -619,13 +674,70 @@ def cmd_decision(args, cfg) -> int:
     conn = _conn(cfg)
     if args.accion == "registrar":
         registry.add_decision(conn, args.entidad, args.decision, args.motivo, args.agente, args.firma_humana)
+        log_event(cfg, "decision", inputs={"entidad": args.entidad, "decision": args.decision, "motivo": args.motivo},
+                  outputs={"firmada": bool(args.firma_humana), "firma": args.firma_humana}, actor=args.agente)
         _emit(args, {"entidad": args.entidad, "decision": args.decision, "firmada": bool(args.firma_humana)},
               "Decisión registrada" + ("" if args.firma_humana else " (sin firma humana: es una propuesta)"))
         return 0
     rows = registry.list_decisions(conn, args.entidad)
     _emit(args, rows, "\n".join(f"{r['ts']} {r['entity_id'] or '-':<8} {r['decision']} | {r['rationale']} | "
-                                f"{r['decided_by']}{' | firma: ' + r['human_signoff'] if r['human_signoff'] else ''}"
+                                f"{r['decided_by']}{' [' + r['context'] + ']' if r.get('context') else ''}"
+                                f"{' | firma: ' + r['human_signoff'] if r['human_signoff'] else ''}"
                                 for r in rows) or "(sin decisiones)")
+    return 0
+
+
+def _evaluador_que_registra(args) -> str:
+    """Regla 9: solo puntúa un evaluador independiente (--agente evaluador-<n> o NUTRIA_AGENT), y solo con su propio
+    identificador, el del campo 'evaluador' del JSON (lo comprueba `registry.add_scores`)."""
+    from .provenance import declared_agent
+    quien = declared_agent(getattr(args, "agente", None))
+    if not quien.lower().startswith("evaluador"):
+        raise registry.RegistryError("Solo los evaluadores independientes registran puntuaciones (regla 9): "
+                                     "identifícate con --agente evaluador-<n>, el mismo identificador del campo "
+                                     "'evaluador' del JSON")
+    return quien
+
+
+def _comprobar_evidencia(cfg, estado: str, evidencia: list | None) -> None:
+    """La evidencia de una compuerta debe poder comprobarse: IDs del registro (su existencia la comprueba el
+    registro), URL o ficheros que existan en el proyecto; el texto libre no vale. En "bloqueada" no se exige nada:
+    un error en la evidencia no debe impedir un bloqueo (criterio de prudencia)."""
+    import re
+    if estado == "bloqueada":
+        return
+    faltan = []
+    for item in (str(e).strip() for e in evidencia or []):
+        if not item or registry.is_registry_id(item) or re.fullmatch(r"https?://\S+", item):
+            continue
+        path = Path(item)
+        if not ((path if path.is_absolute() else cfg.root / path).exists() or path.exists()):
+            faltan.append(item)
+    if faltan:
+        raise registry.RegistryError(f"Evidencia que no se puede comprobar: {', '.join(faltan)}. Indica IDs del registro "
+                                     "(A-xxxx, doi:..., pmid:...), URL o ficheros que existan en el proyecto (rutas "
+                                     "relativas a su raíz)")
+
+
+def cmd_autoria(args, cfg) -> int:
+    """Autoría inventiva humana (regla 11): quién aportó qué decisión inventiva, firmado por una persona."""
+    conn = _conn(cfg)
+    if args.accion == "registrar":
+        if not (args.firma_humana or "").strip():
+            raise registry.RegistryError("Registrar la autoría inventiva exige --firma-humana: solo una persona puede "
+                                         "registrarla, en su propia terminal (regla 11)")
+        cid = registry.add_inventive_contribution(conn, args.entidad, args.persona, args.aportacion, args.firma_humana,
+                                                  args.agente)
+        # La aportación puede describir una idea patentable: en la procedencia (versionada) solo queda su huella.
+        log_event(cfg, "autoria", inputs={"entidad": args.entidad, "persona": args.persona},
+                  outputs={"id": cid, "firma": args.firma_humana},
+                  input_hashes={"aportacion": sha256_text(args.aportacion.strip())}, actor=args.agente)
+        _emit(args, {"id": cid, "entidad": args.entidad, "persona": args.persona, "firma": args.firma_humana},
+              f"Autoría inventiva registrada (#{cid}): {args.persona} en {args.entidad} (firma: {args.firma_humana})")
+        return 0
+    rows = registry.list_inventive_contributions(conn, args.entidad)
+    _emit(args, rows, "\n".join(f"#{r['id']} {r['signed_at']} {r['entity_id']} | {r['person']}: {r['contribution']} | "
+                                f"firma: {r['signed_by']}" for r in rows) or "(sin aportaciones registradas)")
     return 0
 
 
@@ -934,12 +1046,44 @@ def cmd_informe(args, cfg) -> int:
 
 
 def cmd_procedencia(args, cfg) -> int:
+    import warnings
+
+    from .provenance import verify_chain
     _no_para_evaluadores(args, "consultar la procedencia")
-    events = read_events(cfg, limit=args.ultimas, action=args.accion_filtro)
-    _emit(args, events, "\n".join(f"{e['ts']} {e['actor']:<22} {e['action']:<18} "
-                                  f"{json.dumps(e.get('inputs'), ensure_ascii=False)[:110]}" for e in events)
+    if getattr(args, "operacion", "listar") == "verificar":
+        res = verify_chain(cfg)
+        _emit(args, res, _texto_verificacion_procedencia(res))
+        return 0 if res["integra"] else 1
+    with warnings.catch_warnings():   # las líneas corruptas se informan aquí, una vez y en español
+        warnings.simplefilter("ignore")
+        events = read_events(cfg, limit=args.ultimas, action=args.accion_filtro)
+    corruptas = getattr(events, "corruptas", [])
+    if corruptas:
+        print(f"AVISO: {len(corruptas)} línea(s) corrupta(s) en {cfg.provenance_path} (líneas "
+              f"{', '.join(map(str, corruptas[:10]))}{' ...' if len(corruptas) > 10 else ''}): no se muestran. "
+              "Comprueba la integridad con `nutria procedencia verificar`.", file=sys.stderr)
+    _emit(args, list(events), "\n".join(f"{e.get('ts')} {str(e.get('actor')):<22} {str(e.get('action')):<18} "
+                                        f"{json.dumps(e.get('inputs'), ensure_ascii=False)[:110]}" for e in events)
           or "(sin eventos)")
     return 0
+
+
+def _texto_verificacion_procedencia(res: dict) -> str:
+    if not res["existe"]:
+        return f"Sin registro de procedencia ({res['fichero']})\nResultado: íntegra (vacía)"
+    lines = [f"Procedencia: {res['fichero']}",
+             f"  eventos: {res['eventos']} (encadenados {res['encadenados']}, anteriores a la cadena "
+             f"{res['anteriores_a_la_cadena']})"]
+    git = res.get("git") or {}
+    if git.get("estado") == "amplia_lo_confirmado":
+        lines.append(f"  git: amplía la versión confirmada (commit {str(git.get('commit'))[:12]}; "
+                     f"{git.get('eventos_nuevos')} línea(s) nuevas sin confirmar)")
+    elif git.get("estado") == "sin_referencia":
+        lines.append("  git: sin versión confirmada con la que comparar")
+    lines += [f"  AVISO: {a}" for a in res["avisos"]]
+    lines += [f"  PROBLEMA: {p}" for p in res["problemas"]]
+    lines.append("Resultado: " + ("íntegra" if res["integra"] else "NO íntegra"))
+    return "\n".join(lines)
 
 
 # ============================================================================ modelos de lenguaje
@@ -969,10 +1113,28 @@ def cmd_llm(args, cfg) -> int:
 
 
 # ============================================================================ parser
+class _Parser(argparse.ArgumentParser):
+    """Analizador que nunca acepta abreviaturas de las opciones largas (allow_abbrev=False).
+
+    Con abreviaturas, `--firma` o `--fir` equivaldrían a `--firma-humana` y eludirían el hook que bloquea esa opción a
+    los agentes. `add_subparsers` crea los subanalizadores con la clase del padre (type(self)) o con `parser_class`,
+    así que la regla cubre todas las órdenes y subórdenes, también las que se añadan después.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs["allow_abbrev"] = False
+        super().__init__(*args, **kwargs)
+
+
+def _sin_abreviaturas(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.allow_abbrev = False
+    return parser
+
+
 def build_parser() -> argparse.ArgumentParser:
     # Las opciones globales se aceptan antes o después de la orden. En las subórdenes usan
     # SUPPRESS para no sobrescribir lo indicado antes de la orden (comportamiento de argparse).
-    common = argparse.ArgumentParser(add_help=False)
+    common = _Parser(add_help=False)
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="salida JSON")
     common.add_argument("--agente", default=argparse.SUPPRESS,
                         help="nombre del agente que ejecuta la orden (procedencia)")
@@ -985,7 +1147,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agente", default=None, help="nombre del agente que ejecuta la orden (procedencia)")
     p.add_argument("--offline", action="store_true", default=False, help="usar solo la caché, sin red")
     p.add_argument("--version", action="version", version=f"nutria {__version__}")
-    sub = p.add_subparsers(dest="orden", required=True)
+    sub = _sin_abreviaturas(p).add_subparsers(dest="orden", required=True, parser_class=_Parser)
 
     s = sub.add_parser("init", parents=[common], help="inicializa el proyecto en el directorio actual")
     s.add_argument("--forzar", action="store_true", help="reescribe nutria.toml")
@@ -1173,6 +1335,18 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--entidad")
     s.set_defaults(func=cmd_decision)
 
+    s = sub.add_parser("autoria", parents=[common], help="autoría inventiva humana (la registra una persona, con firma)")
+    au = s.add_subparsers(dest="accion", required=True)
+    a = au.add_parser("registrar", parents=[common], help="registra la aportación inventiva de una persona")
+    a.add_argument("--entidad", required=True, help="oportunidad o hipótesis (O-xxxx, H-xxxx)")
+    a.add_argument("--persona", required=True, help="persona autora de la aportación")
+    a.add_argument("--aportacion", required=True, help="decisión inventiva concreta que aportó")
+    a.add_argument("--firma-humana", dest="firma_humana",
+                   help="persona que firma el registro (obligatoria; solo personas, en su terminal)")
+    x = au.add_parser("listar", parents=[common])
+    x.add_argument("--entidad")
+    s.set_defaults(func=cmd_autoria)
+
     csv_help = ("CSV con una fila por comparación: estudio, comparacion y o bien yi, vi; o media_trt, media_ctrl, "
                 "disp_trt, disp_ctrl, tipo_disp (SD|SE|SEM_combinado|SED|IC95), n_trt, n_ctrl; o, para RR/OR/RD, "
                 "ev_trt, n_trt, ev_ctrl, n_ctrl. `nutria extraccion exportar` produce este formato.")
@@ -1255,6 +1429,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("procedencia", parents=[common], help="consulta el registro de procedencia")
     s.add_argument("--ultimas", type=int, default=30)
     s.add_argument("--accion", dest="accion_filtro")
+    s.add_argument("operacion", nargs="?", choices=["listar", "verificar"], default="listar",
+                   help="listar (por defecto) o verificar la integridad: cadena de hashes, líneas corruptas y versión "
+                        "confirmada en git (código 1 si no es íntegra)")
     s.set_defaults(func=cmd_procedencia)
 
     s = sub.add_parser("llm", parents=[common], help="segunda opinión multimodelo y evaluación de modelos")
@@ -1279,6 +1456,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _firma_solo_de_personas(args)
     cfg = load_config()
     if args.offline:
         cfg.offline = True

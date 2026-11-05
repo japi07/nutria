@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .provenance import current_actor, utc_now
+from .provenance import current_actor, declared_agent, execution_context, signature_problems, utc_now
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -127,6 +127,69 @@ HYPOTHESIS_STATUSES = ("propuesta", "activa", "en_revision", "refutada", "descar
 GATE_STATUSES = ("superada", "bloqueada", "no_resuelta")
 OUT_OF_SCOPE_ROUTES = ("fuera_de_alcance_medicamento", "fuera_de_alcance_biocida")
 
+# ---------------------------------------------------------------------------- firma, roles y trazabilidad
+# Reglas que añade este bloque (además de las del encabezado del módulo):
+# - sin firma humana, cada compuerta la propone solo su rol propietario (GATE_OWNERS); "bloqueada" la puede proponer
+#   cualquiera, y una propuesta sin firma no sustituye una decisión firmada salvo para bloquear (ver `set_gate`);
+# - salir de "bloqueada" exige, además de la firma, evidencia comprobable;
+# - las puntuaciones de un evaluador solo las registra ese evaluador, y el historial guarda quién las sustituyó;
+# - `decisions`, `scores_history` e `inventive_contributions` son solo de inserción (triggers de SQLite, que también
+#   se crean en los registros ya existentes al conectar); una decisión solo se registra sobre una entidad que existe;
+# - la autoría inventiva humana (regla 11) se registra con firma en `inventive_contributions`.
+# La firma (--firma-humana) es una atestación sin autenticar: la CLI la rechaza en contexto de agente, pero no
+# identifica a la persona, y quien tenga acceso de escritura a la base de datos puede falsificarla.
+
+# Rol que propone cada compuerta (CLAUDE.md, tabla del equipo).
+GATE_OWNERS = {
+    "seguridad": "compuestos-toxicologia",
+    "regulatoria": "regulacion-seguridad",
+    "analitica": "desarrollo-industrial",
+    "propiedad_intelectual": "economia-mercado-pi",
+    "etica": "sostenibilidad-bienestar",
+    "destino_digestivo": "fisiologia-bioquimica",
+}
+# Identificadores del registro que puede citar la evidencia de una compuerta (se comprueba que existan).
+REGISTRY_ID_PATTERN = r"(?:[OHA]-\d{4,}|E-?\d+|doi:\S+|pmid:\d+|openalex:\S+)"
+
+TRAZABILIDAD_SCHEMA = """
+CREATE TABLE IF NOT EXISTS inventive_contributions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id TEXT NOT NULL, person TEXT NOT NULL, contribution TEXT NOT NULL,
+  signed_by TEXT NOT NULL, signed_at TEXT NOT NULL, recorded_by TEXT, context TEXT
+);
+CREATE TRIGGER IF NOT EXISTS decisions_sin_update BEFORE UPDATE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions es solo de inserción: una decisión registrada no se modifica'); END;
+CREATE TRIGGER IF NOT EXISTS decisions_sin_delete BEFORE DELETE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions es solo de inserción: una decisión registrada no se borra'); END;
+CREATE TRIGGER IF NOT EXISTS scores_history_sin_update BEFORE UPDATE ON scores_history
+BEGIN SELECT RAISE(ABORT, 'scores_history es solo de inserción: el historial no se modifica'); END;
+CREATE TRIGGER IF NOT EXISTS scores_history_sin_delete BEFORE DELETE ON scores_history
+BEGIN SELECT RAISE(ABORT, 'scores_history es solo de inserción: el historial no se borra'); END;
+CREATE TRIGGER IF NOT EXISTS inventive_contributions_sin_update BEFORE UPDATE ON inventive_contributions
+BEGIN SELECT RAISE(ABORT, 'inventive_contributions es solo de inserción: la autoría registrada no se modifica'); END;
+CREATE TRIGGER IF NOT EXISTS inventive_contributions_sin_delete BEFORE DELETE ON inventive_contributions
+BEGIN SELECT RAISE(ABORT, 'inventive_contributions es solo de inserción: la autoría registrada no se borra'); END;
+"""
+
+
+def _ensure_trazabilidad(conn: sqlite3.Connection) -> None:
+    """Migración de la trazabilidad (también en registros existentes): columna `context` de `decisions` (contexto de
+    ejecución: claude-code o terminal), tabla de autoría inventiva y triggers de solo inserción."""
+    if "context" not in {r[1] for r in conn.execute("PRAGMA table_info(decisions)")}:
+        conn.execute("ALTER TABLE decisions ADD COLUMN context TEXT")
+    conn.executescript(TRAZABILIDAD_SCHEMA)
+
+
+def require_human_signature(signed: str | None) -> None:
+    """Regla 12 en el propio registro: una firma humana solo se guarda desde la terminal de una persona, aunque se
+    llame a estas funciones sin pasar por la CLI (ver `provenance.signature_problems`). Sin firma, no hace nada."""
+    if not (signed or "").strip():
+        return
+    problems = signature_problems()
+    if problems:
+        raise RegistryError("Firma humana rechazada (regla 12): la firma humana no la registra un agente; solo se "
+                            "acepta desde la terminal de una persona. Detectado: " + ", ".join(dict.fromkeys(problems)))
+
 
 class RegistryError(ValueError):
     """Error de integridad del registro (estado inválido, entidad inexistente, regla incumplida...)."""
@@ -149,6 +212,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _migrate(conn)
+    _ensure_trazabilidad(conn)
     return conn
 
 
@@ -330,6 +394,7 @@ def _require_usable_source(conn: sqlite3.Connection, source_id: str, purpose: st
 def add_manual_verification(conn: sqlite3.Connection, url: str, signed_by: str, note: str | None = None) -> None:
     if not signed_by or not signed_by.strip():
         raise RegistryError("La verificación manual exige el nombre de la persona que la hizo")
+    require_human_signature(signed_by)
     with transaction(conn):
         conn.execute("INSERT INTO manual_verifications (url, signed_by, signed_at, note) VALUES (?,?,?,?) "
                      "ON CONFLICT(url) DO UPDATE SET signed_by=excluded.signed_by, signed_at=excluded.signed_at, "
@@ -494,6 +559,7 @@ def set_opportunity_status(conn: sqlite3.Connection, opp_id: str, status: str, r
     if opp is None:
         raise RegistryError(f"No existe la oportunidad {opp_id}")
     signed = bool(human_signoff and human_signoff.strip())
+    require_human_signature(human_signoff)
     if opp["status"] in ("bloqueada", "descartada") and status != opp["status"] and not signed:
         raise RegistryError(f"Reactivar una oportunidad '{opp['status']}' exige --firma-humana")
     if status in ("priorizada", "en_validacion"):
@@ -555,6 +621,7 @@ def set_hypothesis_status(conn: sqlite3.Connection, hyp_id: str, status: str, re
         raise RegistryError(f"Estado no válido: {status}. Opciones: {', '.join(HYPOTHESIS_STATUSES)}")
     if not reason.strip():
         raise RegistryError("Todo cambio de estado necesita un motivo (registro de hipótesis descartadas)")
+    require_human_signature(human_signoff)
     with transaction(conn):
         if conn.execute("SELECT 1 FROM hypotheses WHERE id = ?", (hyp_id,)).fetchone() is None:
             raise RegistryError(f"No existe la hipótesis {hyp_id}")
@@ -565,9 +632,18 @@ def set_hypothesis_status(conn: sqlite3.Connection, hyp_id: str, status: str, re
 
 # ---------------------------------------------------------------------------- puntuación y compuertas
 def add_scores(conn: sqlite3.Connection, opp_id: str, rater: str, items: list[dict],
-               valid_criteria: set[str]) -> int:
+               valid_criteria: set[str], actor: str | None = None) -> int:
+    """Registra (o sustituye, guardando el valor anterior en `scores_history`) las puntuaciones de `rater`.
+
+    Con `actor` (quien ejecuta la orden), este debe ser el propio evaluador: nadie registra ni sobrescribe las
+    puntuaciones de otro, y el historial guarda ese actor real. La CLI exige además que sea un evaluador.
+    """
+    if actor is not None and actor.strip() != (rater or "").strip():
+        raise RegistryError(f"El evaluador del JSON ('{rater}') no es quien registra ('{actor}'): nadie registra ni "
+                            "sobrescribe las puntuaciones de otro evaluador (regla 9)")
     if get_opportunity(conn, opp_id) is None:
         raise RegistryError(f"No existe la oportunidad {opp_id}")
+    replaced_by = current_actor(actor)
     n = 0
     with transaction(conn):
         for item in items:
@@ -586,7 +662,7 @@ def add_scores(conn: sqlite3.Connection, opp_id: str, rater: str, items: list[di
                     "INSERT INTO scores_history (opportunity_id, rater, criterion, value, low, high, rationale, "
                     "evidence, created_at, replaced_at, replaced_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (opp_id, rater, crit, previous["value"], previous["low"], previous["high"], previous["rationale"],
-                     previous["evidence"], previous["created_at"], utc_now(), current_actor(None)))
+                     previous["evidence"], previous["created_at"], utc_now(), replaced_by))
             conn.execute(
                 "INSERT INTO scores (opportunity_id, rater, criterion, value, low, high, rationale, evidence, "
                 "created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(opportunity_id, rater, criterion) DO UPDATE "
@@ -612,9 +688,14 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
              human_signoff: str | None = None) -> None:
     """Registra una propuesta de compuerta o, con firma humana, una decisión.
 
-    - "bloqueada" actúa de inmediato aunque no esté firmada (criterio de prudencia);
+    - "bloqueada" actúa de inmediato aunque no esté firmada (criterio de prudencia) y la puede proponer cualquiera,
+      también sobre una decisión firmada; su evidencia no se valida (un error en ella no impide bloquear);
+    - sin firma, cualquier otro estado solo lo propone el rol propietario de la compuerta (GATE_OWNERS), identificado
+      con `actor` (--agente) o NUTRIA_AGENT, y nunca sustituye una decisión firmada por una persona;
     - "superada" sin firma queda como propuesta y no cuenta como superada;
-    - salir de "bloqueada" exige firma humana.
+    - salir de "bloqueada" exige firma humana y evidencia;
+    - la evidencia (salvo en "bloqueada") no admite elementos vacíos, y los IDs del registro que cite deben existir
+      (que las URL y los ficheros citados existan lo comprueba la CLI, que conoce la raíz del proyecto).
     """
     if gate not in valid_gates:
         raise RegistryError(f"Compuerta desconocida: {gate}. Válidas: {', '.join(sorted(valid_gates))}")
@@ -626,13 +707,39 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
     if opp is None:
         raise RegistryError(f"No existe la oportunidad {opp_id}")
     signed = human_signoff.strip() if human_signoff and human_signoff.strip() else None
+    require_human_signature(signed)
     current = conn.execute("SELECT * FROM gates WHERE opportunity_id = ? AND gate = ?", (opp_id, gate)).fetchone()
-    if current is not None and current["status"] == "bloqueada" and status != "bloqueada" and not signed:
+    leaving_block = current is not None and current["status"] == "bloqueada" and status != "bloqueada"
+    if leaving_block and not signed:
         raise RegistryError(f"La compuerta {gate} de {opp_id} está bloqueada: desbloquearla exige --firma-humana")
     if gate == "regulatoria" and status != "bloqueada" and opp.get("regulatory_route") in OUT_OF_SCOPE_ROUTES \
             and not signed:
         raise RegistryError(f"{opp_id} tiene la ruta '{opp['regulatory_route']}': la compuerta regulatoria solo "
                             "puede cambiarse con --firma-humana (y conviene corregir antes la ruta)")
+    if not signed and status != "bloqueada":
+        owner = GATE_OWNERS.get(gate)
+        role = declared_agent(actor)
+        if owner is None:
+            raise RegistryError(f"La compuerta {gate} no tiene rol propietario: sin --firma-humana solo se puede "
+                                "proponer 'bloqueada'")
+        if role != owner:
+            who = f"'{role}' no es su rol propietario" if role else "identifícate con --agente"
+            raise RegistryError(f"Proponer '{status}' en la compuerta {gate} corresponde a {owner} (nutria --agente "
+                                f"{owner} ...); {who}. Cualquier agente puede proponer 'bloqueada', y una persona "
+                                "decide en su terminal con --firma-humana.")
+        if current is not None and current["human_signoff"]:
+            raise RegistryError(f"La compuerta {gate} de {opp_id} ya la decidió y firmó {current['human_signoff']} "
+                                f"('{current['status']}'): una propuesta sin firma no sustituye una decisión humana. "
+                                "Si hay un motivo nuevo, propón 'bloqueada' (actúa de inmediato) o pide a una persona "
+                                "que la revise con --firma-humana.")
+    if status == "bloqueada":
+        evidence = [str(e).strip() for e in evidence if str(e).strip()] if evidence is not None else None
+    else:
+        evidence = _check_evidence(conn, evidence)
+    if leaving_block and not evidence:
+        raise RegistryError(f"Desbloquear la compuerta {gate} de {opp_id} exige --evidencia: IDs del registro "
+                            "(afirmaciones A-xxxx, fuentes doi:/pmid:/openalex:), URL o ficheros del proyecto con los "
+                            "análisis que justifican levantar el bloqueo")
     with transaction(conn):
         conn.execute(
             "INSERT INTO gates (opportunity_id, gate, status, rationale, evidence, decided_by, updated_at, "
@@ -644,7 +751,28 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
              utc_now() if signed else None),
         )
         kind = "decisión firmada" if signed else "propuesta"
+        if not signed and current is not None and current["human_signoff"]:
+            kind += f"; sustituye la decisión firmada por {current['human_signoff']}"
         _log_decision(conn, opp_id, f"compuerta {gate} -> {status} ({kind})", rationale, actor, signed)
+
+
+def is_registry_id(item: str) -> bool:
+    """¿Tiene `item` la forma de un identificador del registro (O-, H-, A-, E<n>, doi:, pmid:, openalex:)?"""
+    import re
+    return re.fullmatch(REGISTRY_ID_PATTERN, str(item).strip()) is not None
+
+
+def _check_evidence(conn: sqlite3.Connection, evidence: list | None) -> list[str] | None:
+    """Evidencia sin elementos vacíos; los IDs del registro citados deben existir."""
+    if evidence is None:
+        return None
+    items = [str(e).strip() for e in evidence]
+    if any(not e for e in items):
+        raise RegistryError("La evidencia no puede tener elementos vacíos")
+    missing = [e for e in items if is_registry_id(e) and not entity_exists(conn, e)]
+    if missing:
+        raise RegistryError(f"Evidencia que no está en el registro: {', '.join(missing)}")
+    return items
 
 
 def list_gates(conn: sqlite3.Connection, opp_id: str | None = None) -> list[dict]:
@@ -659,22 +787,90 @@ def list_gates(conn: sqlite3.Connection, opp_id: str | None = None) -> list[dict
 def _log_decision(conn: sqlite3.Connection, entity_id: str | None, decision: str, rationale: str,
                   actor: str | None = None, human_signoff: str | None = None) -> None:
     conn.execute(
-        "INSERT INTO decisions (ts, entity_id, decision, rationale, decided_by, human_signoff) "
-        "VALUES (?,?,?,?,?,?)",
-        (utc_now(), entity_id, decision, rationale, current_actor(actor), human_signoff),
+        "INSERT INTO decisions (ts, entity_id, decision, rationale, decided_by, human_signoff, context) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (utc_now(), entity_id, decision, rationale, current_actor(actor), human_signoff, execution_context()),
     )
+
+
+# Tablas con un identificador de texto que puede citar una decisión o la evidencia de una compuerta. Las opcionales
+# (de otras partes del registro) se consultan solo si existen.
+_ENTITY_TABLES = ("opportunities", "hypotheses", "claims", "sources")
+_OPTIONAL_ENTITY_TABLES = ("extraction_comparisons",)
+
+
+def entity_exists(conn: sqlite3.Connection, entity_id: str) -> bool:
+    """¿Está `entity_id` en el registro? Oportunidades (O-), hipótesis (H-), afirmaciones (A-), fuentes (doi:, pmid:,
+    openalex:), extracciones (E<n>) y, si existen esas tablas, otras entidades con identificador de texto."""
+    import re
+    entity_id = str(entity_id).strip()
+    for table in _ENTITY_TABLES + _OPTIONAL_ENTITY_TABLES:
+        try:
+            if conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (entity_id,)).fetchone():
+                return True
+        except sqlite3.OperationalError:   # tabla opcional que este registro no tiene
+            continue
+    m = re.fullmatch(r"E-?(\d+)", entity_id)
+    return bool(m and conn.execute("SELECT 1 FROM extractions WHERE id = ?", (int(m.group(1)),)).fetchone())
 
 
 def add_decision(conn: sqlite3.Connection, entity_id: str | None, decision: str, rationale: str,
                  actor: str | None = None, human_signoff: str | None = None) -> None:
-    if not rationale.strip():
+    """Registra una decisión (sin `entity_id`, una decisión general). La entidad, si se indica, debe existir."""
+    if not (decision or "").strip():
+        raise RegistryError("La decisión no puede estar vacía")
+    if not (rationale or "").strip():
         raise RegistryError("Toda decisión necesita un motivo")
+    require_human_signature(human_signoff)
+    if entity_id is not None:
+        if not entity_id.strip():
+            raise RegistryError("--entidad vacía: indica un ID del registro u omítela para una decisión general")
+        if not entity_exists(conn, entity_id):
+            raise RegistryError(f"La entidad {entity_id} no existe en el registro (oportunidad, hipótesis, afirmación, "
+                                "fuente o extracción): regístrala antes u omite --entidad para una decisión general")
+        entity_id = entity_id.strip()
     with transaction(conn):
         _log_decision(conn, entity_id, decision, rationale, actor, human_signoff)
 
 
 def list_decisions(conn: sqlite3.Connection, entity_id: str | None = None) -> list[dict]:
     sql, args = "SELECT * FROM decisions", []
+    if entity_id:
+        sql += " WHERE entity_id = ?"
+        args.append(entity_id)
+    return [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+
+
+# ---------------------------------------------------------------------------- autoría inventiva
+def add_inventive_contribution(conn: sqlite3.Connection, entity_id: str, person: str, contribution: str,
+                               signed_by: str, actor: str | None = None) -> int:
+    """Registra la aportación inventiva de una persona a una oportunidad o hipótesis (regla 11: la autoría de una
+    invención debe ser humana). Exige la firma de una persona; la tabla es solo de inserción, y la decisión
+    correspondiente queda en `decisions` (sin el texto de la aportación, que puede ser patentable)."""
+    import re
+    required = {"--persona": person, "--aportacion": contribution, "--firma-humana": signed_by}
+    empty = [name for name, value in required.items() if not (value or "").strip()]
+    if empty:
+        raise RegistryError(f"Registrar la autoría inventiva exige {', '.join(empty)}: solo una persona puede "
+                            "registrarla, en su terminal")
+    require_human_signature(signed_by)
+    entity_id = (entity_id or "").strip()
+    if not re.fullmatch(r"[OH]-\d{4,}", entity_id) or not entity_exists(conn, entity_id):
+        raise RegistryError(f"No existe la oportunidad o hipótesis '{entity_id}'")
+    with transaction(conn):
+        cur = conn.execute(
+            "INSERT INTO inventive_contributions (entity_id, person, contribution, signed_by, signed_at, recorded_by, "
+            "context) VALUES (?,?,?,?,?,?,?)",
+            (entity_id, person.strip(), contribution.strip(), signed_by.strip(), utc_now(), current_actor(actor),
+             execution_context()))
+        _log_decision(conn, entity_id, f"autoría inventiva: {person.strip()}",
+                      "Aportación inventiva humana registrada y firmada (detalle en `nutria autoria listar`)",
+                      actor, signed_by.strip())
+        return int(cur.lastrowid)
+
+
+def list_inventive_contributions(conn: sqlite3.Connection, entity_id: str | None = None) -> list[dict]:
+    sql, args = "SELECT * FROM inventive_contributions", []
     if entity_id:
         sql += " WHERE entity_id = ?"
         args.append(entity_id)

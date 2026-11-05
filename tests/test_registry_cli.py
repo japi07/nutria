@@ -26,15 +26,15 @@ def _three_raters(project):
     for rater in ("evaluador-a", "evaluador-b", "evaluador-c"):
         base["evaluador"] = rater
         (project / f"{rater}.json").write_text(json.dumps(base), "utf-8")
-        assert main(["puntuar", "registrar", "--datos", str(project / f"{rater}.json")]) == 0
+        assert main(["--agente", rater, "puntuar", "registrar", "--datos", str(project / f"{rater}.json")]) == 0
 
 
 def test_gates_need_human_signature_and_ranking_respects_it(project, capsys):
     assert main(["oportunidad", "nueva", "--datos", str(EXAMPLES / "oportunidad_ejemplo.json")]) == 0
     _three_raters(project)
-    # propuestas de agentes (sin firma): no cuentan como superadas
+    # propuestas de agentes (sin firma, cada una de su rol propietario): no cuentan como superadas
     for gate in GATES:
-        assert main(["--agente", "regulacion-seguridad", "puntuar", "compuerta", "O-0001", gate, "superada",
+        assert main(["--agente", db.GATE_OWNERS[gate], "puntuar", "compuerta", "O-0001", gate, "superada",
                      "--motivo", "propuesta"]) == 0
     capsys.readouterr()
     assert main(["--json", "puntuar", "ranking", "--sim", "300"]) == 0
