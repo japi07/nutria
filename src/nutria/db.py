@@ -521,6 +521,10 @@ def upsert_source(conn: sqlite3.Connection, record: dict, actor: str | None = No
     - Una verificación fija los campos protegidos y la retractación; una retractación conocida nunca se borra.
     - Si el DOI y el PMID de un registro verificado están en dos filas distintas, se fusionan solo si son el mismo
       trabajo (`_same_work_or_error`); si no, o si los datos no están verificados, RegistryError sin cambiar nada.
+    - Si una sola fila tiene el identificador que la verificación asocia pero no avala (`_anchor`: el PMID de un DOI
+      verificado, el DOI que PubMed declara para un PMID) y esa fila está verificada o se llama por él, solo se
+      actualiza si es el mismo trabajo (`_row_mismatch`); si no, no se toca y el registro verificado entra aparte sin
+      ese identificador (cambio `identificador_no_asociado` y decisión).
 
     `changes`, si se pasa, recibe lo que se hizo (altas, rellenos, correcciones, fusiones, datos omitidos, avisos)
     para dejarlo en la procedencia.
