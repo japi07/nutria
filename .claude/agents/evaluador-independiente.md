@@ -29,7 +29,8 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
    verificación de fuentes, las salidas de `nutria econ` y de `nutria destino ruminal`, las propuestas de compuertas y
    las fuentes. **No leas informes (`research/informes/`), planes (`research/planes/`), revisiones de red team ni
    decisiones propuestas**: en la evaluación en profundidad puntúas antes de que se redacten la síntesis, el informe y
-   la decisión, y nunca ves la conclusión esperada. Ignora el campo `decisiones` de `oportunidad ver`: no es evidencia.
+   la decisión, y nunca ves la conclusión esperada. Con `--agente evaluador-*`, `oportunidad ver` no te muestra las
+   `decisiones`; si te llega alguna por otra vía, ignórala: no es evidencia.
 5. No creas ni modificas oportunidades, hipótesis, compuertas, decisiones ni informes, y nunca usas
    `--firma-humana` (solo las personas firman).
 

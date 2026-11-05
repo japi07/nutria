@@ -1437,7 +1437,7 @@ def test_p8_mision1_n_oportunidades_es_un_tope(project, capsys):  # D10-3
     ({"fase": "oportunidades", "problemas": ["P"], "max_problemas": 13}, '"max_problemas" debe ser un entero'),
     ({"fase": "oportunidades", "problemas": ["P"], "n_oportunidades": 25}, '"n_oportunidades" debe ser un entero'),
     ({"fase": "oportunidades", "problemas": ["P"], "n_oportunidades": "12"}, '"n_oportunidades" debe ser un entero'),
-    ({"fase": "mapa", "fecha": "04/11/2026"}, '"fecha" debe tener el formato'),
+    ({"fase": "mapa", "fecha": "04/11/2026"}, 'con el formato AAAA-MM-DD'),
 ])
 def test_p8_mision1_topes_no_validos_no_lanzan_nada(args, mensaje):  # D10-3
     out = run_workflow("mision-1-auto", args)
@@ -1773,3 +1773,21 @@ def test_p8_mision1_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas(proje
     prompt = call(out, "puntuacion:evaluador-1:O-0001")["prompt"]
     assert "M1_ranking" not in prompt
     assert "research/revisiones/O-0001_triage_seguridad.md" in prompt and "research/revisiones/O-0001_etica_detalle.md" in prompt
+
+
+@requires_node
+@pytest.mark.parametrize("args,mensaje", [
+    ({"fase": "mapa", "fecha": "2026-13-45"}, '"fecha" debe ser una fecha válida'),
+    ({"fase": "mapa", "fecha": "2026-02-29"}, '"fecha" debe ser una fecha válida'),  # 2026 no es bisiesto
+    ({"fase": "oportunidades", "problemas": ["A", {"x": 1}, ""]}, "posiciones sin título (ni texto ni objeto con \"titulo\"): 2, 3"),
+    ({"fase": "oportunidades", "problemas": [{"id": "P1", "titulo": "A"}, {"id": "P1", "titulo": "B"}]}, "ids repetidos: P1"),
+])
+def test_p8_mision1_entradas_no_validas_no_se_descartan_en_silencio(args, mensaje):  # D2-15, D10-3
+    out = run_workflow("mision-1-auto", args)
+    assert out["llamadas"] == [] and mensaje in out["resultado"]["error"]
+
+
+@requires_node
+def test_p8_mision1_fecha_bisiesta_valida(project, capsys):  # D2-15
+    out = run_workflow("mision-1-auto", {"fase": "mapa", "fecha": "2028-02-29"}, [_regla_paso0(project, capsys)])
+    assert out["resultado"]["fecha"] == "2028-02-29"

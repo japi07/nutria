@@ -44,8 +44,17 @@ const OPCIONES = {
   max_problemas: opcionEntera('max_problemas', 1, 12, 8),
 }
 const erroresOpciones = Object.values(OPCIONES).filter((o) => o.error).map((o) => o.error)
-if (A.fecha !== undefined && A.fecha !== null && !(typeof A.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(A.fecha))) {
-  erroresOpciones.push(`"fecha" debe tener el formato AAAA-MM-DD (recibido: ${JSON.stringify(A.fecha)})`)
+// Fecha AAAA-MM-DD que exista en el calendario (sin Date: no está disponible en los workflows).
+const fechaValida = (f) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof f === 'string' ? f : '')
+  if (!m) return false
+  const [anio, mes, dia] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const bisiesto = (anio % 4 === 0 && anio % 100 !== 0) || anio % 400 === 0
+  const dias = [31, bisiesto ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return mes >= 1 && mes <= 12 && dia >= 1 && dia <= dias[mes - 1]
+}
+if (A.fecha !== undefined && A.fecha !== null && !fechaValida(A.fecha)) {
+  erroresOpciones.push(`"fecha" debe ser una fecha válida con el formato AAAA-MM-DD (recibido: ${JSON.stringify(A.fecha)})`)
 }
 if (erroresOpciones.length) return { fase: FASE, error: erroresOpciones.join('; ') }
 const FOCO = A.foco || 'nutrición y producción animal con prioridad en rumiantes, especialmente vacuno lechero, sin excluir otras especies'
@@ -250,7 +259,7 @@ const prepararPaso0 = async () => {
     p0.motivo = `no se pudo interpretar la salida de nutria estado (código ${esObjeto(r.estado) ? r.estado.codigo_salida : '?'})`
   }
   const f = esObjeto(r.fecha) ? String(r.fecha.salida || '').trim() : ''
-  if (/^\d{4}-\d{2}-\d{2}$/.test(f)) p0.fecha = f
+  if (fechaValida(f)) p0.fecha = f
   // ls -1 de varios directorios: cabecera "dir:" y un nombre por línea (un directorio que no exista solo da error en
   // stderr). Sin cabeceras reconocibles, cada nombre cuenta como ocupado en todos los directorios (falla en cerrado).
   if (esObjeto(r.ficheros) && typeof r.ficheros.salida === 'string') {
@@ -416,13 +425,25 @@ if (FASE === 'mapa') {
 
 // ================================================================ fase "oportunidades" (M1b y M1c)
 if (FASE === 'oportunidades') {
-  const PROBLEMAS_APROBADOS = (Array.isArray(A.problemas) ? A.problemas : [])
-    .map((p, i) => {
-      if (typeof p === 'string' && p.trim()) return { id: `P${i + 1}`, titulo: p.trim() }
-      if (p && typeof p === 'object' && typeof p.titulo === 'string' && p.titulo.trim()) return { ...p, id: p.id ? String(p.id) : `P${i + 1}` }
-      return null
-    })
-    .filter(Boolean)
+  const LISTA_PROBLEMAS = Array.isArray(A.problemas) ? A.problemas : []
+  const problemasLeidos = LISTA_PROBLEMAS.map((p, i) => {
+    if (typeof p === 'string' && p.trim()) return { id: `P${i + 1}`, titulo: p.trim() }
+    if (p && typeof p === 'object' && typeof p.titulo === 'string' && p.titulo.trim()) return { ...p, id: p.id ? String(p.id) : `P${i + 1}` }
+    return null
+  })
+  const PROBLEMAS_APROBADOS = problemasLeidos.filter(Boolean)
+  // Ningún problema aprobado se descarta en silencio: una entrada no válida o un id repetido detienen la fase.
+  const invalidosProblemas = problemasLeidos.map((p, i) => (p ? null : i + 1)).filter(Boolean)
+  const idsProblemas = PROBLEMAS_APROBADOS.map((p) => p.id)
+  const repetidos = [...new Set(idsProblemas.filter((id, i) => idsProblemas.indexOf(id) !== i))]
+  if (LISTA_PROBLEMAS.length && (invalidosProblemas.length || repetidos.length)) {
+    return {
+      fase: FASE,
+      error: 'args.problemas tiene entradas que no se pueden usar' +
+        (invalidosProblemas.length ? `; posiciones sin título (ni texto ni objeto con "titulo"): ${invalidosProblemas.join(', ')}` : '') +
+        (repetidos.length ? `; ids repetidos: ${repetidos.join(', ')}` : '') + '. Corrige la lista aprobada: no se descarta nada en silencio.',
+    }
+  }
   if (!PROBLEMAS_APROBADOS.length) {
     return {
       fase: FASE,
