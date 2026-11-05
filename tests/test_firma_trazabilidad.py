@@ -19,6 +19,13 @@
   nutria solo directamente en los subagentes (no desde Python, xargs ni eval), la clave con comodines bajo .config,
   el rechazo de la firma también por stderr con --json y sin traza con los flujos cerrados, y la consulta web
   redactada en claro.
+- Revisión de la ronda 2: `procedencia verificar` detecta el fichero confirmado que ha desaparecido y compara con
+  todas las versiones confirmadas (historial de HEAD y reflog de la rama: commit --amend, reset --soft); el hook
+  reconoce su -P, script desde Python, env -C dir -i, --ignore-env, exec -a x -c, pty importado, os.execve y env={},
+  comodines y find sobre el registro, abreviaturas y pathspecs de git, el reflog, cd en .config y comodines en la ruta
+  de la clave; en los subagentes, --agente en cada orden nutria, sin NUTRIA_AGENT ni set -a y git solo para leer;
+  órdenes largas sin agotar el tiempo del hook; correos sueltos en modo claro; el registro no es evidencia; guiones
+  Unicode en los evaluadores.
 
 Las pruebas que firman como una persona llaman a `main()` en el mismo proceso: el fixture automático de conftest.py
 quita las señales de agente (también si pytest corre dentro de Claude Code).
@@ -799,6 +806,8 @@ def _subagente(agent_type: str, command: str) -> dict:
     ("critico-red-team", "V=NUTRIA_; export ${V}AGENT=evaluador-1; nutria --agente critico-red-team estado"),
     ("critico-red-team", "V=NUTRIA_; read ${V}AGENT <<< x; nutria --agente critico-red-team estado"),
     ("critico-red-team", "set -o allexport; . ./vars.sh; nutria --agente critico-red-team estado"),
+    ("critico-red-team", "env \"$(printf NUTRIA_)AGENT=evaluador-1\" python3 -m nutria --agente critico-red-team estado"),
+    ("critico-red-team", "f() { nutria \"$@\"; }; f puntuar registrar --datos p.json"),
     ("critico-red-team", ". ./vars.sh && nutria puntuar registrar --datos p.json"),
     ("critico-red-team", "nutria oportunidad ver O-0001 --sin-puntuaciones --json"),     # antes permitido: sin --agente
     ("critico-red-team", "echo \"$(nutria estado)\"; nutria --agente critico-red-team estado"),
@@ -859,6 +868,10 @@ def test_sin_tipo_de_subagente_el_hook_no_comprueba_la_identidad():
     ("rm -f *.sqlite", "otro", False),
     ("find . -delete", "otro", False),
     ("rm -rf {dir}/r*", "otro", True),          # con la ruta del proyecto delante
+    ("python3 -c \"import glob, os; [os.remove(f) for f in glob.glob('*')]\"", "proyecto", True),
+    ("python3 -c \"open('out.txt', 'w').write('a*b')\"", "proyecto", False),   # el * no es un patrón de ficheros
+    ("cp -r research/* /tmp/copia/", "proyecto", False),                        # cp solo escribe en su destino
+    ("cp /dev/null research/*.jsonl", "proyecto", True),
 ])
 def test_los_comodines_cuentan_segun_el_directorio_de_trabajo(tmp_path, command, where, blocked):
     """Revisión (ronda 2): `rm -f research/*.jsonl`, `find research -mindepth 1 -delete`... pasaban el hook. Un patrón
@@ -892,6 +905,13 @@ def test_el_hook_no_se_agota_con_ordenes_largas_o_repetitivas():
     globs = "rm -f " + " ".join(f"/tmp/x{i}/*.tmp" for i in range(60))
     res = _hook("guard_bash.sh", _bash(globs))
     assert res.returncode == 2 and "demasiados patrones" in res.stderr
+    start = time.monotonic()
+    res = _hook("guard_bash.sh", _bash("; ".join(f"rm -f /tmp/f{i}" for i in range(60))))
+    assert res.returncode == 2 and "demasiadas órdenes que borran" in res.stderr
+    res = _hook("guard_bash.sh", _bash("ls " + " ".join(f"/tmp/d{i}/*.x" for i in range(120))))
+    assert res.returncode == 2 and "demasiados patrones" in res.stderr
+    assert time.monotonic() - start < 8
+    assert _hook("guard_bash.sh", _bash("; ".join(f"rm -f /tmp/f{i}" for i in range(40)))).returncode == 0
 
 
 @pytest.mark.parametrize("path,blocked", [

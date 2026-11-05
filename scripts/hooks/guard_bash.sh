@@ -204,7 +204,9 @@ if [ "$solo_lectura" = 0 ]; then
   case "$cwd" in */research|*/research/) en_research=1 ;; esac
   proyecto_aqui=0
   if [ -n "$cwd" ] && [ -d "$cwd/research" ]; then proyecto_aqui=1; fi
-  destruye="${ini}(rm|unlink|shred|truncate|mv|cp|dd|install|rsync|tee|ln|srm|wipe|python[0-9.]*|node|ruby|perl)${fin}|${ini}sed${fin}[^;&|]*[[:space:]]-[[:alnum:]]*i|${ini}find${fin}[^;&|]*[[:space:]]-(delete|ok|okdir)${fin}|${ini}find${fin}[^;&|]*[[:space:]]-exec(dir)?[[:space:]]+([^[:space:]]*/)?(rm|unlink|shred|truncate|mv|cp|dd|tee|sed|perl|python[0-9.]*)${fin}"
+  # cp, install, ln y rsync solo escriben en su destino (la última palabra); las demás, en todos sus ficheros.
+  destruye_destino="${ini}(cp|install|ln|rsync)${fin}"
+  destruye="${ini}(rm|unlink|shred|truncate|mv|dd|tee|srm|wipe|python[0-9.]*|node|ruby|perl)${fin}|${ini}sed${fin}[^;&|]*[[:space:]]-[[:alnum:]]*i|${ini}find${fin}[^;&|]*[[:space:]]-(delete|ok|okdir)${fin}|${ini}find${fin}[^;&|]*[[:space:]]-exec(dir)?[[:space:]]+([^[:space:]]*/)?(rm|unlink|shred|truncate|mv|cp|dd|tee|sed|perl|python[0-9.]*)${fin}"
   git_destruye="${git_orden}(checkout|restore|reset|rm|mv|clean|stash|checkout-index|read-tree|update-index)${fin}"
   sin_cli_plano=$(printf '%s' "$plano" | sed -E 's/[Pp][Yy][Tt][Hh][Oo][Nn][0-9.]*([[:space:]]+-[A-Za-z]+)*[[:space:]]+-m[[:space:]]*([Nn][Uu][Tt][Rr][Ii][Aa]|[Pp][Yy][Tt][Ee][Ss][Tt])/\2/g')
   revisa_patron() {  # $1: palabra con comodines; $2: 1 si un patrón sin directorio cuenta siempre (git, find)
@@ -230,14 +232,16 @@ if [ "$solo_lectura" = 0 ]; then
   revisa_segmento() {  # $1: orden simple
     es_git=0
     es_find=0
+    palabras=$(printf '%s' "$1" | tr '()<>=,' '      ')
     if printf '%s' "$1" | grep -Eiq -e "$git_destruye"; then
       es_git=1
     elif ! printf '%s' "$1" | grep -Eiq -e "$destruye"; then
-      return 0
+      printf '%s' "$1" | grep -Eiq -e "$destruye_destino" || return 0
+      palabras=$(printf '%s\n' $palabras | tail -n 1)
     fi
     printf '%s' "$1" | grep -Eiq -e "${ini}find${fin}" && es_find=1
     n_patrones=0
-    for palabra in $(printf '%s' "$1" | tr '()<>=,' '      '); do
+    for palabra in $palabras; do
       es_comodin "$palabra" || continue
       n_patrones=$((n_patrones + 1))
       [ "$n_patrones" -le 50 ] || bloquea "demasiados patrones con comodines en una orden que borra o mueve ficheros: nombra los ficheros explícitamente."
@@ -261,20 +265,33 @@ if [ "$solo_lectura" = 0 ]; then
     fi
     return 0
   }
+  # Solo las órdenes simples que borran, sobrescriben o mueven (un único grep sobre todas); con muchas, se bloquea:
+  # el tiempo del hook crece con ellas y, si se agota, Claude Code ejecuta la orden igualmente.
+  destructivas=$(printf '%s\n' "$sin_cli_plano" | tr ';&|' '\n\n\n' \
+    | grep -Ei -e "$git_destruye" -e "$destruye" -e "$destruye_destino")
+  if [ "$(printf '%s\n' "$destructivas" | grep -c .)" -gt 50 ]; then
+    bloquea "demasiadas órdenes que borran, sobrescriben o mueven ficheros en una sola llamada: divídela o escribe un script con nombres explícitos."
+  fi
   IFS_antes=$IFS
   IFS=$nl
-  set -- $(printf '%s\n' "$sin_cli_plano" | tr ';&|' '\n\n\n')
+  set -- $destructivas
   IFS=$IFS_antes
   for segmento in "$@"; do
     revisa_segmento "$segmento"
   done
-  # un intérprete que borra o escribe ficheros: su código puede llevar ; dentro de las comillas (python -c "...; ...")
-  if contiene "$minusculas" "${ini}(python[0-9.]*|node|ruby|perl)${fin}" \
+  # un intérprete que borra o escribe ficheros elegidos con glob: su código puede llevar ; dentro de las comillas
+  # (python -c "...; ...")
+  if contiene "$minusculas" "${ini}(python[0-9.]*|node|ruby|perl)${fin}" && contiene "$minusculas" 'glob|fnmatch' \
     && contiene "$minusculas" 'os\.(remove|unlink|rename|replace|truncate|rmdir)|shutil\.|unlink|rmtree|write_(text|bytes)|truncate|open\('; then
     revisa_segmento "$sin_cli_plano"
   fi
   # destino de una redirección (bash expande un comodín si cubre un único fichero)
-  for destino in $(printf '%s' "$plano" | grep -oE '>[>|]?[[:space:]]*[^[:space:];&|<>()]+' | sed -E 's/^>[>|]?[[:space:]]*//'); do
+  destinos=$(printf '%s' "$plano" | grep -oE '>[>|]?[[:space:]]*[^[:space:];&|<>()]*[][*?{][^[:space:];&|<>()]*' \
+    | sed -E 's/^>[>|]?[[:space:]]*//' | head -n 21)
+  if [ "$(printf '%s\n' "$destinos" | grep -c .)" -gt 20 ]; then
+    bloquea "demasiadas redirecciones a patrones con comodines: escribe los nombres de los ficheros."
+  fi
+  for destino in $destinos; do
     es_comodin "$destino" && revisa_patron "$destino" 0
   done
 
@@ -309,7 +326,11 @@ if contiene "$minusculas" 'clave_sello|nutria_clave_sello|(\.config|config_home[
 fi
 busca_ficheros=0
 contiene "$minusculas" "${ini}(find|locate|plocate|mlocate|fd|fdfind)${fin}" && busca_ficheros=1
-for palabra in $(printf '%s' "$minusculas" | tr '()<>=,;&|' '         '); do
+comodines=$(printf '%s' "$minusculas" | tr '()<>=,;&|\t' '          ' | tr ' ' '\n' | grep -E '[*?]|\[.*\]|\{.*,.*\}' | sort -u)
+if [ "$(printf '%s\n' "$comodines" | grep -c .)" -gt 100 ]; then
+  bloquea "demasiados patrones con comodines en una sola orden: escribe los nombres de los ficheros."
+fi
+for palabra in $comodines; do
   es_comodin "$palabra" || continue
   if [ "$busca_ficheros" = 1 ] && cubre "${palabra##*/}" clave_sello; then bloquea "$mensaje_clave"; fi
   case "$palabra" in */*) ;; *) continue ;; esac
@@ -344,7 +365,7 @@ if [ -n "$tipo" ]; then
   agentes="$(dirname "$0")/../../.claude/agents"
   # La identidad va en --agente: NUTRIA_AGENT no se usa, ni se exportan variables con nombres construidos (así no se
   # fija NUTRIA_AGENT sin escribirlo: set -a; read ...; export $V=...; printf -v $V ...).
-  if contiene "$plano" 'NUTRIA_AGENT'; then
+  if en_alguna_variante 'NUTRIA_AGENT'; then
     bloquea "dentro de un subagente, la identidad va en --agente $tipo: NUTRIA_AGENT no se usa ni se menciona en las órdenes."
   fi
   if contiene "$minusculas" "${ini}set[[:space:]]+(-[[:alnum:]]*a|[-+]o[[:space:]]+allexport)|allexport" \

@@ -70,10 +70,12 @@ def _firma_solo_de_personas(args) -> None:
 
     Residuo: la firma es una atestación sin autenticar. Excluye a los agentes que usan la CLI desde Claude Code, pero
     no identifica a la persona. La eluden:
-    - en Linux, una sola orden de Bash lanzada desde Claude Code con el entorno vacío dentro de un multiplexor (tmux,
-      screen) o con una pseudoterminal propia, porque el proceso queda desvinculado de Claude Code y con terminal. El
-      hook de Bash bloquea esas herramientas y la opción de firma por su texto, pero no un nombre construido con
-      variables, concatenación o base64 (`T=tm; ${T}ux ...`) ni un programa escrito antes en un fichero;
+    - en Linux, una sola orden de Bash lanzada desde Claude Code que deje el proceso desvinculado de Claude Code
+      (huérfano), con el entorno vacío y con una terminal propia (un multiplexor como tmux o screen, su -P, script,
+      una pseudoterminal de Python...). El hook de Bash bloquea por su texto la opción de firma y las formas que
+      conoce de vaciar el entorno, obtener una terminal y desvincular un proceso, pero sus listas no son exhaustivas,
+      y no ve un nombre construido con variables, concatenación o base64 (`T=tm; ${T}ux ...`, la opción leída de un
+      fichero) ni un programa escrito antes en un fichero;
     - en Windows, vaciar el entorno: sin /proc ni ps solo se mira el del propio proceso (en macOS los antecesores
       salen de ps, aunque sin su entorno inicial);
     - una copia modificada de nutria, un programa que escriba en la base de datos y una persona malintencionada.
