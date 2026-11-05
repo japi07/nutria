@@ -654,12 +654,17 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
     especies = _distintos(rows, "species")
     if len(especies) > 1:
         lista = ", ".join(f"{v['valor']} ({v['n']})" for v in especies.values())
-        if not args.mezclar_especies:
+        if args.formato == "registro":
+            # el volcado del registro no es un análisis: lista todas las especies y solo avisa
+            avisos.append(f"AVISO: el volcado incluye especies distintas ({lista}); para el análisis, exporta con "
+                          "--especie")
+        elif not args.mezclar_especies:
             raise SystemExit(f"El resultado mezcla especies: {lista}. Filtra con --especie (y --etapa) o, si combinarlas "
                              "está justificado (transferibilidad) o son la misma especie escrita de otra forma, repite "
                              "con --mezclar-especies (el aviso las listará).")
-        avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza la "
-                      "especie como subgrupo (--subgrupo especie)")
+        else:
+            avisos.append(f"AVISO: se combinan especies distintas ({lista}): justifica la transferibilidad y analiza la "
+                          "especie como subgrupo (--subgrupo especie)")
     estados = _distintos(rows, "physiological_stage")
     if len(estados) > 1:
         avisos.append("AVISO: se combinan estados fisiológicos distintos ("
