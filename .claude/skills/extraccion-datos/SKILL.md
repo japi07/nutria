@@ -41,16 +41,22 @@ registrada → conciliación si hay discrepancias → exportación para el anál
    extractores distintos; código de salida 1 si hay discrepancias). Sin `--registrar` solo muestra las diferencias.
 4. Si coinciden, el sistema registra los registros como `doble_concordante`. Si no, cada discrepancia se resuelve
    releyendo la fuente y se registra la conciliación: `nutria extraccion conciliar <CE-xxxx> --datos
-   <conciliacion.json>` (plantilla: `ejemplos/conciliacion_ejemplo.json`). El sistema construye cada registro a
-   partir de la copia A y de las resoluciones (origen `A`, `B` o `fuente` y motivo) y lo marca `resuelta`; lo que no
-   se pueda resolver va a `no_resueltos` y no se registra. `nutria extraccion comparaciones --pendientes` lista las
+   <conciliacion.json>` (plantilla: `ejemplos/conciliacion_ejemplo.json`). La hace otro extractor o el orquestador:
+   quien depositó la copia A o la B no concilia esa comparación. El sistema construye cada registro a partir de la
+   copia A y de las resoluciones (origen `A`, `B` o `fuente` y motivo) y lo marca `resuelta`; lo que no se pueda
+   resolver va a `no_resueltos` y no se registra. `nutria extraccion comparaciones --pendientes` lista las
    comparaciones sin conciliar.
-5. `estado_verificacion` y `verificado_por` los fija el sistema: `extraccion agregar` solo registra extracciones
+5. Las copias no se corrigen después de ver las discrepancias: mientras una fuente tenga una comparación con
+   discrepancias sin conciliar, no se registra otra comparación de esa fuente. Para repetir la doble extracción, se
+   cierra antes la comparación con una conciliación que declare cada registro en `no_resueltos`, con su motivo.
+6. `estado_verificacion` y `verificado_por` los fija el sistema: `extraccion agregar` solo registra extracciones
    simples, que no pasan al análisis.
-6. Exportación para el análisis: `nutria extraccion exportar --variable <V> --especie <especie> --csv <f>` (formato de
+7. Exportación para el análisis: `nutria extraccion exportar --variable <V> --especie <especie> --csv <f>` (formato de
    análisis: `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable,
    unidad, especie, diseno, dosis, ...`, la dieta basal numérica con la PDR, las ventanas y la definición de caso).
    Solo exporta extracciones con doble extracción verificada; se niega a mezclar especies salvo con
-   `--mezclar-especies` (y avisa); `--etapa` filtra por estado fisiológico; la columna `moderadores_no_informados` y
-   un aviso señalan los estudios sin algún moderador numérico, y `--casos-completos <moderador>` exporta solo los que
-   lo informan. También avisa si una variable de incidencia mezcla definiciones de caso o ventanas.
+   `--mezclar-especies` (y avisa); `--etapa` filtra por estado fisiológico y un aviso lista lo que los filtros dejan
+   fuera; la columna `moderadores_no_informados` y un aviso señalan los estudios sin algún moderador numérico, y
+   `--casos-completos <moderador>` exporta solo los que lo informan. También avisa si una variable mezcla ventanas de
+   observación, si una incidencia mezcla definiciones de caso y si un estudio aporta varias comparaciones de la misma
+   variable.

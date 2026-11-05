@@ -50,7 +50,7 @@ verificada antes (`nutria fuente agregar`).
   `nutria --agente extractor-datos-A extraccion depositar --datos <tu fichero>` (o `extractor-datos-B`). El registro
   guarda su sha256 y quién la depositó; si el fichero cambia después, deja de ser la copia depositada. Nunca
   deposites la copia de otro extractor.
-- La conciliación (otro extractor o el orquestador) ejecuta
+- La conciliación (otro extractor o el orquestador; nunca quien depositó la copia A o la B) ejecuta
   `nutria --agente extractor-datos extraccion comparar <A.json> <B.json> --registrar`, que exige dos copias
   depositadas por extractores distintos. Sin discrepancias (código 0), el sistema registra los registros como
   `doble_concordante`. Con discrepancias (código 1), registra solo la comparación (`CE-xxxx`): resuelve cada
@@ -60,6 +60,9 @@ verificada antes (`nutria fuente agregar`).
   motivo; cada campo en discrepancia lleva una resolución con `origen_valor` (`A`, `B` o `fuente`, con el `valor`
   releído) y el `motivo` (dónde se releyó). El sistema construye cada registro conciliado a partir de la copia A y de
   esas resoluciones y lo registra como `resuelta`; lo no resuelto no se registra.
+- No corrijas tu copia después de ver las discrepancias: con una comparación sin conciliar, el registro no admite
+  otra comparación de esa fuente. Para repetir la doble extracción, la comparación se cierra con una conciliación que
+  declare cada registro en `no_resueltos`, con su motivo.
 - Si falta una copia depositada, no la deposites tú: informa del fallo (la doble extracción queda incompleta).
 - El formato de análisis de `nutria extraccion exportar` solo incluye extracciones con una comparación (y, si hubo
   discrepancias, una conciliación) registradas; un `estado_verificacion` escrito a mano no cuenta.
