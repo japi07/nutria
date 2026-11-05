@@ -132,9 +132,11 @@ OUT_OF_SCOPE_ROUTES = ("fuera_de_alcance_medicamento", "fuera_de_alcance_biocida
 # - sin firma humana, cada compuerta la propone solo su rol propietario (GATE_OWNERS); "bloqueada" la puede proponer
 #   cualquiera, y una propuesta sin firma no sustituye una decisión firmada salvo para bloquear (ver `set_gate`);
 # - salir de "bloqueada" exige, además de la firma, evidencia comprobable;
-# - las puntuaciones de un evaluador solo las registra ese evaluador, y el historial guarda quién las sustituyó;
-# - `decisions`, `scores_history` e `inventive_contributions` son solo de inserción (triggers de SQLite, que también
-#   se crean en los registros ya existentes al conectar); una decisión solo se registra sobre una entidad que existe;
+# - las puntuaciones de un evaluador solo las registra ese evaluador, y el historial guarda quién las sustituyó; el
+#   identificador del evaluador se normaliza (`normalize_rater`) para que no cuente dos veces;
+# - `decisions`, `scores_history` e `inventive_contributions` son solo de inserción (triggers de SQLite contra UPDATE,
+#   DELETE e INSERT OR REPLACE, que también se crean en los registros ya existentes al conectar); una decisión solo se
+#   registra sobre una entidad que existe;
 # - la autoría inventiva humana (regla 11) se registra con firma en `inventive_contributions`.
 # La firma (--firma-humana) es una atestación sin autenticar: la CLI la rechaza en contexto de agente, pero no
 # identifica a la persona, y quien tenga acceso de escritura a la base de datos puede falsificarla.
@@ -170,6 +172,16 @@ BEGIN SELECT RAISE(ABORT, 'inventive_contributions es solo de inserción: la aut
 CREATE TRIGGER IF NOT EXISTS inventive_contributions_sin_delete BEFORE DELETE ON inventive_contributions
 BEGIN SELECT RAISE(ABORT, 'inventive_contributions es solo de inserción: la autoría registrada no se borra'); END;
 """
+# INSERT OR REPLACE (y REPLACE INTO) borra la fila que choca sin disparar los triggers de DELETE (recursive_triggers
+# está desactivado por defecto): un trigger BEFORE INSERT rechaza cualquier inserción con un id que ya existe. En un id
+# automático, NEW.id vale -1 en un trigger BEFORE INSERT, así que las inserciones normales no se ven afectadas.
+for _table, _what in (("decisions", "una decisión registrada"), ("scores_history", "el historial"),
+                      ("inventive_contributions", "la autoría registrada")):
+    TRAZABILIDAD_SCHEMA += (
+        f"CREATE TRIGGER IF NOT EXISTS {_table}_sin_reemplazo BEFORE INSERT ON {_table} "
+        f"WHEN EXISTS (SELECT 1 FROM {_table} WHERE id = NEW.id) BEGIN SELECT RAISE(ABORT, '{_table} es solo de "
+        f"inserción: {_what} no se sustituye (INSERT OR REPLACE)'); END;\n")
+del _table, _what
 
 
 def _ensure_trazabilidad(conn: sqlite3.Connection) -> None:
@@ -631,19 +643,31 @@ def set_hypothesis_status(conn: sqlite3.Connection, hyp_id: str, status: str, re
 
 
 # ---------------------------------------------------------------------------- puntuación y compuertas
+def normalize_rater(rater: str | None) -> str:
+    """Identificador canónico de un evaluador: sin espacios sobrantes y en minúsculas.
+
+    'evaluador-1', ' evaluador-1 ' y 'Evaluador-1' son el mismo evaluador: se guardan igual y cuentan una sola vez
+    para el mínimo de evaluadores distintos del ranking."""
+    return " ".join(str(rater or "").split()).casefold()
+
+
 def add_scores(conn: sqlite3.Connection, opp_id: str, rater: str, items: list[dict],
                valid_criteria: set[str], actor: str | None = None) -> int:
     """Registra (o sustituye, guardando el valor anterior en `scores_history`) las puntuaciones de `rater`.
 
-    Con `actor` (quien ejecuta la orden), este debe ser el propio evaluador: nadie registra ni sobrescribe las
-    puntuaciones de otro, y el historial guarda ese actor real. La CLI exige además que sea un evaluador.
+    El evaluador se guarda normalizado (`normalize_rater`). Con `actor` (quien ejecuta la orden), este debe ser el
+    propio evaluador (también normalizado): nadie registra ni sobrescribe las puntuaciones de otro, y el historial
+    guarda ese actor real. La CLI exige además que sea un evaluador.
     """
-    if actor is not None and actor.strip() != (rater or "").strip():
-        raise RegistryError(f"El evaluador del JSON ('{rater}') no es quien registra ('{actor}'): nadie registra ni "
-                            "sobrescribe las puntuaciones de otro evaluador (regla 9)")
+    raw_rater, rater = rater, normalize_rater(rater)
+    if not rater:
+        raise RegistryError("El campo 'evaluador' no puede estar vacío")
+    if actor is not None and normalize_rater(actor) != rater:
+        raise RegistryError(f"El evaluador del JSON ('{raw_rater}') no es quien registra ('{actor}'): nadie registra "
+                            "ni sobrescribe las puntuaciones de otro evaluador (regla 9)")
     if get_opportunity(conn, opp_id) is None:
         raise RegistryError(f"No existe la oportunidad {opp_id}")
-    replaced_by = current_actor(actor)
+    replaced_by = normalize_rater(actor) if actor is not None else current_actor(None)
     n = 0
     with transaction(conn):
         for item in items:
@@ -735,7 +759,7 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
     if status == "bloqueada":
         evidence = [str(e).strip() for e in evidence if str(e).strip()] if evidence is not None else None
     else:
-        evidence = _check_evidence(conn, evidence)
+        evidence = _check_evidence(conn, evidence, own_id=opp_id)
     if leaving_block and not evidence:
         raise RegistryError(f"Desbloquear la compuerta {gate} de {opp_id} exige --evidencia: IDs del registro "
                             "(afirmaciones A-xxxx, fuentes doi:/pmid:/openalex:), URL o ficheros del proyecto con los "
@@ -762,13 +786,17 @@ def is_registry_id(item: str) -> bool:
     return re.fullmatch(REGISTRY_ID_PATTERN, str(item).strip()) is not None
 
 
-def _check_evidence(conn: sqlite3.Connection, evidence: list | None) -> list[str] | None:
-    """Evidencia sin elementos vacíos; los IDs del registro citados deben existir."""
+def _check_evidence(conn: sqlite3.Connection, evidence: list | None, own_id: str | None = None) -> list[str] | None:
+    """Evidencia sin elementos vacíos; los IDs del registro citados deben existir y no pueden ser la propia entidad
+    (`own_id`: una oportunidad no es evidencia de sus propias compuertas)."""
     if evidence is None:
         return None
     items = [str(e).strip() for e in evidence]
     if any(not e for e in items):
         raise RegistryError("La evidencia no puede tener elementos vacíos")
+    if own_id and any(e.casefold() == own_id.strip().casefold() for e in items):
+        raise RegistryError(f"{own_id} no es evidencia de su propia compuerta: cita las afirmaciones (A-xxxx), fuentes, "
+                            "URL o ficheros con el análisis")
     missing = [e for e in items if is_registry_id(e) and not entity_exists(conn, e)]
     if missing:
         raise RegistryError(f"Evidencia que no está en el registro: {', '.join(missing)}")

@@ -8,10 +8,11 @@ Campos de cada evento (claves ordenadas en el JSON):
 
 - `ts`, `actor` (--agente, NUTRIA_AGENT o "cli"), `action`, `inputs`, `outputs` (sin secretos) y `nutria` (versión);
 - `contexto`: "claude-code" si el proceso corre dentro de Claude Code (alguna variable de AGENT_ENV_VARS en el
-  entorno o en el entorno inicial de un proceso antecesor, o el propio Claude Code entre los antecesores),
-  "terminal" en otro caso. `human_terminal_problems` añade, para la firma humana, la falta de terminal de control
-  (Linux). Dentro de Claude Code, `sesion_claude_code` enlaza el evento con la transcripción de la sesión (donde
-  constan el agente y el modelo, que la CLI no puede conocer);
+  entorno o en el entorno inicial de un proceso antecesor, o el propio Claude Code entre los antecesores; sin /proc,
+  los antecesores se recorren con `ps`, que no muestra su entorno), "terminal" en otro caso.
+  `human_terminal_problems` añade, para la firma humana, la falta de terminal de control. Dentro de Claude Code,
+  `sesion_claude_code` enlaza el evento con la transcripción de la sesión (donde constan el agente y el modelo, que la
+  CLI no puede conocer);
 - `git`: {"commit", "cambios_sin_confirmar"} del proyecto (cambios fuera de research/, que es donde nutria escribe
   sus datos); `entorno`: versiones de Python y de las bibliotecas de cálculo. Se calculan una vez por proceso;
 - opcionales: `parametros` y `huellas` ({"entrada": {nombre: sha256}, "salida": {...}}), ver `log_event`;
@@ -27,8 +28,9 @@ cadena añadidos después y, si el fichero está en git, la reescritura o el bor
 Límites: una cadena de hashes no autentica. Quien pueda escribir el fichero puede recalcular la cola entera, añadir
 eventos al final o truncar los que aún no estén confirmados en git; lo que detecta es la corrupción, las
 alteraciones parciales y los borrados o inserciones intermedios. La cadena supone un único historial lineal: dos
-ramas de git que añadan eventos por separado la rompen al fusionarse. Los hooks de Claude Code impiden a los agentes
-escribir el fichero por fuera de nutria.
+ramas de git que añadan eventos por separado la rompen al fusionarse. Los hooks de Claude Code dificultan a los
+agentes escribir el fichero por fuera de nutria, pero son una barrera de texto: no ven un programa escrito en un
+fichero ni una orden construida de forma indirecta.
 """
 
 from __future__ import annotations
@@ -63,6 +65,9 @@ AGENT_ENV_VARS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SES
                   "AI_AGENT")
 # Raíz de /proc (Linux) con la que se recorren los procesos antecesores. Las pruebas la sustituyen.
 PROC_ROOT = "/proc"
+# Donde no hay /proc (macOS, BSD), los antecesores se recorren con esta orden (tabla pid, ppid, terminal y orden de
+# todos los procesos). None la desactiva (lo hacen las pruebas, que simulan una terminal de persona).
+PS_COMMAND: tuple[str, ...] | None = ("ps", "-A", "-o", "pid=,ppid=,tty=,args=")
 # `prev` del primer evento de un fichero vacío: SHA-256 de la cadena vacía.
 GENESIS = hashlib.sha256(b"").hexdigest()
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -109,15 +114,18 @@ def event_hash(event: Mapping) -> str:
 
 
 def current_actor(explicit: str | None = None) -> str:
-    return explicit or os.environ.get("NUTRIA_AGENT") or "cli"
+    """Quién ejecuta la acción: --agente, NUTRIA_AGENT o "cli" (sin espacios alrededor)."""
+    return declared_agent(explicit) or "cli"
 
 
 def declared_agent(explicit: str | None = None) -> str:
     """Rol declarado de quien ejecuta la orden (--agente o, si no se indicó, NUTRIA_AGENT); "" si no declara ninguno.
 
-    Es una declaración, no una identidad comprobada: el hook de Bash la contrasta con el tipo de subagente de Claude
-    Code cuando lo hay (scripts/hooks/guard_bash.sh)."""
-    return str(explicit or os.environ.get("NUTRIA_AGENT") or "").strip()
+    Sin espacios alrededor (`--agente " desarrollo-industrial "` se guarda como desarrollo-industrial). Es una
+    declaración, no una identidad comprobada: el hook de Bash la contrasta con el tipo de subagente de Claude Code
+    cuando lo hay (scripts/hooks/guard_bash.sh)."""
+    explicit = str(explicit).strip() if explicit is not None else ""
+    return explicit or os.environ.get("NUTRIA_AGENT", "").strip()
 
 
 def scrub(obj: Any) -> Any:
@@ -144,7 +152,9 @@ def _is_claude_code_process(comm: str, cmdline: list[str]) -> bool:
         return True
     if exe.startswith(("node", "bun", "deno")) and len(cmdline) > 1:
         script = cmdline[1].replace("\\", "/")
-        return "claude-code" in script or ("anthropic" in script and script.rsplit("/", 1)[-1] in ("claude", "cli.js"))
+        name = script.rsplit("/", 1)[-1]
+        # instalación con npm: `node /usr/local/bin/claude` (enlace al cli.js del paquete @anthropic-ai/claude-code)
+        return "claude-code" in script or name in ("claude", "claude.js") or ("anthropic" in script and name == "cli.js")
     return False
 
 
@@ -190,16 +200,63 @@ def _proc_chain(proc_root: Path | str | None = None, pid: int | None = None,
     return chain
 
 
+def _ps_chain(pid: int | None = None, max_depth: int = 64) -> list[dict] | None:
+    """Como `_proc_chain`, con la tabla de procesos de `ps` (PS_COMMAND) donde no hay /proc (macOS, BSD).
+
+    `ps` no muestra el entorno inicial de los procesos (`environ` vacío): solo sirve para reconocer a Claude Code
+    entre los antecesores y para saber si alguno tiene terminal de control. None si no hay `ps` o falla.
+    """
+    if not PS_COMMAND:
+        return None
+    try:
+        out = subprocess.run(list(PS_COMMAND), capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    table: dict[int, tuple[int, str, list[str]]] = {}
+    for line in out.stdout.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 3 or not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        table[int(parts[0])] = (int(parts[1]), parts[2], parts[3].split() if len(parts) > 3 else [])
+    current = pid if pid is not None else os.getpid()
+    if current not in table:
+        return None
+    chain: list[dict] = []
+    seen: set[int] = set()
+    for _ in range(max_depth):
+        if current <= 1 or current in seen or current not in table:
+            break
+        seen.add(current)
+        ppid, tty, argv = table[current]
+        chain.append({"pid": current, "environ": b"", "cmdline": argv,
+                      "comm": argv[0].replace("\\", "/").rsplit("/", 1)[-1] if argv else "",
+                      "tty": 0 if tty.strip("?-") == "" else 1})   # "?" (Linux), "??" (macOS): sin terminal
+        current = ppid
+    return chain
+
+
+def _process_chain(proc_root: Path | str | None = None, pid: int | None = None,
+                   max_depth: int = 64) -> list[dict] | None:
+    """Cadena de antecesores por /proc y, si no lo hay y no se pidió otra raíz, por `ps`."""
+    chain = _proc_chain(proc_root, pid, max_depth)
+    if chain is None and proc_root is None:
+        chain = _ps_chain(pid, max_depth)
+    return chain
+
+
 def ancestor_markers(proc_root: Path | str | None = None, pid: int | None = None, max_depth: int = 64) -> list[str]:
-    """Señales de Claude Code en el proceso y sus antecesores (Linux, vía /proc).
+    """Señales de Claude Code en el proceso y sus antecesores (vía /proc en Linux; vía `ps` donde no hay /proc).
 
     Recorre la cadena de padres desde el propio proceso y devuelve, para cada uno, las variables de
     AGENT_ENV_VARS de su entorno inicial (el de /proc/<pid>/environ, que no cambia aunque el proceso las borre)
     y si es el propio Claude Code. Así se reconoce una orden lanzada por un agente aunque haya vaciado su
-    entorno (`env -i`, `env -u`, `exec -c`). Sin /proc (macOS, Windows) devuelve [].
+    entorno (`env -i`, `env -u`, `exec -c`). Con `ps` solo se reconoce al propio Claude Code (no hay entorno
+    inicial); sin /proc ni `ps` (Windows) devuelve [].
     """
     found: list[str] = []
-    for proc in _proc_chain(proc_root, pid, max_depth) or ():
+    for proc in _process_chain(proc_root, pid, max_depth) or ():
         for var in AGENT_ENV_VARS:
             if (b"\0" + var.encode() + b"=") in (b"\0" + proc["environ"]):
                 found.append(f"{var} (proceso {proc['pid']})")
@@ -209,13 +266,15 @@ def ancestor_markers(proc_root: Path | str | None = None, pid: int | None = None
 
 
 def interactive_terminal(proc_root: Path | str | None = None, pid: int | None = None) -> bool | None:
-    """¿Tiene terminal de control el proceso o alguno de sus antecesores? None si no se puede saber (sin /proc).
+    """¿Tiene terminal de control el proceso o alguno de sus antecesores? None si no se puede saber (sin /proc ni
+    `ps`).
 
     Una persona firma en su terminal; las órdenes Bash de Claude Code se ejecutan en una sesión propia sin
     terminal, y un proceso desvinculado de Claude Code (adoptado por init, p. ej. con un doble fork) tampoco
-    tiene ninguna en su cadena.
+    tiene ninguna en su cadena. Límite: un multiplexor (tmux, screen) o un programa con su propia pseudoterminal
+    dan terminal a una orden lanzada desde Claude Code con el entorno vacío (el hook de Bash bloquea esas órdenes).
     """
-    chain = _proc_chain(proc_root, pid)
+    chain = _process_chain(proc_root, pid)
     if chain is None:
         return None
     return any(proc["tty"] for proc in chain)
@@ -266,14 +325,24 @@ def execution_context() -> str:
 
 
 # ---------------------------------------------------------------------------- git y entorno
-def git_commit(root: Path) -> str | None:
+def _run_git(root: Path, args: list[str], timeout: float, env: Mapping[str, str] | None = None):
+    """Ejecuta `git <args>` en `root` (salida en bytes); None si git no está o no se pudo ejecutar a tiempo.
+
+    Toda llamada a git de este módulo pasa por aquí: las pruebas lo sustituyen (tests/conftest.py) para no lanzar git
+    salvo que lo pidan, porque `subprocess` con `timeout` espera con `time.sleep`, que otras pruebas sustituyen.
+    """
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=3
-        )
-        return out.stdout.strip() or None if out.returncode == 0 else None
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=timeout,
+                              env=dict(env) if env is not None else None)
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def git_commit(root: Path) -> str | None:
+    out = _run_git(root, ["rev-parse", "HEAD"], 3)
+    if out is None or out.returncode != 0:
+        return None
+    return out.stdout.decode("utf-8", "replace").strip() or None
 
 
 def git_state(root: Path | None) -> dict:
@@ -284,14 +353,10 @@ def git_state(root: Path | None) -> dict:
     if key not in _PROCESS_CACHE:
         commit = git_commit(root)
         dirty = None
-        if commit is not None:
-            try:  # GIT_OPTIONAL_LOCKS=0: `git status` no toma el bloqueo del índice (no molesta a otro git)
-                out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", ".",
-                                      ":(exclude)research"], cwd=root, capture_output=True, text=True, timeout=5,
-                                     env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
-                dirty = bool(out.stdout.strip()) if out.returncode == 0 else None
-            except (OSError, subprocess.SubprocessError):
-                dirty = None
+        if commit is not None:   # GIT_OPTIONAL_LOCKS=0: `git status` no toma el bloqueo del índice (no molesta a otro git)
+            out = _run_git(root, ["status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)research"], 5,
+                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+            dirty = bool(out.stdout.strip()) if out is not None and out.returncode == 0 else None
         _PROCESS_CACHE[key] = {"commit": commit, "cambios_sin_confirmar": dirty}
     return dict(_PROCESS_CACHE[key])
 
@@ -495,11 +560,8 @@ def _committed_version(path: Path, root: Path) -> tuple[str | None, bytes | None
         return None, None
     if rel.startswith(".."):
         return None, None
-    try:
-        out = subprocess.run(["git", "show", f"HEAD:./{rel}"], cwd=root, capture_output=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None, None
-    if out.returncode != 0:
+    out = _run_git(root, ["show", f"HEAD:./{rel}"], 10)
+    if out is None or out.returncode != 0:
         return None, None
     return git_commit(root), out.stdout
 

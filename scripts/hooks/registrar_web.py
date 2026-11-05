@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Hook PostToolUse (WebFetch|WebSearch) de Claude Code: deja constancia de cada consulta web de los agentes.
 
-Añade a research/procedencia.jsonl, dentro de la cadena de hashes, un evento `web_fetch` o `web_search` con la URL
-(WebFetch) o la consulta (WebSearch), la fecha, la sesión y el SHA-256 de la respuesta; nunca su contenido.
+Añade a research/procedencia.jsonl, dentro de la cadena de hashes, un evento `web_fetch` o `web_search` con la fecha,
+la sesión, el id de la llamada y el SHA-256 de la respuesta; nunca su contenido.
 
-Las consultas web también pueden revelar una idea confidencial: con NUTRIA_PROCEDENCIA_WEB=hash solo se guardan el
-dominio y el SHA-256 de la URL completa (o el SHA-256 de la consulta). Cualquier otro valor no vacío distinto de
-"claro" se trata como "hash" (falla en cerrado). La pregunta que el agente hace sobre la página (prompt de WebFetch)
-se guarda siempre como huella.
+Las consultas web pueden revelar una idea confidencial (regla 11) y el fichero se versiona, así que por defecto
+(modo "hash") solo se guardan el dominio y el SHA-256 de la URL (WebFetch) o el SHA-256 de la consulta (WebSearch).
+Con NUTRIA_PROCEDENCIA_WEB=claro se guardan la URL y la consulta en claro; cualquier otro valor se trata como "hash"
+(falla en cerrado). La URL se redacta siempre antes de guardarla o de calcular su huella: sin credenciales
+(usuario:clave@), sin parámetros sensibles (api_key, key, token, email, mailto...) y sin los secretos configurados
+(`nutria.http.redact`). La pregunta que el agente hace sobre la página (prompt de WebFetch) se guarda como huella.
 
 Nunca bloquea: si algo falla, avisa con `systemMessage` y deja seguir la sesión. La raíz del proyecto es
 CLAUDE_PROJECT_DIR (la define Claude Code) o, en su defecto, la del repositorio que contiene este hook.
@@ -16,21 +18,47 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 HOOK_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(HOOK_ROOT / "src"))
 
 # Campos de la respuesta que cambian en cada llamada y no forman parte del contenido.
 VOLATILE = {"durationMs", "durationSeconds", "duration_ms", "duration", "elapsed"}
+# Parámetros de URL que nunca se guardan (además de los de nutria.http.SENSITIVE_PARAMS).
+SENSITIVE_PARAMS = {"api_key", "apikey", "key", "token", "access_token", "auth", "password", "passwd", "secret",
+                    "signature", "sig", "email", "mailto", "session", "sessionid", "x-api-key"}
+MASK = "***"
 
 
 def web_mode(value: str | None) -> str:
-    """'claro' (URL y consulta en claro, por defecto) o 'hash' (solo dominio y huellas)."""
-    value = (value or "").strip().lower()
-    return "claro" if value in ("", "claro") else "hash"
+    """'hash' (por defecto: solo dominio y huellas) o 'claro' (URL y consulta en claro, solo si se pide)."""
+    return "claro" if (value or "").strip().lower() == "claro" else "hash"
+
+
+def redact_url(url: str, cfg=None) -> str:
+    """URL sin credenciales, parámetros sensibles ni secretos configurados (`nutria.http.redact`, si se puede
+    importar; si no, solo la limpieza de este módulo)."""
+    try:
+        from nutria.http import redact
+        url = redact(url, cfg)
+    except Exception:  # noqa: BLE001 - sin requests u otra dependencia: se aplica la limpieza local
+        pass
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return MASK
+    netloc = parts.netloc
+    if "@" in netloc:                                     # https://usuario:clave@host/
+        netloc = f"{MASK}@{netloc.rsplit('@', 1)[1]}"
+    kept = []
+    for piece in re.split(r"[&;]", parts.query) if parts.query else []:
+        name = piece.split("=", 1)[0].strip().lower()
+        kept.append(f"{piece.split('=', 1)[0]}={MASK}" if name in SENSITIVE_PARAMS else piece)
+    return urlunsplit((parts.scheme, netloc, parts.path, "&".join(kept), ""))   # sin fragmento (#token=...)
 
 
 def _response_digest(response) -> tuple[str, int | None]:
@@ -45,7 +73,7 @@ def _response_digest(response) -> tuple[str, int | None]:
     return sha256_json(response), None
 
 
-def build_event(payload: dict, mode: str) -> tuple[str, dict, dict]:
+def build_event(payload: dict, mode: str, cfg=None) -> tuple[str, dict, dict]:
     from nutria.provenance import sha256_text
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
@@ -53,11 +81,16 @@ def build_event(payload: dict, mode: str) -> tuple[str, dict, dict]:
     outputs = {"sha256_respuesta": digest}
     if n_results is not None:
         outputs["resultados"] = n_results
-    inputs = {"herramienta": tool, "sesion": payload.get("session_id"), "id_llamada": payload.get("tool_use_id")}
+    inputs = {"herramienta": tool, "sesion": payload.get("session_id"), "id_llamada": payload.get("tool_use_id"),
+              "modo": mode}
     if tool == "WebFetch":
-        url = str(tool_input.get("url") or "")
+        url = redact_url(str(tool_input.get("url") or ""), cfg)
         if mode == "hash":
-            inputs.update(dominio=urlsplit(url).hostname, sha256_url=sha256_text(url))
+            try:
+                host = urlsplit(url).hostname
+            except ValueError:
+                host = None
+            inputs.update(dominio=host, sha256_url=sha256_text(url))
         else:
             inputs["url"] = url
         if tool_input.get("prompt"):
@@ -84,7 +117,7 @@ def main() -> None:
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or HOOK_ROOT)
         cfg = load_config(root)
         mode = web_mode(os.environ.get("NUTRIA_PROCEDENCIA_WEB"))
-        action, inputs, outputs = build_event(payload, mode)
+        action, inputs, outputs = build_event(payload, mode, cfg)
         agent = payload.get("agent_type") or payload.get("subagent_type")
         log_event(cfg, action, inputs=inputs, outputs=outputs,
                   actor=f"claude-code:{agent}" if agent else "claude-code")

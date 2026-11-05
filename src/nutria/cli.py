@@ -634,7 +634,7 @@ def cmd_puntuar(args, cfg) -> int:
               f"{n} puntuaciones registradas para {data['oportunidad']} (evaluador {data['evaluador']})")
         return 0
     if args.accion == "compuerta":
-        _comprobar_evidencia(cfg, args.estado, args.evidencia)
+        _comprobar_evidencia(cfg, args.estado, args.evidencia, propia=args.id)
         registry.set_gate(conn, args.id, args.compuerta, args.estado, args.motivo, rubric.gate_ids,
                           evidence=args.evidencia, actor=args.agente, human_signoff=args.firma_humana)
         efectiva = registry.effective_gates(conn, args.id, rubric.gate_ids).get(args.compuerta)
@@ -699,24 +699,39 @@ def _evaluador_que_registra(args) -> str:
     return quien
 
 
-def _comprobar_evidencia(cfg, estado: str, evidencia: list | None) -> None:
+def _comprobar_evidencia(cfg, estado: str, evidencia: list | None, propia: str | None = None) -> None:
     """La evidencia de una compuerta debe poder comprobarse: IDs del registro (su existencia la comprueba el
-    registro), URL o ficheros que existan en el proyecto; el texto libre no vale. En "bloqueada" no se exige nada:
-    un error en la evidencia no debe impedir un bloqueo (criterio de prudencia)."""
+    registro; la propia oportunidad, `propia`, no vale), URL o ficheros regulares dentro del proyecto (no
+    directorios ni rutas de fuera); el texto libre no vale. En "bloqueada" no se exige nada: un error en la evidencia
+    no debe impedir un bloqueo (criterio de prudencia)."""
     import re
     if estado == "bloqueada":
         return
+    raiz = Path(cfg.root).resolve()
     faltan = []
     for item in (str(e).strip() for e in evidencia or []):
+        if propia and item.casefold() == str(propia).strip().casefold():
+            raise registry.RegistryError(f"{propia} no es evidencia de su propia compuerta: cita las afirmaciones "
+                                         "(A-xxxx), fuentes, URL o ficheros con el análisis")
         if not item or registry.is_registry_id(item) or re.fullmatch(r"https?://\S+", item):
             continue
-        path = Path(item)
-        if not ((path if path.is_absolute() else cfg.root / path).exists() or path.exists()):
+        path = Path(item).expanduser()
+        candidatos = [path] if path.is_absolute() else [raiz / path, Path.cwd() / path]
+        if not any(_fichero_del_proyecto(c, raiz) for c in candidatos):
             faltan.append(item)
     if faltan:
         raise registry.RegistryError(f"Evidencia que no se puede comprobar: {', '.join(faltan)}. Indica IDs del registro "
-                                     "(A-xxxx, doi:..., pmid:...), URL o ficheros que existan en el proyecto (rutas "
-                                     "relativas a su raíz)")
+                                     "(A-xxxx, doi:..., pmid:...), URL o ficheros regulares que existan dentro del "
+                                     "proyecto (rutas relativas a su raíz)")
+
+
+def _fichero_del_proyecto(path: Path, raiz: Path) -> bool:
+    """¿Es `path` un fichero regular dentro de `raiz` (una vez resueltos los enlaces simbólicos)?"""
+    try:
+        real = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return real.is_file() and (real == raiz or raiz in real.parents)
 
 
 def cmd_autoria(args, cfg) -> int:
@@ -1058,7 +1073,12 @@ def cmd_procedencia(args, cfg) -> int:
         warnings.simplefilter("ignore")
         events = read_events(cfg, limit=args.ultimas, action=args.accion_filtro)
     corruptas = getattr(events, "corruptas", [])
-    if corruptas:
+    integridad = verify_chain(cfg, use_git=False)   # el listado avisa si lo que muestra puede estar alterado
+    if not integridad["integra"]:
+        print(f"AVISO: la procedencia no es íntegra: {'; '.join(integridad['problemas'])}. Lo que se muestra puede "
+              "incluir eventos alterados o añadidos por fuera de nutria; detalle con `nutria procedencia verificar`.",
+              file=sys.stderr)
+    elif corruptas:
         print(f"AVISO: {len(corruptas)} línea(s) corrupta(s) en {cfg.provenance_path} (líneas "
               f"{', '.join(map(str, corruptas[:10]))}{' ...' if len(corruptas) > 10 else ''}): no se muestran. "
               "Comprueba la integridad con `nutria procedencia verificar`.", file=sys.stderr)

@@ -408,6 +408,13 @@ BLOQUEADAS = [
     "nutria verificar manual https://x.org $'\\u002d\\u002dfirma-humana' Ana",
     "nutria verificar manual https://x.org $(printf %s -- -fir)ma-humana Ana",       # concatenación de un guion
     "nutria verificar manual https://x.org -$(echo -firma_humana) Ana",
+    # opción construida con variables o sustituciones (revisión: $A en lugar de 'firma')
+    "nutria decision registrar --decision d --motivo m --$A-humana Ana",
+    'nutria decision registrar --decision d --motivo m "--${A}" Ana',
+    "nutria decision registrar --decision d --motivo m --`printf fir`ma-humana Ana",
+    "x=-; nutria decision registrar --decision d --motivo m $x$x\"firma-humana\" Ana",
+    "E=env; A=firma; $E -i PATH=/usr/bin:/bin tmux -L x new-session -d \"nutria decision registrar --decision d "
+    "--motivo m --$A-humana Ana\"",
     # entorno con el que la CLI reconoce a los agentes
     "env -u CLAUDECODE nutria decision registrar --decision d --motivo m",
     "unset CLAUDECODE; nutria estado",
@@ -432,6 +439,19 @@ BLOQUEADAS = [
     "nutria estado & disown",
     "python3 -c \"import os, subprocess; os.fork()\"",
     "python3 -c \"import subprocess; subprocess.Popen(['nutria'], start_new_session=True)\"",
+    "crontab /tmp/tarea",
+    "crontab -l; crontab -r",
+    # terminales propias: multiplexores, expect, ssh -t (con el entorno vacío darían una terminal sin Claude Code)
+    "tmux new-session -d 'nutria estado'",
+    "tmux -L x send-keys -t 0 'nutria estado' Enter",
+    "screen -dmS x nutria estado",
+    "/usr/bin/screen -dm sh -c 'nutria estado'",
+    "cd /tmp && screen -dm nutria estado",
+    "echo 'spawn nutria estado' | expect",
+    "expect -c 'spawn nutria estado'",
+    "dtach -n /tmp/s nutria estado",
+    "ssh -tt localhost nutria estado",
+    "ssh -o RequestTTY=force localhost nutria estado",
     # registro por fuera de la CLI
     "sqlite3 research/nutria.sqlite \"UPDATE gates SET human_signoff='Ana'\"",
     "python3 -c \"import sqlite3; sqlite3.connect('research/nutria.sqlite').execute('DELETE FROM decisions')\"",
@@ -449,9 +469,36 @@ BLOQUEADAS = [
     "git -C /home/u/nutria restore --source HEAD~1 research/nutria.sqlite",
     "git stash push research/",
     "python3 -m nutria estado; python3 -c \"open('research/procedencia.jsonl', 'w')\"",
+    "cp /tmp/x research/NUTRIA.sqlite",                       # mayúsculas: el mismo fichero en macOS y Windows
+    "echo x >> research/PROCEDENCIA.JSONL",
+    "rm -rf research",
+    "rm -rf ./research/*",
+    "rsync -a --delete /tmp/vacio/ research/",
+    # git que descarta cambios sin confirmar (el registro y la procedencia) sin nombrar research/
+    "git stash",
+    "git stash push -u",
+    "git stash drop",
+    "git checkout .",
+    "git checkout -- .",
+    "git checkout -f main",
+    "git reset --hard",
+    "git reset --hard HEAD~1",
+    "git restore .",
+    "git restore :/",
+    "git clean -fdx",
+    "git -C /home/u/nutria switch --discard-changes main",
+    "git restore research/",                                   # un solo espacio (antes no se detectaba)
+    "git rm -r research",
+    "git rm --cached research/nutria.sqlite",
+    "git mv research/procedencia.jsonl /tmp/p.jsonl",
+    # falsos positivos aceptados (hay alternativa): el texto '--firma' dentro de un motivo y leer la procedencia con
+    # Python (usa `nutria procedencia --json` o un cat/tail simple)
+    "nutria --agente director-cientifico decision registrar --decision d --motivo 'falta --firma de la persona'",
+    "python3 -c \"print(open('research/procedencia.jsonl').read())\"",
     # sellos
     "cat ~/.config/nutria/clave_sello",
     "cat ~/.config/nutria/*",
+    "ls ~/.config/NUTRIA/",
     "echo $NUTRIA_CLAVE_SELLO",
     "python3 -c \"from nutria import sello; print(sello.sign({}))\"",
     "python3 -c \"import nutria.sello\"",
@@ -487,6 +534,28 @@ PERMITIDAS = [
     "IFS=$'\\n'; for f in *.md; do wc -l \"$f\"; done",
     "sed -n 's/\\x41/B/p' notas.txt",
     "nutria --agente extractor-datos-A extraccion depositar --datos research/datos/x/extraccion_y_A.json",
+    # falsos positivos de la revisión
+    "git mv research/revisiones/a.md research/revisiones/b.md",
+    "grep -rn sudo docs/",
+    "grep -rn start_new_session src/",
+    "crontab -l",
+    "grep -rn CLAUDE_CODE_ENTRYPOINT src/",
+    "PYTHONPATH=src python3 -m pytest -q tests/ && ls -la research/nutria.sqlite",
+    "grep -n 'from nutria import' src/nutria/db.py",
+    "printf '\\033[1m%s\\033[0m\\n' \"$(nutria estado)\"",
+    "cat research/planes/plan-firma-humana.md",
+    # otras órdenes legítimas
+    "git stash list",
+    "git stash show -p",
+    "git checkout -b nueva-rama",
+    "git checkout main",
+    "git rm research/revisiones/obsoleta.md",
+    "git restore --staged src/nutria/cli.py",
+    "nutria buscar pubmed \"high-throughput screen of rumen modifiers: what to expect\" --max 25",
+    "tail -n 3 research/PROCEDENCIA.JSONL",
+    "head -c 200 research/procedencia.jsonl",
+    "cat research/nutria.sqlite | head -c 16",
+    "nutria --agente desarrollo-industrial puntuar compuerta O-0001 analitica superada --motivo m --datos=$F",
 ]
 
 
@@ -524,6 +593,16 @@ def _subagente(agent_type: str, command: str) -> dict:
     ("critico-red-team", "nutria --agente evaluador-1 puntuar registrar --datos research/oportunidades/p.json"),
     ("critico-red-team", "nutria --agente=EvAlUaDoR-2 puntuar registrar --datos p.json"),
     ("director-cientifico", "nutria puntuar ranking --agente \"evaluador-3\""),
+    # el valor de --agente construido con variables o sustituciones (revisión)
+    ("economia-mercado-pi", "R=compuestos-toxicologia; nutria --agente $R puntuar compuerta O-0001 seguridad superada "
+                            "--motivo x"),
+    ("economia-mercado-pi", "nutria --agente $(echo compuestos-toxicologia) puntuar compuerta O-0001 seguridad "
+                            "superada --motivo x"),
+    ("economia-mercado-pi", "nutria --agente=COMPUESTOS-TOXICOLOGIA puntuar compuerta O-0001 seguridad superada "
+                            "--motivo x"),
+    ("critico-red-team", "E=evaluador-1; nutria --agente $E puntuar registrar --datos p.json"),
+    ("critico-red-team", "nutria --agente \"${E}\" puntuar registrar --datos p.json"),
+    ("critico-red-team", "nutria --agente `echo evaluador-1` puntuar registrar --datos p.json"),
     # el evaluador independiente: siempre --agente evaluador-<n>, sin módulos de Python ni la base de datos
     ("evaluador-independiente", "nutria oportunidad ver O-0001 --json"),
     ("evaluador-independiente", "PYTHONPATH=src python3 -m nutria --json oportunidad ver O-0001"),
@@ -565,6 +644,10 @@ def test_sin_tipo_de_subagente_el_hook_no_comprueba_la_identidad():
     ("/home/u/nutria/research/informes/O-0001.verificacion.json", True),
     ("/root/.config/nutria/clave_sello", True),
     ("/root/.config/nutria/otra", True),
+    ("/home/u/nutria/research/PROCEDENCIA.JSONL", True),          # mayúsculas (sistemas que no las distinguen)
+    ("/home/u/nutria/research/nutria.SQLITE", True),
+    ("/home/u/nutria/research/informes/O-0001.VERIFICACION.json", True),
+    ("/Users/u/.config/NUTRIA/clave_sello", True),
     ("/home/u/nutria/research/informes/O-0001.md", False),
     ("/home/u/nutria/docs/procedencia.md", False),
     ("/home/u/nutria/tests/test_firma_trazabilidad.py", False),
@@ -903,7 +986,7 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @requires_git
-def test_verificar_compara_con_la_version_confirmada_en_git(project):
+def test_verificar_compara_con_la_version_confirmada_en_git(project, git_real):
     _seed_events(project, 1)
     path = project / "research" / "procedencia.jsonl"
     _git(project, "init", "-q")
@@ -923,7 +1006,7 @@ def test_verificar_compara_con_la_version_confirmada_en_git(project):
 
 
 @requires_git
-def test_el_estado_de_git_marca_cambios_sin_confirmar_fuera_de_research(tmp_path, monkeypatch):
+def test_el_estado_de_git_marca_cambios_sin_confirmar_fuera_de_research(tmp_path, monkeypatch, git_real):
     (tmp_path / "src").mkdir()
     (tmp_path / "research").mkdir()
     (tmp_path / "src" / "codigo.py").write_text("x = 1\n", "utf-8")
@@ -942,6 +1025,26 @@ def test_el_estado_de_git_marca_cambios_sin_confirmar_fuera_de_research(tmp_path
     assert state()["cambios_sin_confirmar"] is False
     (tmp_path / "src" / "codigo.py").write_text("x = 2\n", "utf-8")
     assert state()["cambios_sin_confirmar"] is True
+
+
+def test_las_pruebas_no_ejecutan_git_salvo_que_lo_pidan(tmp_path, monkeypatch):
+    """Regresión de la revisión (test_http.py intermitente): `subprocess` con `timeout` espera con `time.sleep`, y
+    test_http.py sustituye time.sleep para contar las esperas de los reintentos. Con un git lento en el PATH y
+    time.sleep sustituido, registrar un evento no espera nada: el fixture automático no deja que la procedencia
+    ejecute git (las pruebas de git piden `git_real`)."""
+    slow = tmp_path / "bin"
+    slow.mkdir()
+    (slow / "git").write_text("#!/bin/sh\nexec 1>&- 2>&-\nsleep 0.3\nexit 128\n", "utf-8")
+    (slow / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{slow}{os.pathsep}{os.environ.get('PATH', '')}")
+    sleeps = []
+    monkeypatch.setattr("time.sleep", sleeps.append)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a) or pytest.fail("se ejecutó un proceso"))
+    event = provenance.log_event(Config(root=tmp_path), "prueba")
+    assert provenance.verify_chain(Config(root=tmp_path))["git"] == {"estado": "sin_referencia"}
+    assert sleeps == [] and calls == []
+    assert event["git"] == {"commit": None, "cambios_sin_confirmar": None}
 
 
 def test_log_event_admite_parametros_y_huellas_de_entrada_y_salida(tmp_path):
@@ -1000,18 +1103,18 @@ def test_el_hook_web_registra_la_url_y_la_huella_sin_el_contenido(tmp_path):
     page = "Texto íntegro de la página consultada"
     payload = _web("WebFetch", {"url": url, "prompt": "¿Qué dice el artículo 13?"},
                    {"result": page, "code": 200, "durationMs": 812})
-    res = _run_web_hook(tmp_path, payload)
+    res = _run_web_hook(tmp_path, payload, NUTRIA_PROCEDENCIA_WEB="claro")
     assert res.returncode == 0 and res.stdout.strip() == ""
     cfg = Config(root=tmp_path)
     event = provenance.read_events(cfg)[-1]
     assert event["action"] == "web_fetch" and event["actor"] == "claude-code"
     assert event["inputs"]["url"] == url and event["inputs"]["sesion"] == "sesion-1"
-    assert event["inputs"]["id_llamada"] == "toolu_01"
+    assert event["inputs"]["id_llamada"] == "toolu_01" and event["inputs"]["modo"] == "claro"
     assert event["outputs"]["sha256_respuesta"] == provenance.sha256_json({"result": page, "code": 200})
     text = cfg.provenance_path.read_text("utf-8")
     assert page not in text and "artículo 13" not in text
     payload["tool_response"]["durationMs"] = 15                     # misma respuesta, otra duración: misma huella
-    assert _run_web_hook(tmp_path, payload).returncode == 0
+    assert _run_web_hook(tmp_path, payload, NUTRIA_PROCEDENCIA_WEB="claro").returncode == 0
     first, second = provenance.read_events(cfg)[-2:]
     assert first["outputs"]["sha256_respuesta"] == second["outputs"]["sha256_respuesta"]
     assert provenance.verify_chain(cfg, use_git=False)["integra"]
@@ -1022,7 +1125,7 @@ def test_el_hook_web_registra_las_busquedas(tmp_path):
     results = {"query": query, "results": [{"title": "Título A", "url": "https://a.org"},
                                            {"title": "Título B", "url": "https://b.org"}], "durationSeconds": 1.2}
     assert _run_web_hook(tmp_path, _web("WebSearch", {"query": query, "allowed_domains": ["efsa.europa.eu"]},
-                                        results)).returncode == 0
+                                        results), NUTRIA_PROCEDENCIA_WEB="claro").returncode == 0
     cfg = Config(root=tmp_path)
     event = provenance.read_events(cfg)[-1]
     assert event["action"] == "web_search" and event["inputs"]["consulta"] == query
@@ -1030,20 +1133,42 @@ def test_el_hook_web_registra_las_busquedas(tmp_path):
     assert "Título A" not in cfg.provenance_path.read_text("utf-8")
 
 
-@pytest.mark.parametrize("modo", ["hash", "HASH", "sí"])     # un valor no reconocido falla en cerrado (huellas)
+# Por defecto (sin la variable o vacía) solo huellas: las consultas pueden revelar una idea confidencial y la
+# procedencia se versiona. Un valor no reconocido también falla en cerrado; solo "claro" guarda el texto.
+@pytest.mark.parametrize("modo", [None, "", "hash", "HASH", "sí", "clear"])
 def test_el_hook_web_en_modo_hash_solo_guarda_dominio_y_huellas(tmp_path, modo):
     url = "https://patents.google.com/?q=rumen-protected+choline+carnitine"
     query = "rumen-protected choline carnitine dairy"
-    assert _run_web_hook(tmp_path, _web("WebFetch", {"url": url, "prompt": "p"}, {"result": "r"}),
-                         NUTRIA_PROCEDENCIA_WEB=modo).returncode == 0
-    assert _run_web_hook(tmp_path, _web("WebSearch", {"query": query}, {"results": []}),
-                         NUTRIA_PROCEDENCIA_WEB=modo).returncode == 0
+    env = {} if modo is None else {"NUTRIA_PROCEDENCIA_WEB": modo}
+    assert _run_web_hook(tmp_path, _web("WebFetch", {"url": url, "prompt": "p"}, {"result": "r"}), **env).returncode == 0
+    assert _run_web_hook(tmp_path, _web("WebSearch", {"query": query}, {"results": []}), **env).returncode == 0
     cfg = Config(root=tmp_path)
     fetch, search = provenance.read_events(cfg)[-2:]
-    assert fetch["inputs"]["dominio"] == "patents.google.com"
+    assert fetch["inputs"]["dominio"] == "patents.google.com" and fetch["inputs"]["modo"] == "hash"
     assert fetch["inputs"]["sha256_url"] == provenance.sha256_text(url) and "url" not in fetch["inputs"]
     assert search["inputs"]["sha256_consulta"] == provenance.sha256_text(query) and "consulta" not in search["inputs"]
     assert "carnitine" not in cfg.provenance_path.read_text("utf-8")
+
+
+@pytest.mark.parametrize("modo", ["claro", "hash"])
+def test_el_hook_web_nunca_guarda_los_secretos_de_la_url(tmp_path, modo):
+    """Revisión: con el modo en claro, la URL de WebFetch quedaba con su api_key en la procedencia versionada. Se
+    redacta siempre (credenciales, parámetros sensibles, secretos configurados y fragmento), también antes de calcular
+    su huella, para que un secreto adivinable no se pueda confirmar con ella."""
+    secretos = ["SECRETO123", "T0K3N", "persona@example.org", "clave-de-usuario", "FRAGMENTO"]
+    url = ("https://lector:clave-de-usuario@api.example.org/x?api_key=SECRETO123&q=colina&token=T0K3N"
+           "&mailto=persona@example.org#access_token=FRAGMENTO")
+    assert _run_web_hook(tmp_path, _web("WebFetch", {"url": url}, {"result": "r"}),
+                         NUTRIA_PROCEDENCIA_WEB=modo).returncode == 0
+    cfg = Config(root=tmp_path)
+    text = cfg.provenance_path.read_text("utf-8")
+    assert [s for s in secretos if s in text] == []
+    event = provenance.read_events(cfg)[-1]
+    if modo == "claro":
+        assert event["inputs"]["url"].startswith("https://***@api.example.org/x?") and "q=colina" in event["inputs"]["url"]
+    else:
+        assert event["inputs"]["dominio"] == "api.example.org"
+        assert event["inputs"]["sha256_url"] != provenance.sha256_text(url)
 
 
 def test_el_hook_web_nunca_bloquea(tmp_path):

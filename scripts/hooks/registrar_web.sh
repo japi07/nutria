@@ -1,8 +1,8 @@
 #!/bin/sh
 # Hook PostToolUse (WebFetch|WebSearch) de Claude Code: registra cada consulta web en research/procedencia.jsonl
-# con scripts/hooks/registrar_web.py (URL o consulta, fecha y SHA-256 de la respuesta; con
-# NUTRIA_PROCEDENCIA_WEB=hash, solo el dominio y huellas). Nunca bloquea: si no hay Python o el registro falla,
-# avisa con systemMessage y sale con 0.
+# con scripts/hooks/registrar_web.py (fecha, sesión y SHA-256 de la respuesta; por defecto, solo el dominio y las
+# huellas de la URL o de la consulta; con NUTRIA_PROCEDENCIA_WEB=claro, la URL redactada y la consulta en claro).
+# Nunca bloquea: si no hay Python o el registro falla, avisa con systemMessage y sale con 0.
 dir=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$dir/../.." && pwd)
 payload=$(cat)
