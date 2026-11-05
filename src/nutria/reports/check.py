@@ -1880,7 +1880,7 @@ def _detail_gaps(text: str, details) -> list[str]:
         if not isinstance(row, dict):
             continue
         if (row.get("status") == "verificada" and row.get("retracted") is False and not row.get("discrepancia")
-                and row.get("ok", True)):
+                and row.get("ok") is True):
             ok.add((str(row.get("ref")), str(row.get("identifier")).lower()))
         elif row.get("status") == "verificada_manual":
             manual.add(str(row.get("ref")))

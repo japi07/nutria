@@ -78,6 +78,7 @@ def test_strict_mode_requires_support_and_human_review(tmp_path):
     assert _errors(ok, conn=conn) == []
     refuted = ok.replace("| respalda |", "| no_respalda |")
     assert any("NO respalda" in e for e in _errors(refuted, conn=conn))
+    conn.close()
 
 
 def _verify(report, monkeypatch, complete=True, structure=True):

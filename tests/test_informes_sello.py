@@ -112,8 +112,20 @@ def fill(text: str, evidence: str = CLAIM_A + "\n" + CLAIM_B, bib: str = BIB, an
     return "\n".join(out).replace(ANNEX_HEADER, ANNEX_HEADER + annex + ("\n" if annex else ""), 1)
 
 
+_OPEN_CONNECTIONS: list = []
+
+
+@pytest.fixture(autouse=True)
+def close_connections():
+    yield
+    while _OPEN_CONNECTIONS:
+        _OPEN_CONNECTIONS.pop().close()
+
+
 def _conn():
-    return db.connect(load_config().db_path)
+    conn = db.connect(load_config().db_path)
+    _OPEN_CONNECTIONS.append(conn)
+    return conn
 
 
 def _register(*dois, verified=True, retracted=False):
