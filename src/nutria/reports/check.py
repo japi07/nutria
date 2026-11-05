@@ -233,7 +233,13 @@ agenda horizonte horizon estrategia strategy plan programa programme program reg
 directive decision ley decreto norma campana censo encuesta fase semana grupo lote tabla table figura figure fig anexo
 annex seccion section version ano year mes cosecha temporada ejercicio edicion edition capitulo chapter vol volumen
 ensayo tratamiento experimento estudio dieta racion rebano granja explotacion parcela bloque periodo muestra animal
-vaca vacas raza modelo escenario caso""".split())
+vaca vacas raza modelo escenario caso calendario cronograma hito hitos presupuesto objetivo objetivos entregable
+entregables etapa riesgo riesgos tarea tareas actividad actividades""".split())
+# Palabras de las listas que también son apellidos reales («(Han et al., 2020)», «Ley et al. (2006)», «(Plan, 2016)»,
+# «(Mayo, 2019)»): solo quedan exentas donde no pueden ser un apellido (un auxiliar delante de un participio: «Han
+# observado en 2019»); en revisado o final, «(Plan 2016)» o «(Mayo 2019)» es un error (falla en cerrado).
+_SURNAME_LIKE = frozenset("""
+han ha hay son lo ni an tal toda como sin para era bajo plan ley bloque vaca vacas granja caso campana raza""".split())
 _POLICY_ACRONYMS = frozenset({"pac", "cap", "ods", "sdg", "covid"})
 _MONTH_WORDS = frozenset("""enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre
 diciembre january february march april may june july august september october november december""".split())
@@ -1345,6 +1351,11 @@ _MORE_AUTHORS_RE = re.compile(r"\s*(?:,?\s+(?:[A-ZÀ-ÖØ-Þ]\.|[A-ZÀ-ÖØ-Þ]{
                               r"y\s+otr[oa]s|and\s+others|(?:y|e|and|&)\s+[A-ZÀ-ÖØ-Þ]))")
 
 
+# Participio, gerundio o infinitivo al final del verbo de cita («observado», «descrito», «propuesto», «analizando»,
+# «evaluar»): tras un auxiliar («Han», «Son», «Era»), la palabra no es un apellido.
+_NON_FINITE_RE = re.compile(r"(?:[ai]d[oa]s?|[ií]t[oa]s?|uest[oa]s?|ando|iendo|yendo|[aei]r)$", re.IGNORECASE)
+
+
 def _citation_kind(n: int, m: re.Match, text: str) -> str | None:
     """Clase de una cita autor-año (`AUTHOR_YEAR_RES[n]`, encontrada en `text`): «normal», «debil» (patrones de
     `_WEAK_PATTERNS`) o «ambigua» (el apellido coincide con una palabra común: «(Han et al., 2020)», «(Bloque, 2016)»,
@@ -1357,10 +1368,17 @@ def _citation_kind(n: int, m: re.Match, text: str) -> str | None:
     if cls is None:
         return "debil" if weak else "normal"
     single = len(m.group("name").split()) == 1 and not _MORE_AUTHORS_RE.match(text, m.end("name"))
+    head = _fold(_head_word(text[m.start("name"):m.end("name")]))
     if n in _VERB_PATTERNS:
-        # «Se observó en 2019», «Han observado en 2019», «Esto indica en 2020»: una palabra de función (o de las otras
-        # listas) sola delante del verbo no es un apellido; con iniciales o coautores sí («Han y Kim demostraron»).
-        return None if single else "ambigua"
+        # «Se observó en 2019», «Esto indica en 2020»: una palabra de función sola delante del verbo no es un apellido.
+        # Si también es un apellido («Han», «Son», «Lo»...), solo cuando el verbo es un participio, un gerundio o un
+        # infinitivo («Han observado en 2019»; «Han observó en 2019» es una cita). Con iniciales o coautores («Han y Kim
+        # demostraron») o una palabra de las otras listas («Ley demostró en 2006», «Mayo observó en 2019»), es una cita.
+        if single and cls in ("funcion", "tiempo"):
+            verb = re.search(rf"(?i:{_CITE_VERB})", m.group(0))
+            if head not in _SURNAME_LIKE or (verb and _NON_FINITE_RE.search(verb.group(0))):
+                return None
+        return "ambigua"
     if n in _PAREN_PATTERNS or n == _FORMULA_PATTERN:
         groups = m.re.groupindex
         status = "status" in groups and m.group("status") is not None
@@ -1370,7 +1388,9 @@ def _citation_kind(n: int, m: re.Match, text: str) -> str | None:
         if single and not status and not lead:
             if cls == "sigla":
                 return None
-            if not comma and cls in ("tiempo", "mes", "programa"):
+            # «(Agenda 2030)», «(Horizonte 2020)», «(Desde 2019)»: sin coma, una palabra que no puede ser un apellido;
+            # un mes o una palabra que también es apellido («(Mayo 2019)», «(Plan 2016)») es una cita
+            if not comma and (cls == "tiempo" or (cls == "programa" and head not in _SURNAME_LIKE)):
                 return None
     return "ambigua"
 
@@ -1494,8 +1514,10 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
                 if m and (k in source_cols or m.group("authors") or m.group("comma") or m.group("open")):
                     cls = _word_class(_head_word(cell[m.start("name"):m.end("name")]))
                     bare = not (m.group("authors") or m.group("comma") or m.group("open"))
-                    if cls is not None and bare and cls in ("tiempo", "mes", "programa", "sigla"):
-                        continue        # «Ensayo 2019», «Campaña 2020» en una columna de estudios
+                    head = _fold(_head_word(cell[m.start("name"):m.end("name")]))
+                    if cls is not None and bare and (cls in ("tiempo", "sigla") or (
+                            cls == "programa" and head not in _SURNAME_LIKE)):
+                        continue        # «Ensayo 2019», «Ejercicio 2020» en una columna de estudios
                     events.append((max(a, b - 1), "cite:normal" if cls is None else "cite:ambigua"))
     return out
 

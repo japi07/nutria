@@ -2045,9 +2045,11 @@ def test_coord_vancouver_lists_bare_ver_and_pandoc_keys_are_errors(body, what, t
     "El proyecto se financia con el programa europeo (Horizonte 2020) [SUP].",
     "El proyecto se alinea con la política agraria común (PAC, 2023) [SUP].",
     "Los precios de la leche son los de la campaña anterior (Desde 2019) [SUP].",
-    "El precio de referencia es el del último informe de mercado (May 2019) [SUP].",
     "Se observó en 2019 un aumento de los costes de la ración [SUP].",
     "Han observado en 2019 un aumento de los costes de la ración [SUP].",
+    "Son evaluados en 2019 los costes de la ración de todas las granjas [SUP].",
+    "Para evaluar en 2019 los costes de la ración se usó la encuesta [SUP].",
+    "El proyecto se alinea con la estrategia (Estrategia 2030) [SUP].",
     "Esto indica en 2020 un cambio de tendencia en los costes de la ración [SUP].",
     # el futuro no atribuye un resultado a nadie
     "En 2027, Ana Pérez evaluará la dosis con el equipo de campo [SUP].",
@@ -2136,3 +2138,37 @@ def test_coord_identifiers_in_annexes_b_and_c_are_warnings_counted_in_the_stamp(
     valid, message = chk.stamp_status(path)
     assert valid and "2 identificador(es) en los anexos B o C sin verificar" in message
     assert "0 aviso(s)" not in message
+
+
+@pytest.mark.parametrize("body", [
+    # un mes o una palabra que también es apellido, sin coma: en revisado o final es una cita (falla en cerrado)
+    "La colina protegida reduce la cetosis subclínica (May 2019).",
+    "La colina protegida reduce la cetosis subclínica (Mayo 2019).",
+    "La colina protegida reduce la cetosis subclínica (Plan 2016).",
+    "La colina protegida reduce la cetosis subclínica (Vaca 2019).",
+    # el apellido delante de un verbo de cita en forma personal
+    "Han observó en 2019 que la colina protegida reduce la cetosis subclínica.",
+    "Ley demostró en 2006 que la microbiota determina la eficiencia energética.",
+    "Mayo observó en 2019 que la colina protegida reduce la cetosis subclínica.",
+    "Como demostró Han en 2020, la colina protegida reduce la cetosis subclínica.",
+    "| Estudio | Especie | Efecto en leche |\n|---|---|---|\n| Campaña 2019 | vacuno lechero | positivo |",
+])
+def test_coord_surname_like_words_fail_closed_in_final(body, tmp_path):
+    # Nota del director (D3-4): en revisado o final solo quedan exentas las palabras que no pueden ser un apellido en
+    # esa posición; un apellido que coincide con un mes o una palabra común da error. En borrador, aviso.
+    assert any("Cita autor-año" in e for e in _body_errors(body)), body
+    report = tmp_path / "research" / "informes" / "nota.md"
+    text = _strict_doc(CLAIM_A + "\n" + CLAIM_B + "\n\n" + body, ANNEX).replace("estado: final", "estado: borrador")
+    issues = [i for i in chk.check_report(text, require_sections=False, path=report) if "Cita autor-año" in str(i)]
+    assert issues and all(i.severity == "aviso" for i in issues), body
+
+
+def test_coord_plan_words_before_a_year_warn_in_drafts():
+    # Borradores de planes: «Calendario (2027):» o «Presupuesto (2026):» tienen la forma «Apellido (año)». En un borrador
+    # que no es un informe, aviso (el hook no bloquea el plan); en revisado o final, error (falla en cerrado).
+    for body in ("Calendario (2027): ensayo in vitro durante el primer trimestre [SUP].",
+                 "Presupuesto (2026): 40 000 EUR para análisis [SUP]."):
+        issues = _body_issues(body, status="borrador")
+        assert not [i for i in issues if i.severity == "error" and "Cita autor-año" in str(i)], body
+        assert any(i.severity == "aviso" and "Cita autor-año" in str(i) for i in issues), body
+        assert any("Cita autor-año" in e for e in _body_errors(body)), body
