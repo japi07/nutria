@@ -792,6 +792,13 @@ def test_incidencia_expresada_como_porcentaje_tambien_exige_definicion_y_ventana
                                  ventana_inicio_dias=3, ventana_fin_dias=14))
     # un porcentaje de composición no es una incidencia
     _validate("extraccion", dict(sin_contexto, variable="lipidosis hepática (TG hepáticos)", unidad="% del peso fresco"))
+    # tampoco se evita con el nombre de la variable en inglés, tal como lo da el artículo
+    for variable, unidad in (("subclinical ketosis", "% of cows"), ("retained placenta", "%"),
+                             ("pregnancy per AI", "%"), ("culling", "cows"), ("eliminaciones", "%")):
+        with pytest.raises(SystemExit, match="definicion_caso"):
+            _validate("extraccion", dict(pct, variable=variable, unidad=unidad))
+    for variable, unidad in (("acidosis", "% of time"), ("milk fat", "%"), ("rumination", "min/d")):
+        _validate("extraccion", dict(sin_contexto, variable=variable, unidad=unidad))
 
 
 def test_exportacion_avisa_si_se_mezclan_definiciones_o_ventanas(project, capsys):

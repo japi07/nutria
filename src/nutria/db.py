@@ -734,16 +734,24 @@ INCIDENCE_OUTCOME_RE = re.compile(
     r"|paresia|mastitis|metritis|endometritis|retencion (?:de (?:la )?placenta|placentaria)|placenta retenida"
     r"|desplazamiento (?:de(?:l)? )?abomaso|abomaso desplazado|acidosis|cojeras?|laminitis|lipidosis|higado graso"
     r"|morbilidad|mortalidad|muertes?|supervivencia|abortos?|distocias?|diarreas?|enfermedad(?:es)?|trastornos?"
-    r"|perdidas? (?:de (?:la )?)?gestacion|concepcion|prenez|fertilidad|descartes?|bajas"
-    r"|tasa de (?:gestacion|partos?|reposicion|curacion|recidivas?|eliminacion))\b")
+    r"|perdidas? (?:de (?:la )?)?gestacion|concepcion|prenez|fertilidad|descartes?|bajas|eliminacion(?:es)?"
+    r"|tasa de (?:gestacion|partos?|reposicion|curacion|recidivas?|eliminacion)"
+    # los mismos términos en inglés (variables copiadas del artículo)
+    r"|incidence|prevalence|risk|ketosis|hyperketon(?:a)?emia|hypocalc(?:a)?emia|milk fever|parturient paresis"
+    r"|retained (?:placenta|fetal membranes)|displaced abomasum|lameness|fatty liver|hepatic lipidosis|morbidity"
+    r"|mortality|deaths?|survival|abortions?|dystocias?|diarrh(?:o)?ea|diseases?|disorders?|pregnancy (?:loss|rate)"
+    r"|pregnancies per ai|pregnancy per ai|conception|fertility|culling|culled|removals?|cure rate)\b")
 INCIDENCE_UNIT_RE = re.compile(
     r"%|\b(?:porcentaje|proporcion|fraccion|casos?|animales|vacas|novillas|terneros|cerdas|lechones|aves|incidencia"
-    r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?)\b|/ ?100\b|por (?:100|cada)\b")
-PER_TIME_UNIT_RE = re.compile(r"/ ?(?:h|hora|d|dia|min)\b|por (?:hora|dia|minuto)\b")
+    r"|prevalencia|riesgo|tasa|n|numero|frecuencia|eventos?|percent(?:age)?|proportion|cases?|animals|cows|heifers"
+    r"|calves|sows|piglets|birds|rate|events?)\b|/ ?100\b|por (?:100|cada)\b|per (?:100|cent)\b")
+PER_TIME_UNIT_RE = re.compile(r"/ ?(?:h|hora|d|dia|day|min)\b|por (?:hora|dia|minuto)\b|per (?:hour|day|minute)\b")
 # Porcentajes de composición o de tiempo ('% del peso fresco', '% de la MS', '% del tiempo'): no son proporciones de
 # animales con un evento.
 COMPOSITION_UNIT_RE = re.compile(r"\b(?:ms|mo|pb|pv|peso|materia|ingesta|dieta|racion|energia|grasa|proteina|leche"
-                                 r"|higado|tejido|fresco|seco|plasma|sangre|suero|tiempo|duracion|horas?|minutos?)\b")
+                                 r"|higado|tejido|fresco|seco|plasma|sangre|suero|tiempo|duracion|horas?|minutos?"
+                                 r"|dm|om|cp|bw|weight|matter|intake|diet|ration|energy|fat|protein|milk|liver|tissue"
+                                 r"|fresh|dry|blood|serum|time|duration|hours?|minutes?)\b")
 
 
 def incidence_like(outcome: Any, unit: Any) -> bool:
