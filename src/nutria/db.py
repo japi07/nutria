@@ -644,7 +644,7 @@ def set_hypothesis_status(conn: sqlite3.Connection, hyp_id: str, status: str, re
 
 # ---------------------------------------------------------------------------- puntuación y compuertas
 # Guiones tipográficos (U+2010 a U+2015, U+2212 menos, U+FE58, U+FE63, U+FF0D) que se confunden con el guion ASCII.
-_DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−﹘﹣－"), "-")
+_DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"), "-")
 
 
 def normalize_rater(rater: str | None) -> str:

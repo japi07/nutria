@@ -1114,8 +1114,8 @@ def test_las_variantes_de_un_evaluador_cuentan_como_uno(project, capsys):
     data["oportunidad"] = "O-0001"
     for i, (agent, rater) in enumerate((("evaluador-1", "evaluador-1"), ("evaluador-1", "evaluador-1 "),
                                         ("Evaluador-1", "Evaluador-1"), (" EVALUADOR-1", "evaluador-1"),
-                                        ("evaluador‐1", "evaluador-1"),          # guion U+2010 (revisión)
-                                        ("ｅvaluador−1", "Evaluador–1"))):  # NFKC, menos y semirraya
+                                        ("evaluador\u20101", "evaluador-1"),          # guion U+2010 (revisión)
+                                        ("\uff45valuador\u22121", "Evaluador\u20131"))):  # NFKC, menos y semirraya
         data["evaluador"] = rater
         path = _write_json(project / f"variante_{i}.json", data)
         assert _code(["--agente", agent, "puntuar", "registrar", "--datos", path]) == 0

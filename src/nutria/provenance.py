@@ -32,11 +32,10 @@ eventos al final o truncar los que aún no estén confirmados en git; lo que det
 alteraciones parciales y los borrados o inserciones intermedios. La referencia es el repositorio local: quien
 reescriba la historia y además borre el reflog de la rama (git reflog expire, gc, borrar o renombrar la rama con
 git branch -D/-M) o siga en otra rama elude la comparación; solo una copia fuera de su alcance (la rama remota) la
-cubre. La cadena supone un único historial lineal: dos ramas de
-git que añadan eventos por separado la rompen al fusionarse, y lo que una persona descarte a propósito (reset,
-rebase) se señala mientras siga en el reflog de la rama. Los hooks de Claude Code dificultan a los agentes escribir
-el fichero o la historia de git por fuera de nutria, pero son una barrera de texto: no ven un programa escrito en
-un fichero ni una orden construida de forma indirecta.
+cubre. La cadena supone un único historial lineal: dos ramas de git que añadan eventos por separado la rompen al
+fusionarse, y lo que una persona descarte a propósito (reset, rebase) se señala mientras siga en el reflog de la
+rama. Los hooks de Claude Code dificultan a los agentes escribir el fichero o la historia de git por fuera de nutria,
+pero son una barrera de texto: no ven un programa escrito en un fichero ni una orden construida de forma indirecta.
 """
 
 from __future__ import annotations
