@@ -15,6 +15,10 @@ if (!TOTAL || !ARCHIVO) return { error: 'Pasa args.archivo (JSON con la lista de
 // Raíz del repositorio auditado: ruta absoluta en args.raiz, o '.' (la carpeta del proyecto abierto en Claude Code).
 const RAIZ = A.raiz || '.'
 const PREVIO = A.previo || ''
+// Unidad de comprobación: 'dimension' (por defecto; un verificador por dimensión) o 'bloque' (uno por bloque temático).
+const UNIDAD = A.unidad === 'bloque' ? 'bloque' : 'dimension'
+// Máximo de afirmaciones «corregido» o «mitigado» por escéptico (se reparten en varios escépticos).
+const MAXR = Number.isInteger(A.max_por_esceptico) && A.max_por_esceptico > 0 ? A.max_por_esceptico : 8
 
 const BLOQUES = [
   { id: 'B1', dims: ['D1', 'D2'], tema: 'corrección del prompt, arquitectura y orquestación (.claude/, CLAUDE.md, workflows)' },
@@ -45,9 +49,13 @@ const REFUTACION = S({ items: { type: 'array', items: S({
   id: STR, veredicto: { type: 'string', enum: ['confirmado', 'refutado', 'dudoso'] }, motivo: STR,
 }, ['id', 'veredicto', 'motivo']) } }, ['items'])
 
-const bloques = BLOQUES.map((b) => ({ ...b, ids: b.dims.flatMap((d) => (Array.isArray(IDS[d]) ? IDS[d] : [])) }))
+const idsDe = (dims) => dims.flatMap((d) => (Array.isArray(IDS[d]) ? IDS[d] : []))
+const bloques = (UNIDAD === 'bloque'
+  ? BLOQUES.map((b) => ({ ...b, ids: idsDe(b.dims) }))
+  : BLOQUES.flatMap((b) => b.dims.map((d) => ({ ...b, id: `${b.id}-${d}`, dims: [d], ids: idsDe([d]) }))))
   .filter((b) => b.ids.length)
-log(`${TOTAL} hallazgos en ${bloques.length} bloques; ${bloques.length * 2} agentes (un verificador y un escéptico por bloque)`)
+log(`${TOTAL} hallazgos en ${bloques.length} unidades (${UNIDAD}): un verificador por unidad y escépticos de hasta ${MAXR} afirmaciones`)
+const trozos = (lista, n) => Array.from({ length: Math.ceil(lista.length / n) }, (_, i) => lista.slice(i * n, i * n + n))
 
 const resultados = await pipeline(
   bloques,
@@ -64,13 +72,19 @@ const resultados = await pipeline(
     if (omitidos.length) log(`${b.id}: la comprobación omitió ${omitidos.length} hallazgo(s): ${omitidos.join(', ')}`)
     const aRefutar = est.items.filter((i) => i.estado === 'corregido' || i.estado === 'mitigado')
     if (!aRefutar.length) return { bloque: b.id, comprobacion: est.items, refutacion: [], omitidos }
-    return agent(
+    const grupos = trozos(aRefutar, MAXR)
+    return parallel(grupos.map((g, k) => () => agent(
       `${BASE}\n\nIntenta REFUTAR estas afirmaciones de que un defecto está corregido o mitigado. Para cada una, comprueba en el ` +
       'código actual (y reproduce el fallo original si puedes) si el defecto persiste total o parcialmente. "confirmado" solo si ' +
       'la corrección es real y completa para su estado declarado; "refutado" si el defecto sigue; "dudoso" si no puedes comprobarlo. ' +
-      `El defecto original de cada id está en ${ARCHIVO}.\n` + JSON.stringify(aRefutar),
-      { label: `refutar:${b.id}`, phase: 'Refutación', schema: REFUTACION },
-    ).then((r) => ({ bloque: b.id, comprobacion: est.items, refutacion: r ? r.items : null, omitidos }))
+      `El defecto original de cada id está en ${ARCHIVO}.\n` + JSON.stringify(g),
+      { label: grupos.length > 1 ? `refutar:${b.id}#${k + 1}` : `refutar:${b.id}`, phase: 'Refutación', schema: REFUTACION },
+    ))).then((rs) => {
+      const sinRefutar = grupos.filter((_, k) => !rs[k]).flatMap((g) => g.map((i) => i.id))
+      if (sinRefutar.length) log(`${b.id}: sin respuesta del escéptico para ${sinRefutar.join(', ')}`)
+      const ok = rs.filter(Boolean)
+      return { bloque: b.id, comprobacion: est.items, refutacion: ok.length ? ok.flatMap((r) => r.items) : null, omitidos, sin_refutar: sinRefutar }
+    })
   },
 )
 return { resultados: resultados.filter(Boolean) }

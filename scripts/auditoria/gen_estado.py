@@ -62,6 +62,8 @@ def evaluate_round(resultados: list[dict]) -> tuple[dict, list[str]]:
         if blk.get("refutacion") is None and any(i["estado"] in ("corregido", "mitigado")
                                                  for i in blk.get("comprobacion") or []):
             incidencias.append(f"{blk['bloque']}: el escéptico no devolvió resultado")
+        elif blk.get("sin_refutar"):
+            incidencias.append(f"{blk['bloque']}: el escéptico no devolvió resultado para {', '.join(blk['sin_refutar'])}")
         for it in blk.get("refutacion") or []:
             refute[it["id"]] = it
         if blk.get("omitidos"):
