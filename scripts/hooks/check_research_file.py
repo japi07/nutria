@@ -80,19 +80,21 @@ def check_markdown(path: Path, full: bool) -> None:
 
 
 def check_json(path: Path, kind: str) -> None:
-    import jsonschema
-    from importlib import resources
+    # La misma validación que la CLI y el registro (`nutria.db.schema_errors`): además del esquema, la palabra clave
+    # x-texto (valores genéricos o de relleno, grupos de especies, caracteres invisibles, homoglifos), con los mismos
+    # mensajes (petición de P7).
+    from nutria.db import schema_errors
     if "_puntuacion_" in path.name:
         kind = "puntuacion"
     try:
         data = json.loads(path.read_text("utf-8"))
     except ValueError as exc:
         block(f"{path.name}: JSON no válido ({exc})")
-    schema = json.loads(resources.files("nutria.data").joinpath(f"schemas/{kind}.schema.json").read_text("utf-8"))
+    items = data if isinstance(data, list) else [data]
     problems = []
-    for item in (data if isinstance(data, list) else [data]):
-        for err in jsonschema.Draft202012Validator(schema).iter_errors(item):
-            problems.append(f"{'/'.join(map(str, err.path)) or '(raíz)'}: {err.message}")
+    for n, item in enumerate(items):
+        prefix = f"[{n}] " if len(items) > 1 else ""
+        problems += [prefix + problem for problem in schema_errors(kind, item)]
     if problems:
         block(f"{path.name} no cumple el esquema '{kind}':\n" + "\n".join(problems[:15]))
 

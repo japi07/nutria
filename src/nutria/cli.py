@@ -276,7 +276,7 @@ def _webfetch_dominios(root: Path) -> tuple[list[str], str]:
 _HOOK_PROBE = """import json, sys
 sys.path.insert(0, sys.argv[1])
 try:
-    import jsonschema, nutria, nutria.reports.check
+    import jsonschema, nutria, nutria.db, nutria.reports.check
 except Exception as exc:
     print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
     sys.exit(3)
@@ -2609,9 +2609,13 @@ def _check_report_file(args, cfg, path: Path, online: bool) -> int:
             except StampError as exc:
                 raise SystemExit(str(exc))
             seal = stamp_status(path, conn=conn)
+            from .reports.check import issue_kind
+            avisos = [i for i in result.issues if i.severity != "error"]
             log_event(cfg, "sello_informe", inputs={"informe": str(path)},
                       outputs={"sha256": stamp["sha256"], "errores": stamp["errores"],
-                               "verificacion_completa": stamp["verificacion_completa"], "sello_valido": seal[0]},
+                               "verificacion_completa": stamp["verificacion_completa"], "sello_valido": seal[0],
+                               # avisos con que se selló (número y tipos; resto de D3-12)
+                               "avisos": len(avisos), "tipos_avisos": sorted({issue_kind(i) for i in avisos})},
                       actor=args.agente)
     finally:
         if conn is not None:

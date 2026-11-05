@@ -106,8 +106,12 @@ def _route_text(opp: dict, data: dict) -> str:
         note = "; fuera del alcance de un pienso: la compuerta regulatoria queda bloqueada automáticamente"
     elif route == "indeterminada":
         note = "; indeterminada: el triage regulatorio debe concretarla"
-    return (f"Ruta regulatoria preliminar del registro: `{route}` [SUP] (propuesta, pendiente de confirmar en el "
-            f"triage regulatorio{note}).")
+    # grupo funcional y situación de la clasificación del triage (`oportunidad clasificar`), si constan (petición de P7)
+    extra = "".join(f"{label}: `{opp[key]}`; " for key, label in (("functional_group", "grupo funcional"),
+                                                                  ("regulatory_situation", "situación"))
+                    if opp.get(key))
+    return (f"Ruta regulatoria preliminar del registro: `{route}` [SUP] ({extra}propuesta, pendiente de confirmar en "
+            f"el triage regulatorio{note}).")
 
 
 def _destino_text(data: dict, gate_line: str, ruminant: bool = True) -> str:

@@ -2172,3 +2172,86 @@ def test_coord_plan_words_before_a_year_warn_in_drafts():
         assert not [i for i in issues if i.severity == "error" and "Cita autor-año" in str(i)], body
         assert any(i.severity == "aviso" and "Cita autor-año" in str(i) for i in issues), body
         assert any("Cita autor-año" in e for e in _body_errors(body)), body
+
+
+# ============================================================================ fase de coordinación (2): P1 y P3 → P2
+def test_coord_entry_with_several_urls_needs_every_url_verified(project, online):
+    # D3-2 (petición de P1): con una URL verificada bastaba, aunque la entrada tuviera otra sin verificar
+    url1, url2 = "https://eur-lex.europa.eu/eli/reg/2009/767/oj", "https://example.org/otra-norma"
+    plan = project / "research" / "planes" / "P.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(f"---\nestado: borrador\n---\n# Plan\n\nNorma aplicable [SUP] [R1].\n\n## Referencias\n\n"
+                    f"[R1] Reglamento (CE) 767/2009. URL: {url1} y {url2}\n", "utf-8")
+    assert main(["verificar", "manual", url1, SIGN, "Ana Pérez"]) == 0
+    issues, details, summary = chk.check_report_online(None, plan.read_text("utf-8"), _conn())
+    assert not summary["completa"] and summary["pendientes"] == 1
+    assert details[0]["status"] == "pendiente_manual" and details[0]["identifier"] == url2
+    assert any("1 de 2 URL sin verificar" in str(i) for i in issues)
+    # un sello con el detalle de una sola URL no cubre la entrada
+    forged = [{"ref": "R1", "identifier": url1, "kind": "url", "status": "verificada_manual"}]
+    assert chk._detail_gaps(plan.read_text("utf-8"), forged) == ["R1"]
+    assert main(["verificar", "manual", url2, SIGN, "Ana Pérez"]) == 0
+    issues, details, summary = chk.check_report_online(None, plan.read_text("utf-8"), _conn())
+    assert summary["completa"] and {d["identifier"] for d in details} == {url1, url2}
+    assert chk._detail_gaps(plan.read_text("utf-8"), details) == []
+
+
+def test_coord_stamp_event_records_its_warnings(project, online):
+    # Petición de P1 (resto de D3-12): el evento sello_informe guarda el número y los tipos de avisos
+    from nutria.provenance import read_events
+    plan = project / "research" / "planes" / "P.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text("---\nestado: borrador\n---\n# Plan\n\nNorma aplicable [SUP] [R1].\n\n## Referencias\n\n"
+                    "[R1] Reglamento (CE) 767/2009. URL: https://eur-lex.europa.eu/eli/reg/2009/767/oj\n", "utf-8")
+    main(["verificar", str(plan), "--sellar"])
+    (event,) = read_events(load_config(), action="sello_informe")
+    assert event["outputs"]["avisos"] >= 1
+    assert any("sin verificación manual firmada" in t for t in event["outputs"]["tipos_avisos"])
+    assert all("R1" not in t for t in event["outputs"]["tipos_avisos"])        # sin referencias concretas
+
+
+def test_coord_online_check_explains_pending_states(monkeypatch):
+    # Petición de P3: para existe_sin_metadatos (y cualquier estado pendiente) el aviso da el motivo de la verificación
+    motivo = "DOI registrado en mEDRA, sin metadatos comparables: queda pendiente de verificación manual"
+    monkeypatch.setattr(chk, "verify_entry", lambda client, entry: [
+        Verification("10.4081/x.2020.1", "doi", "existe_sin_metadatos", message=motivo)])
+    text = "# T\n\n## Bibliografía\n\n[R1] Autor A. 2020. Título. Revista 1:1-2. DOI: 10.4081/x.2020.1\n"
+    issues, _details, summary = chk.check_report_online(None, text)
+    assert not summary["completa"]
+    assert any("existe_sin_metadatos" in str(i) and motivo in str(i) for i in issues)
+
+
+@pytest.mark.parametrize("cambio, mensaje", [
+    ({"especie": "rumiantes en general"}, "especie"),
+    ({"especie": "vacuno​lechero"}, "especie"),
+])
+def test_coord_hook_validates_json_with_the_registry_rules(project, cambio, mensaje):
+    # Petición de P7: el hook valida las oportunidades con `schema_errors` (x-texto), como la CLI: un genérico o un
+    # carácter invisible que el validador JSON Schema genérico dejaba pasar se bloquea con el mismo mensaje.
+    from nutria.db import schema_errors
+    hooks = _hook_project(project)
+    data = json.loads((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"))
+    data.update(cambio)
+    errores_cli = schema_errors("oportunidad", data)
+    assert errores_cli and any(mensaje in e for e in errores_cli)
+    target = project / "research" / "oportunidades" / "O-nueva.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+    decision = _run_hook(hooks, _payload(target))
+    assert decision and decision["decision"] == "block"
+    assert errores_cli[0] in decision["reason"]
+    # el ejemplo sin cambios pasa
+    target.write_text((EXAMPLES / "oportunidad_ejemplo.json").read_text("utf-8"), "utf-8")
+    assert _run_hook(hooks, _payload(target)) is None
+
+
+def test_coord_skeleton_shows_functional_group_and_situation(project):
+    # Petición (opcional) de P7 a P2: el esqueleto recoge el grupo funcional y la situación de la clasificación
+    _opportunity(project)
+    assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta",
+                 "aditivo_zootecnico", "--grupo-funcional", "zootecnico.estabilizadores_condiciones_fisiologicas",
+                 "--motivo", "triage"]) == 0
+    text = _skeleton(project).read_text("utf-8")
+    line = next(l for l in text.splitlines() if l.startswith("Ruta regulatoria preliminar del registro:"))
+    assert "`aditivo_zootecnico`" in line
+    assert "grupo funcional: `zootecnico.estabilizadores_condiciones_fisiologicas`" in line

@@ -432,6 +432,17 @@ class Issue:
         return f"[{self.severity.upper()}] {where}{self.message}"
 
 
+def issue_kind(issue: "Issue") -> str:
+    """Código corto de una incidencia para la procedencia: su `code` o el principio del mensaje (hasta los dos puntos,
+    un paréntesis o unas comillas), sin cifras ni referencias concretas."""
+    if issue.code:
+        return issue.code
+    message = re.sub(r"^\s*R\d+[a-z]?\s*:\s*", "", issue.message)      # «R1: ...»: sin la referencia
+    head = re.split(r"[:(«\[]", message, maxsplit=1)[0]
+    head = re.sub(r"\bR\d+\b|\d+", "N", head)
+    return " ".join(head.split())[:60] or "aviso"
+
+
 class StampError(RuntimeError):
     """No se puede escribir el sello (el informe cambió durante la comprobación o el resultado no es coherente)."""
 
@@ -2941,28 +2952,33 @@ def check_report_online(client, text: str, conn=None) -> tuple[list[Issue], list
         summary["total"] += 1
         ids = extract_identifiers(entry.text)
         if not ids["doi"] and not ids["pmid"]:
-            urls = _entry_urls(entry.text)
-            manual = None
+            # Todas las URL de la entrada deben tener su verificación manual firmada (D3-2): una entrada con una URL
+            # verificada y otra sin verificar no cuenta como verificada (falla en cerrado).
+            urls = list(dict.fromkeys(_entry_urls(entry.text)))
+            manuals: dict[str, dict | None] = {url: None for url in urls}
             if conn is not None:
                 from .. import db
                 for url in urls:
                     try:
-                        manual = db.get_manual_verification(conn, url)
+                        manuals[url] = db.get_manual_verification(conn, url)
                     except sqlite3.Error:
-                        manual = None
-                    if manual:
-                        break
-            if manual:
+                        manuals[url] = None
+            missing = [url for url, manual in manuals.items() if not manual]
+            if urls and not missing:
                 summary["verificadas"] += 1
-                details.append({"ref": ref, "identifier": manual["url"], "kind": "url", "status": "verificada_manual",
-                                "firmado_por": manual["signed_by"], "fecha": manual["signed_at"]})
+                for manual in manuals.values():
+                    details.append({"ref": ref, "identifier": manual["url"], "kind": "url",
+                                    "status": "verificada_manual", "firmado_por": manual["signed_by"],
+                                    "fecha": manual["signed_at"]})
             else:
                 summary["pendientes"] += 1
-                details.append({"ref": ref, "identifier": urls[0] if urls else None, "kind": "url",
+                details.append({"ref": ref, "identifier": missing[0] if missing else None, "kind": "url",
                                 "status": "pendiente_manual"})
-                issues.append(Issue("aviso", f"{ref}: referencia con URL sin verificación manual firmada "
-                                             "(`nutria verificar manual <URL> --firma-humana NOMBRE`, solo personas)",
-                                    line_no))
+                which = (f" ({len(missing)} de {len(urls)} URL sin verificar: {', '.join(missing[:3])})"
+                         if len(urls) > 1 and missing else "")
+                issues.append(Issue("aviso", f"{ref}: referencia con URL sin verificación manual firmada{which} "
+                                             "(`nutria verificar manual <URL> --firma-humana NOMBRE`, solo personas; "
+                                             "cada URL de la entrada necesita la suya)", line_no))
             continue
         results = verify_entry(client, entry.text)
         ref_ok = True
@@ -2981,7 +2997,10 @@ def check_report_online(client, text: str, conn=None) -> tuple[list[Issue], list
             elif result.status != "verificada":
                 ref_ok = False
                 summary["pendientes"] += 1
-                issues.append(Issue("aviso", f"{ref}: {result.identifier} en estado '{result.status}'", line_no))
+                # el motivo de la verificación (p. ej. existe_sin_metadatos: la agencia de registro del DOI y por qué
+                # queda pendiente; petición de P3)
+                why = f": {result.message}" if getattr(result, "message", None) else ""
+                issues.append(Issue("aviso", f"{ref}: {result.identifier} en estado '{result.status}'{why}", line_no))
             elif result.retracted:
                 ref_ok = False
                 summary["con_error"] += 1
@@ -3157,7 +3176,7 @@ def write_stamp(check: ReportCheck) -> dict:
 def _detail_gaps(text: str, details) -> list[str]:
     """Referencias de la bibliografía actual sin una verificación correcta en el detalle del sello."""
     ok: set[tuple[str, str]] = set()
-    manual: set[str] = set()
+    manual: set[tuple[str, str]] = set()
     for row in details if isinstance(details, list) else []:
         if not isinstance(row, dict):
             continue
@@ -3165,12 +3184,13 @@ def _detail_gaps(text: str, details) -> list[str]:
                 and row.get("ok") is True):
             ok.add((str(row.get("ref")), str(row.get("identifier")).lower()))
         elif row.get("status") == "verificada_manual":
-            manual.add(str(row.get("ref")))
+            manual.add((str(row.get("ref")), str(row.get("identifier"))))
     gaps = []
     for entry in bibliography_entries(text):
         ids = extract_identifiers(entry.text)
         if not ids["doi"] and not ids["pmid"]:
-            if entry.ref not in manual:
+            urls = list(dict.fromkeys(_entry_urls(entry.text)))
+            if not urls or any((entry.ref, url) not in manual for url in urls):   # cada URL, la suya (D3-2)
                 gaps.append(entry.ref)
             continue
         for ident in ids["doi"] + ids["pmid"]:
