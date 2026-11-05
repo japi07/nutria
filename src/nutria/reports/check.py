@@ -1682,6 +1682,14 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     reg = _registry_opportunity(conn, doc) if conn is not None else None
     if reg is not None and is_report:
         issues += _context_issues(doc, reg, sev_strict)
+    # `informe nuevo` crea research/informes/<O-xxxx>.md con «oportunidad: O-xxxx»: un informe que declara otra
+    # oportunidad tomaría su especie, su ruta y sus compuertas.
+    stem = Path(path).stem if path is not None and is_report else ""
+    declared_opp = next((v for _, v, p in _fm_fields(doc)[0].get("oportunidad", []) if v and not p), None)
+    if re.fullmatch(r"O-\d+", stem) and declared_opp and declared_opp.strip().upper() != stem.upper():
+        issues.append(Issue(sev_strict, f"El informe {Path(path).name} declara la oportunidad {declared_opp}: el "
+                                        f"front matter debe decir «oportunidad: {stem}»",
+                            (doc.fm_start + 1) if doc.fm_start is not None else None))
     if conn is not None:
         first_line: dict[str, int] = {}
         for i, refs in pub_lines:

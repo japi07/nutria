@@ -999,6 +999,8 @@ def test_section_14_gate_states_must_match_the_registry(project):
     assert any("compuerta seguridad" in e for e in _errors(table, conn=_conn(), path=path))
     unknown = final.replace("oportunidad: O-0001", "oportunidad: O-0099")
     assert any("O-0099 del front matter no está en el registro" in e for e in _errors(unknown, conn=_conn(), path=path))
+    # el informe de O-0001 no puede declarar otra oportunidad (y tomar su especie, su ruta y sus compuertas)
+    assert any("debe decir «oportunidad: O-0001»" in e for e in _errors(unknown, conn=_conn(), path=path))
     missing = re.sub(r"(?m)^oportunidad: .*\n", "", final)
     assert any("no declara la oportunidad" in e for e in _errors(missing, conn=_conn(), path=path))
     other_route = re.sub(r"(?m)^Ruta regulatoria preliminar del registro: .*$",
