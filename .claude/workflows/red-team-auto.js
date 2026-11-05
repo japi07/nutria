@@ -1,12 +1,12 @@
 export const meta = {
   name: 'red-team-auto',
-  description: 'Revisión adversarial de un documento: el crítico (que no escribió el documento) extrae las afirmaciones clave, cada una se somete a tres refutadores con enfoques distintos (fuentes, biología, viabilidad) y los veredictos se agregan con quórum y la regla de fuentes (sin fuentes comprobadas nunca sale sostenida); segunda opinión opcional de otra familia de modelos según la política de datos',
-  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial", "max_afirmaciones": 15} (sensibilidad por defecto "confidencial"; "normal" solo para información no confidencial; como máximo 30 afirmaciones). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
+  description: 'Revisión adversarial de un documento: un agente que no lo escribió (el crítico, o el verificador de citas si el autor es el crítico) extrae las afirmaciones clave, cada una se somete a tres refutadores con enfoques distintos (fuentes, biología, viabilidad), ninguno del rol autor, y los veredictos se agregan con quórum y la regla de fuentes (sin fuentes comprobadas nunca sale sostenida); segunda opinión opcional de otra familia de modelos según la política de datos',
+  whenToUse: 'Antes de una compuerta o de dar por bueno un informe o plan. Argumento: la ruta del fichero, p. ej. "research/informes/O-0003.md", o {"archivo": "...", "sensibilidad": "confidencial", "max_afirmaciones": 15, "autor": "<rol>"} (sensibilidad por defecto "confidencial"; "normal" solo para información no confidencial; como máximo 30 afirmaciones; "autor" es el rol que escribió el documento si no se deduce de la ruta). El control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.',
   phases: [
-    { title: 'Afirmaciones', detail: 'extracción de las afirmaciones que sostienen la conclusión por el crítico, con tope' },
+    { title: 'Afirmaciones', detail: 'extracción, con tope, de las afirmaciones que sostienen la conclusión por un agente que no escribió el documento' },
     { title: 'Refutación', detail: '3 enfoques independientes por afirmación y agregación con quórum y regla de fuentes' },
     { title: 'Otra familia', detail: 'segunda opinión opcional con nutria llm (solo modelos que admita la política de datos)' },
-    { title: 'Consolidación', detail: 'tabla de veredictos y acciones propuestas, escrita por el crítico' },
+    { title: 'Consolidación', detail: 'tabla de veredictos y acciones propuestas, escrita por un agente que no escribió el documento' },
   ],
 }
 
@@ -29,11 +29,57 @@ const SENSIBILIDAD = A.sensibilidad === undefined || A.sensibilidad === null || 
 if (!SENSIBILIDADES.includes(SENSIBILIDAD)) {
   return { error: `Sensibilidad no válida: "${SENSIBILIDAD}". Opciones: confidencial (por defecto) o normal (solo para información no confidencial).` }
 }
+// Tope de afirmaciones: un valor no válido detiene el workflow con un mensaje claro (nunca se sustituye en silencio).
 const TOPE_AFIRMACIONES = 30
 const MAX_AFIRMACIONES = A.max_afirmaciones === undefined || A.max_afirmaciones === null ? 15 : A.max_afirmaciones
 if (!Number.isInteger(MAX_AFIRMACIONES) || MAX_AFIRMACIONES < 1 || MAX_AFIRMACIONES > TOPE_AFIRMACIONES) {
   return { error: `"max_afirmaciones" debe ser un entero entre 1 y ${TOPE_AFIRMACIONES} (recibido: ${JSON.stringify(A.max_afirmaciones)})` }
 }
+
+// ---------------------------------------------------------------- autor del documento (quien genera no evalúa)
+// Ningún paso lo hace el rol que escribió el documento: ni la extracción de afirmaciones, ni la refutación, ni la
+// consolidación. El autor se toma de args.autor o se deduce de la ruta; en cada paso se usa el primer rol candidato
+// que no sea el autor.
+const ROLES = ['director-cientifico', 'investigador-bibliografico', 'extractor-datos', 'fisiologia-bioquimica',
+  'compuestos-toxicologia', 'nutricion-formulacion', 'bioinformatico', 'estadistico', 'critico-red-team', 'verificador-citas',
+  'regulacion-seguridad', 'desarrollo-industrial', 'economia-mercado-pi', 'sostenibilidad-bienestar', 'evaluador-independiente']
+const AUTORES_VALIDOS = [...ROLES, 'persona']
+// Análisis que escriben los workflows y rol que los escribe (research/revisiones/<ID>_descarte_<x>.md, <ID>_triage_<x>.md).
+const AUTOR_DE_ANALISIS = {
+  regulatoria: 'regulacion-seguridad', seguridad: 'compuestos-toxicologia', destino_digestivo: 'fisiologia-bioquimica',
+  modelo_ganadero: 'economia-mercado-pi', analitica: 'desarrollo-industrial', propiedad_intelectual: 'economia-mercado-pi',
+  etica: 'sostenibilidad-bienestar',
+}
+const deducirAutor = (archivo) => {
+  const ruta = String(archivo).replace(/\\/g, '/')
+  const nombre = ruta.split('/').pop()
+  if (/(^|\/)(informes|planes)\//.test(ruta)) return { autor: 'director-cientifico', origen: 'ruta (informes y planes los redacta director-cientifico)' }
+  if (/redteam|critica/i.test(nombre)) return { autor: 'critico-red-team', origen: 'nombre del fichero (revisión del crítico)' }
+  const rol = ROLES.find((r) => nombre.includes(r))
+  if (rol) return { autor: rol, origen: 'nombre del fichero' }
+  const m = /_(?:descarte|triage)_([a-z_]+?)(?:_\d{4}-\d{2}-\d{2})?\.[A-Za-z0-9]+$/.exec(nombre)
+  if (m && AUTOR_DE_ANALISIS[m[1]]) return { autor: AUTOR_DE_ANALISIS[m[1]], origen: 'nombre del fichero (análisis del descarte o del triage)' }
+  if (/_etica_plan/.test(nombre)) return { autor: 'sostenibilidad-bienestar', origen: 'nombre del fichero' }
+  if (/_busqueda\./.test(nombre)) return { autor: 'investigador-bibliografico', origen: 'nombre del fichero' }
+  if (/^M1a?_(mapa_problemas|ranking)/.test(nombre)) return { autor: 'director-cientifico', origen: 'nombre del fichero (mapa o ranking de la misión 1)' }
+  return { autor: null, origen: 'no se deduce de la ruta' }
+}
+let AUTOR = null
+let ORIGEN_AUTOR = null
+if (A.autor !== undefined && A.autor !== null && A.autor !== '') {
+  if (typeof A.autor !== 'string' || !AUTORES_VALIDOS.includes(A.autor.trim())) {
+    return { error: `"autor" no válido: ${JSON.stringify(A.autor)}. Opciones: ${AUTORES_VALIDOS.join(', ')}` }
+  }
+  AUTOR = A.autor.trim()
+  ORIGEN_AUTOR = 'argumento "autor"'
+} else {
+  const d = deducirAutor(ARCHIVO)
+  AUTOR = d.autor
+  ORIGEN_AUTOR = d.origen
+}
+const elegir = (candidatos) => candidatos.find((r) => r !== AUTOR)
+const ROL_EXTRACCION = elegir(['critico-red-team', 'verificador-citas'])
+const ROL_CONSOLIDACION = ROL_EXTRACCION
 
 // Fichero de salida: incluye el directorio de origen, para que revisar research/planes/O-0001.md y
 // research/informes/O-0001.md no escriba en el mismo fichero (planes_O-0001_redteam.md frente a informes_O-0001_redteam.md).
@@ -86,13 +132,13 @@ const OTRA_FAMILIA = S({
 }, ['ejecutado', 'motivo'])
 
 const ENFOQUES = [
-  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria verificar --doi/--pmid con --cita y lee los resúmenes. Si no puedes acceder a la fuente o comprobar que dice eso (p. ej. sin red), el veredicto es "no_verificable"', tipo: 'verificador-citas' },
-  { id: 'biologia', texto: '¿es biológicamente sostenible en la especie diana (destino digestivo, concentraciones alcanzables, adaptación de la microbiota ruminal, explicaciones alternativas, diseño de los estudios)?', tipo: 'critico-red-team' },
-  { id: 'viabilidad', texto: '¿resiste un examen regulatorio, de seguridad, industrial y económico?', tipo: 'critico-red-team' },
+  { id: 'fuentes', texto: '¿existen las fuentes, dicen eso y en qué especie, etapa y dosis? Usa nutria verificar --doi/--pmid con --cita y lee los resúmenes. Si no puedes acceder a la fuente o comprobar que dice eso (p. ej. sin red), el veredicto es "no_verificable"', tipo: elegir(['verificador-citas', 'investigador-bibliografico']) },
+  { id: 'biologia', texto: '¿es biológicamente sostenible en la especie diana (destino digestivo, concentraciones alcanzables, adaptación de la microbiota ruminal, explicaciones alternativas, diseño de los estudios)?', tipo: elegir(['critico-red-team', 'fisiologia-bioquimica']) },
+  { id: 'viabilidad', texto: '¿resiste un examen regulatorio, de seguridad, industrial y económico?', tipo: elegir(['critico-red-team', 'regulacion-seguridad']) },
 ]
 
 // Agregación con quórum (al menos 2 veredictos válidos; si no, "sin_quorum") y regla de fuentes: el enfoque
-// "fuentes" (verificador-citas) es el único que comprueba las fuentes. Reglas, en este orden:
+// "fuentes" es el único que comprueba las fuentes. Reglas, en este orden:
 // 1. refutada si "fuentes" da "refutada" (la fuente no existe, no dice eso o la contradice) o si hay 2 o más "refutada";
 // 2. no_verificable con 2 o más "no_verificable";
 // 3. debilitada si hay alguna "refutada" o "debilitada";
@@ -118,12 +164,13 @@ const MAXIMO = 1 + MAX_AFIRMACIONES * ENFOQUES.length + 2
 log(`Estimación: 1 agente de extracción; después 3 por afirmación (como máximo ${MAX_AFIRMACIONES} afirmaciones: hasta ${MAX_AFIRMACIONES * ENFOQUES.length}), ` +
   `1 de segunda opinión opcional y 1 de consolidación: como máximo ${MAXIMO} agentes` +
   (typeof budget !== 'undefined' && budget && budget.total ? `. Presupuesto restante: ${Math.round(budget.remaining())} tokens` : ''))
-// Las afirmaciones las extrae el crítico, que no escribió el documento (nunca su autor, p. ej. el director en un informe o plan suyo).
+log(`Autor del documento: ${AUTOR || 'desconocido'} (${ORIGEN_AUTOR}); extrae y consolida ${ROL_EXTRACCION}; refutan ` +
+  ENFOQUES.map((e) => `${e.id}=${e.tipo}`).join(', '))
 const extraidas = await lanzar(
   `Lee ${ARCHIVO} e identifica las afirmaciones que sostienen su conclusión (las que, si fueran falsas, cambiarían la decisión): entre 5 y ${MAX_AFIRMACIONES}, ` +
-  'ordenadas de la más decisiva a la menos. Cópialas literalmente con un id A1..An. No escribiste este documento: no lo corrijas ni lo defiendas. ' +
-  'Solo lectura: no modifiques ningún fichero.',
-  { label: 'extraccion', phase: 'Afirmaciones', agentType: 'critico-red-team', schema: AFIRMACIONES },
+  'ordenadas de la más decisiva a la menos. Cópialas literalmente con un id A1..An. No escribiste este documento: no lo corrijas ni lo defiendas, ' +
+  'y no te limites a las afirmaciones que el propio documento destaque. Solo lectura: no modifiques ningún fichero.',
+  { label: 'extraccion', phase: 'Afirmaciones', agentType: ROL_EXTRACCION, schema: AFIRMACIONES },
 )
 const todas = []
 const idsVistos = new Set()
@@ -135,7 +182,7 @@ for (const af of (extraidas && Array.isArray(extraidas.afirmaciones) ? extraidas
   idsVistos.add(id)
   todas.push({ ...af, id })
 }
-if (!todas.length) return { documento: ARCHIVO, error: 'No se extrajeron afirmaciones', fallos: resumenFallos() }
+if (!todas.length) return { documento: ARCHIVO, error: 'No se extrajeron afirmaciones', autor: AUTOR, fallos: resumenFallos() }
 const afirmaciones = todas.slice(0, MAX_AFIRMACIONES)
 const noRevisadas = todas.slice(MAX_AFIRMACIONES)
 if (noRevisadas.length) {
@@ -165,7 +212,7 @@ const juzgadas = await pipeline(
     `Intenta REFUTAR esta afirmación de ${ARCHIVO} desde el enfoque "${e.id}": ${e.texto}\n` +
     'Veredicto: "sostenida" (resiste el intento con evidencia comprobada), "debilitada" (se sostiene solo en parte: otra especie, dosis o condiciones, o evidencia débil), ' +
     '"refutada" (la evidencia la contradice, o la fuente no existe o no dice eso) o "no_verificable" (no puedes comprobarla: explica qué faltaría). ' +
-    'Si no puedes comprobarla, nunca "sostenida". Solo lectura: no modifiques el documento ni otros ficheros.\n' +
+    'Si no puedes comprobarla, nunca "sostenida". No escribiste este documento. Solo lectura: no modifiques el documento ni otros ficheros.\n' +
     `Afirmación ${af.id}: ${af.texto}`,
     { label: `${af.id}:${e.id}`, phase: 'Refutación', agentType: e.tipo, schema: VEREDICTO },
   ))).then((vs) => {
@@ -179,7 +226,7 @@ const resultados = juzgadas.map((j, i) => j || { ...afirmaciones[i], veredictos:
 const segundaOpinion = await otraFamilia
 
 // ---------------------------------------------------------------- consolidación
-// La consolida el crítico (no el autor del documento): no cambia los resultados agregados y solo propone acciones.
+// La consolida un agente que no escribió el documento: no cambia los resultados agregados y solo propone acciones.
 phase('Consolidación')
 const sinQuorum = resultados.filter((j) => j.resultado === 'sin_quorum').map((j) => j.id)
 const consolidado = await lanzar(
@@ -189,16 +236,18 @@ const consolidado = await lanzar(
   `válidos): dilo y propone repetir su revisión.${noRevisadas.length ? ` Las afirmaciones ${noRevisadas.map((af) => af.id).join(', ')} quedaron sin revisar por el límite de ${MAX_AFIRMACIONES}: dilo.` : ''} ` +
   'Integra la segunda opinión de otra familia de modelos, si la hubo, como opinión de un modelo (no como evidencia): dónde coincide y dónde discrepa de los veredictos. ' +
   'Incluye la bibliografía de las referencias [Rn] que copies del documento. Registra como propuestas las acciones que cambien estados con ' +
-  'nutria --agente critico-red-team decision registrar --entidad <ID de la oportunidad o hipótesis, si consta> --decision "..." --motivo "..." (sin --firma-humana: ' +
+  `nutria --agente ${ROL_CONSOLIDACION} decision registrar --entidad <ID de la oportunidad o hipótesis, si consta> --decision "..." --motivo "..." (sin --firma-humana: ` +
   'las decide una persona).' +
   (fallos.length ? `\nAgentes que fallaron (decláralo en el documento): ${fallos.map((f) => f.agente).join(', ')}` : '') +
   `\nResultados: ${JSON.stringify(resultados)}\nSegunda opinión de otra familia: ${JSON.stringify(segundaOpinion)}`,
-  { label: 'consolidacion', phase: 'Consolidación', agentType: 'critico-red-team' },
+  { label: 'consolidacion', phase: 'Consolidación', agentType: ROL_CONSOLIDACION },
 )
 
 return {
   documento: ARCHIVO,
   sensibilidad: SENSIBILIDAD,
+  autor: { rol: AUTOR, origen: ORIGEN_AUTOR },
+  roles: { extraccion: ROL_EXTRACCION, consolidacion: ROL_CONSOLIDACION, refutacion: Object.fromEntries(ENFOQUES.map((e) => [e.id, e.tipo])) },
   resultados: resultados.map((j) => ({ id: j.id, resultado: j.resultado, fuentes: j.fuentes, validos: j.validos, votos: j.votos })),
   refutadas: resultados.filter((j) => j.resultado === 'refutada').length,
   sin_quorum: sinQuorum,

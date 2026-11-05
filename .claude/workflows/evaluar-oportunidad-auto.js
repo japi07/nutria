@@ -523,21 +523,26 @@ const promptEspecialista = (q, i) => {
     `Guarda tu análisis en research/revisiones/${ID}_${String(i + 1).padStart(2, '0')}_${q.agente}.md y devuelve las afirmaciones clave con etiqueta y fuentes.` + nota
 }
 
-// Cada aportación se verifica en cuanto termina (pipeline, sin esperar al resto).
+// Cada aportación se verifica en cuanto termina (pipeline, sin esperar al resto). Quien la escribió no elige qué se
+// somete a refutación: el crítico y el verificador leen el fichero completo y eligen ellos las afirmaciones; las que
+// declara el especialista son solo una guía.
 const aportaciones = await pipeline(
   preguntas,
   (q, _orig, i) => lanzar(promptEspecialista(q, i), { label: `${q.agente}:${i + 1}`, phase: 'Especialistas', agentType: q.agente, schema: APORTACION }),
   (ap, q, i) => {
     if (!ap) return { agente: q.agente, pregunta: q.pregunta, fallo: true }
-    const pub = (ap.afirmaciones || []).filter((a) => a && a.etiqueta === 'PUB')
+    const archivo = ap.archivo || `research/revisiones/${ID}_${String(i + 1).padStart(2, '0')}_${q.agente}.md`
     return parallel([
-      () => lanzar(`${REGLAS}\nIntenta refutar este análisis de ${q.agente} sobre ${ID} (${ap.archivo}).\n${JSON.stringify(ap.afirmaciones || [])}`,
+      () => lanzar(`${REGLAS}\nIntenta refutar el análisis de ${q.agente} sobre ${ID}. Lee completo ${archivo} (no lo escribiste) e identifica tú las afirmaciones ` +
+        'que sostienen su conclusión; no te limites a las que el autor declara como clave (abajo, solo como guía). Para cada una que no resista, di por qué; ' +
+        `veredicto global y debilidades.\nAfirmaciones que declara el autor: ${JSON.stringify(ap.afirmaciones || [])}`,
         { label: `critica:${q.agente}:${i + 1}`, phase: 'Verificación', agentType: 'critico-red-team', schema: CRITICA }),
-      () => (pub.length
-        ? lanzar(`${REGLAS}\nVerifica las fuentes de estas afirmaciones (existencia, correspondencia, retractación y si respaldan la afirmación: respalda, parcial, no_respalda o no_verificable). Solo lectura: no modifiques ficheros. ${JSON.stringify(pub)}`,
-          { label: `fuentes:${q.agente}:${i + 1}`, phase: 'Verificación', agentType: 'verificador-citas', schema: VERIF })
-        : Promise.resolve({ revisadas: 0, problemas: [] })),
-    ]).then(([critica, verif]) => ({ agente: q.agente, ...ap, critica, verif }))
+      () => lanzar(`${REGLAS}\nVerifica las fuentes de TODAS las afirmaciones [PUB] de ${archivo} (léelo completo; no te limites a las que declara su autor, ` +
+        'abajo solo como guía): existencia, correspondencia, retractación y si respaldan la afirmación (respalda, parcial, no_respalda o no_verificable; ' +
+        'sin poder comprobarla, no_verificable). Solo lectura: no modifiques ficheros.\n' +
+        `Afirmaciones que declara el autor: ${JSON.stringify((ap.afirmaciones || []).filter((a) => a && a.etiqueta === 'PUB'))}`,
+        { label: `fuentes:${q.agente}:${i + 1}`, phase: 'Verificación', agentType: 'verificador-citas', schema: VERIF }),
+    ]).then(([critica, verif]) => ({ agente: q.agente, ...ap, archivo, critica, verif }))
   },
 )
 const aportacionesValidas = aportaciones.filter((a) => a && !a.fallo)
