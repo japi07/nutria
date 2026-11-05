@@ -27,7 +27,10 @@ registrada → conciliación si hay discrepancias → exportación para el anál
    (`ventana_inicio_dias`, `ventana_fin_dias`; para un único muestreo, el mismo día en ambos).
 7. Incidencias (`eventos_control`, `eventos_tratamiento`, o una proporción de animales con un trastorno aunque se
    publique como porcentaje): hito, ventana y `definicion_caso` con umbral y matriz (p. ej. "BHB en sangre ≥ 1,2
-   mmol/L") son obligatorios. Se copia la definición del artículo, sin unificarla ni convertir sus unidades.
+   mmol/L") son obligatorios. Se copia la definición del artículo, sin unificarla ni convertir sus unidades. El
+   registro reconoce la proporción por el trastorno ('cetosis', 'SCK'), por la unidad ('% de vacas', 'casos/100
+   vacas'), por los animales ('vacas cetósicas', 'vacas con BHB alto') o por un umbral o un nivel en el nombre ('BHB ≥
+   1,2 mmol/L' o 'BHB alto' en '%'); si no la reconoce, la regla vale igual: regístrala con eventos y definición.
 8. Periodo de transición: un registro por marcador y momento, con su matriz y su ventana respecto al parto. Ingestión
    de MS antes y después del parto (su caída preparto), balance energético calculado (indica la ecuación en `notas`),
    AGNE y BHB (balance energético negativo, cetosis subclínica o hipercetonemia), calcio total o ionizado
