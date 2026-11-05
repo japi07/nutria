@@ -694,8 +694,7 @@ class HttpClient:
                            "bytes": hit["bytes"], "clave_cache": key, "origen": origin})
         self.cache_hits.append({"url": self._shown_url(url), **hit})
         headers = record.get("cabeceras")
-        if isinstance(headers, dict) and headers:
-            self.response_headers[urlparse(url).hostname or ""] = dict(headers)
+        self.response_headers[urlparse(url).hostname or ""] = dict(headers) if isinstance(headers, dict) else {}
         return value, None
 
     @staticmethod
@@ -813,8 +812,7 @@ class HttpClient:
             moment = time.time()
             sha = sha256_text(body)
             kept = _kept_headers(resp.headers)
-            if kept:
-                self.response_headers[host] = kept
+            self.response_headers[host] = kept     # también vacío: la versión es la de la última respuesta
             outputs = {"status": status, "sha256": sha, "bytes": len(body.encode("utf-8")), "clave_cache": key}
             if kept:
                 outputs["cabeceras"] = kept

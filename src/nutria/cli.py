@@ -1900,8 +1900,8 @@ CODIGOS_SALIDA = {
                                 "válida, proyecto sin inicializar, orden no permitida para el rol del agente"),
     SALIDA_REGISTRO: ("registro", "regla del registro o error de la base de datos (identificador que no existe en el "
                                   "registro, transición o compuerta no permitida, fuente sin verificar...)"),
-    SALIDA_RED: ("red", "fallo de red, host bloqueado, error o respuesta no válida del servicio, credencial rechazada, "
-                        "o modo offline sin copia válida en la caché"),
+    SALIDA_RED: ("red", "fallo de red, host bloqueado, error o respuesta no válida del servicio, credencial ausente o "
+                        "rechazada, límite de uso del servicio, o modo offline sin copia válida en la caché"),
     SALIDA_CALCULO: ("calculo", "falta una dependencia opcional o un cálculo no converge"),
     SALIDA_NO_ENCONTRADO: ("no_encontrado", "el recurso pedido no existe en la fuente externa (HTTP 404)"),
     SALIDA_INTERNO: ("interno", "error interno inesperado (fallo del programa; NUTRIA_DEPURAR=1 muestra la traza)"),
@@ -1919,6 +1919,12 @@ def _es_no_existe(mensaje) -> bool:
     condición previa: código 2)."""
     text = str(mensaje or "").strip().lower()
     return text.startswith(_NO_EXISTE) and not text.startswith(_NO_EXISTE + "la base de datos")
+
+
+# Prefijo del mensaje de un NetworkError según su motivo (el código es siempre SALIDA_RED): una credencial o una
+# respuesta inesperada no son «errores de red».
+_PREFIJOS_RED = {"credenciales": "Error de credenciales", "respuesta": "Respuesta no válida del servicio",
+                 "limite": "Límite de uso del servicio"}
 
 
 class SalidaOrden(SystemExit):
@@ -2042,7 +2048,8 @@ def main(argv: list[str] | None = None) -> int:
     except OfflineError as exc:
         return _error(args, str(exc), SALIDA_RED, "Sin red (modo offline)", cfg, exc.motivo)
     except NetworkError as exc:
-        return _error(args, str(exc), SALIDA_RED, "Error de red", cfg, exc.motivo)
+        prefijo = _PREFIJOS_RED.get(exc.motivo, "Error de red")
+        return _error(args, str(exc), SALIDA_RED, prefijo, cfg, exc.motivo)
     except BrokenPipeError:   # quien lee la salida la cerró antes (p. ej. `| head`): no es un error de la orden
         import os
         try:

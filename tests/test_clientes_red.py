@@ -907,6 +907,9 @@ def test_uniprot_query_parse_and_release_from_headers(cfg):
     uniprot.search(cached, "gene:PPARA", taxon=9913, reviewed_only=True)
     assert len(net.calls) == 1 and uniprot.release(cached)["version"] == "2025_04"
     assert uniprot.release(FakeClient(cfg, lambda *a: {})) == {}
+    net.add(r"rest\.uniprot\.org", (200, {"results": []}))              # respuesta sin la cabecera de versión
+    uniprot.search(cached, "gene:OTRO")
+    assert uniprot.release(cached) == {}                                 # nunca la versión de una respuesta anterior
 
 
 def test_string_uses_versioned_address_and_reports_version(cfg):
@@ -1719,3 +1722,19 @@ def test_buscar_europepmc_pages_and_logs_identifiers_of_records_without_doi(proj
     assert event["outputs"]["identificadores"] == [{"europepmc": "PPR/PPR1"},
                                                    {"doi": "10.1000/x", "pmid": "123", "europepmc": "MED/123"},
                                                    {"europepmc": "PPR/PPR2"}]
+
+
+def test_network_errors_are_labelled_by_their_cause(proj, router, capsys, monkeypatch):
+    # D7-14: el código es el de red (4), pero el mensaje dice qué falló: credencial, respuesta o red
+    code, out, err = run(capsys, ["patentes", "x", "--lens"])                      # sin LENS_API_TOKEN
+    assert code == cli.SALIDA_RED and err.startswith("Error de credenciales:") and "LENS_API_TOKEN" in err
+    monkeypatch.setenv("LENS_API_TOKEN", SECRET)
+    router.add(r"api\.lens\.org", (403, '{"error": "token caducado"}'))
+    code, out, err = run(capsys, ["--json", "patentes", "x", "--lens"])
+    payload = _assert_json_error(out, err, cli.SALIDA_RED, "red")
+    assert payload["motivo"] == "credenciales" and SECRET not in out + err
+    router.add(r"eur-lex\.europa\.eu", (200, "<html>anti-robots</html>"))
+    code, out, err = run(capsys, ["normativa", "eurlex", "32009R0767"])
+    assert code == cli.SALIDA_RED and err.startswith("Respuesta no válida del servicio:")
+    code, out, err = run(capsys, ["buscar", "pubmed", "x"])                          # bloqueado por el proxy
+    assert code == cli.SALIDA_RED and err.startswith("Error de red:")
