@@ -338,7 +338,8 @@ const leerRegistro = async (id, etiqueta, fase) => {
   // no la declara un agente.
   const decisiones = Array.isArray(o.decisiones) ? o.decisiones.filter(esObjeto) : []
   const seleccionFirmada = decisiones.some((x) => /seleccionad/i.test(String(x.decision || '')) && String(x.human_signoff || '').trim() !== '')
-  return { ok: true, estado: o.status || null, efectivas: ef, bloqueadas, seleccion_firmada: seleccionFirmada }
+  return { ok: true, estado: o.status || null, titulo: typeof o.title === 'string' ? o.title : null, efectivas: ef, bloqueadas,
+    seleccion_firmada: seleccionFirmada }
 }
 
 // Verificación de citas: el workflow decide si es completa con la salida literal de nutria verificar.
@@ -671,7 +672,9 @@ if (FASE === 'oportunidades') {
           `${REGLAS}\nOportunidad ${o.id}: ${o.titulo}. Tu tarea: ${t.tarea.split('<ID>').join(o.id)}. Consulta nutria --agente ${t.agente} oportunidad ver ${o.id} --sin-puntuaciones --json. ` +
           `PROPÓN la compuerta "${t.compuerta}" (eres su rol propietario) y regístrala como propuesta, sin --firma-humana: nutria --agente ${t.agente} puntuar compuerta ${o.id} ${t.compuerta} ` +
           '<superada|no_resuelta|bloqueada> --motivo "...". "bloqueada" actúa de inmediato y la oportunidad no se puntúa; "superada" no cuenta hasta que la firme una persona. ' +
-          `Devuelve el mismo estado que registres. Guarda tu análisis en research/revisiones/${o.id}_triage_${t.compuerta}.md.`,
+          `Devuelve el mismo estado que registres. Guarda tu análisis en research/revisiones/${o.id}_triage_${t.compuerta}.md. ` +
+          `Antes, comprueba que el título registrado de ${o.id} es "${o.titulo}": si no coincide, no registres ninguna propuesta y devuelve ` +
+          '"no_resuelta" explicando el desajuste.',
           { label: `triage:${t.compuerta}:${o.id}`, phase: 'Triage y crítica', agentType: t.agente, schema: COMPUERTA },
         ).then((c) => ({ agente: t.agente, compuerta: t.compuerta, resultado: c }))),
         () => lanzar(
@@ -684,6 +687,12 @@ if (FASE === 'oportunidades') {
     (o) => (o && !o.ya_registrada ? leerRegistro(o.id, `M1c:${o.id}`, 'Triage y crítica').then((reg) => ({ ...o, registro: reg })) : o),
     (o) => {
       if (!o || o.ya_registrada) return o
+      // El ID lo devolvió el agente de registro: si el registro tiene otro título, no es la oportunidad generada.
+      if (o.registro.ok && norm(o.registro.titulo) !== norm(o.titulo)) {
+        log(`${o.id}: el registro tiene el título "${recorte(o.registro.titulo)}", no "${recorte(o.titulo)}": no se puntúa (revisa el alta)`)
+        return { ...o, sin_puntuar: `el ID ${o.id} que devolvió el agente de registro no corresponde a la oportunidad generada ` +
+          `(título en el registro: "${recorte(o.registro.titulo)}"): no se puntúa; revisa el alta y las propuestas de compuerta de ${o.id}` }
+      }
       const propuestas = (o.compuertas || []).filter((c) => c && c.resultado && c.resultado.estado === 'bloqueada')
         .map((c) => ({ compuerta: c.compuerta, agente: c.agente, motivo: c.resultado.motivo, origen: 'propuesta del triage' }))
       const delRegistro = o.registro.ok

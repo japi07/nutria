@@ -452,13 +452,14 @@ def test_mision1_phases_require_human_inputs(args, mensaje):  # D2-6
 
 @requires_node
 def test_mision1_opportunities_phase_runs_until_ranking(project, capsys):  # D2-6, D1-9, D5-10, D8-8, D2-1..D2-3, D1-5, D2-18
-    _registrar_oportunidades(project, capsys, 2)
+    paso0 = _regla_paso0(project, capsys)  # el paso 0 ve el registro antes de las altas
+    _registrar_titulos(project, capsys, "Oportunidad A", "Oportunidad B")  # lo que hacen los agentes de registro
     problemas = [{"id": "P1", "titulo": "Lipidosis hepática en el periodo de transición", "especie": "vacuno lechero",
                   "etapa": "transición", "mecanismos": ["movilización lipídica"], "soluciones_actuales": "SOLUCIONES-P1"}]
     novedad_lit = {"veredicto": "nueva", "literatura": "l"}
     novedad_mer = {"veredicto": "nueva", "productos": "x", "patentes": "p"}
     reglas = [
-        _regla_paso0(project, capsys),
+        paso0,
         {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B"), _opp("Oportunidad C")]}},
         {"label": "M1b:novedad-mercado:P1.3", "respuesta": {**novedad_mer, "veredicto": "existente"}},
         {"labelPrefix": "M1b:novedad-literatura", "respuesta": novedad_lit},
@@ -802,6 +803,12 @@ def _registrar_oportunidades(project, capsys, n: int, especie: str | None = None
     ruta.write_text(json.dumps(nuevas, ensure_ascii=False), "utf-8")
     code, out = _cli(capsys, "--agente", "fisiologia-bioquimica", "oportunidad", "nueva", "--datos", str(ruta))
     assert code == 0, out
+
+
+def _registrar_titulos(project, capsys, *titulos: str) -> None:
+    """Alta en el registro de oportunidades con estos títulos (lo que hace el agente de registro de la misión 1)."""
+    for titulo in titulos:
+        _registrar_oportunidad(project, capsys, titulo)
 
 
 def _registrar_oportunidad(project, capsys, titulo: str, especie: str | None = None) -> str:
@@ -1489,10 +1496,11 @@ process.stdout.write(JSON.stringify(casos.map((c) => re.test(norm(c)))))
 
 @requires_node
 def test_p8_mision1_no_puntua_las_oportunidades_bloqueadas(project, capsys):  # D4-3, D2-8
-    _registrar_oportunidades(project, capsys, 3)
+    paso0 = _regla_paso0(project, capsys)
+    _registrar_titulos(project, capsys, "Oportunidad A", "Oportunidad B", "Oportunidad C")
     _bloquear(capsys, "O-0002", "seguridad", "BLOQUEADA-EN-EL-REGISTRO")
     gen = {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B"), _opp("Oportunidad C")]}
-    reglas = [_regla_paso0(project, capsys), {"label": "M1b:gen:P1", "respuesta": gen}, *_reglas_novedad(),
+    reglas = [paso0, {"label": "M1b:gen:P1", "respuesta": gen}, *_reglas_novedad(),
               *_registro_secuencial(3),
               {"label": "triage:regulatoria:O-0001", "respuesta": {"compuerta": "regulatoria", "estado": "bloqueada",
                                                                    "motivo": "MEDICAMENTO-POR-FUNCION", "resumen": "r"}},
@@ -1769,7 +1777,7 @@ def test_p8_mision1_la_evidencia_de_los_evaluadores_no_admite_rutas_ajenas(proje
                                                                  "resumen": "r", "archivo": "research/revisiones/M1_ranking_2026-11-04.md"}},
               {"label": "triage:etica:O-0001", "respuesta": {"compuerta": "etica", "estado": "no_resuelta", "motivo": "m",
                                                              "resumen": "r", "archivo": "research/revisiones/O-0001_etica_detalle.md"}}]
-    _registrar_oportunidades(project, capsys, 1)
+    _registrar_titulos(project, capsys, "Oportunidad A")
     reglas.append({"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0001")})
     out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
     prompt = call(out, "puntuacion:evaluador-1:O-0001")["prompt"]
@@ -1851,3 +1859,18 @@ def test_p8_mision1_firma_de_la_seleccion_segun_el_registro(project, capsys):  #
     res = {p["id"]: p for p in out["resultado"]["planes"]}
     assert res["O-0001"]["seleccion_firmada"] is True and res["O-0002"]["seleccion_firmada"] is False
     assert any("Selección sin firma humana en el registro: los planes de O-0002 son provisionales" in m for m in out["logs"])
+
+
+@requires_node
+def test_p8_mision1_id_de_otra_oportunidad_no_se_puntua(project, capsys):  # D2-15, D1-7: integridad del alta
+    paso0 = _regla_paso0(project, capsys)
+    _registrar_titulos(project, capsys, "Otra oportunidad ya registrada")  # O-0001
+    reglas = [paso0, {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A")]}}, *_reglas_novedad(),
+              {"label": "registro:1", "respuesta": {"id": "O-0001"}},  # el agente devuelve un ID ajeno
+              {"labelPrefix": "compuertas-registro:", "respuesta": _ver(capsys, "O-0001")}]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": [_problema(1)], "n_oportunidades": 1}, reglas)
+    assert not any(l.startswith("puntuacion:") for l in labels(out))
+    triage = call(out, "triage:regulatoria:O-0001")["prompt"]
+    assert 'comprueba que el título registrado de O-0001 es "Oportunidad A"' in triage
+    sin_puntuar = out["resultado"]["oportunidades"][0]["sin_puntuar"]
+    assert "no corresponde a la oportunidad generada" in sin_puntuar and "Otra oportunidad ya registrada" in sin_puntuar
