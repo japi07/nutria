@@ -6,6 +6,10 @@ experimental como moderadores. Recuerda: la meta-regresión es observacional ent
 (sesgo ecológico, confusión) y necesita, como orientación, unos 10 estudios por moderador.
 La matriz de diseño (intercepto + moderadores) debe ser de rango completo: los moderadores
 constantes o colineales se rechazan con un ValueError que los nombra.
+
+Moderadores categóricos (p. ej. diseno o unidad_experimental): `codificar_moderadores` construye
+la matriz a partir de las filas de un CSV con codificación ficticia (una variable indicadora por
+categoría salvo la de referencia, que se declara en el resultado).
 """
 
 from __future__ import annotations
@@ -20,6 +24,98 @@ from .meta import _Q_ZERO_TOL, _arrays, _resolve_ajuste, _typical_within_varianc
 
 # Tolerancia relativa (sobre columnas normalizadas) para decidir que una columna es redundante.
 _RANK_RTOL = 1e-10
+
+
+def _celda_vacia(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return isinstance(value, str) and value.strip() == ""
+
+
+def _numero(value) -> float | None:
+    """Número finito o None si la celda no es numérica."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip()) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def categoria_moderador(columna: str, value) -> str:
+    """Categoría normalizada: diseno y unidad_experimental con sus normalizaciones; el resto, sin espacios."""
+    if columna == "diseno":
+        from .effect_sizes import normalize_design
+        return normalize_design(value)
+    if columna == "unidad_experimental":
+        from .effect_sizes import normalize_unit
+        return normalize_unit(value)
+    return str(value).strip()
+
+
+def codificar_moderadores(rows: list[dict], columnas: list[str],
+                          referencias: dict[str, str] | None = None) -> tuple[np.ndarray, list[str], dict]:
+    """Matriz de moderadores (k × m, sin intercepto), nombres y descripción a partir de filas de un CSV.
+
+    - Moderador numérico: todas sus celdas son números finitos; una columna.
+    - Moderador categórico: alguna celda no es numérica, o la columna figura en `referencias` (útil para
+      categorías con código numérico). Codificación ficticia: una variable indicadora `col[categoria]`
+      por categoría distinta de la de referencia; cada coeficiente es la diferencia frente a la referencia.
+      La referencia es la indicada en `referencias` o, si no, la primera categoría en orden alfabético
+      (como factor() en R); se declara en la descripción.
+
+    Una celda vacía, una columna inexistente, una referencia que no existe o un moderador categórico con
+    una sola categoría lanzan ValueError con el nombre de la columna (y las filas, base 1).
+    Devuelve (matriz, nombres, descripcion) con descripcion = {col: {"tipo": "numerico"} o
+    {"tipo": "categorico", "referencia": ..., "categorias": [...], "indicadoras": [...]}}.
+    """
+    referencias = dict(referencias or {})
+    columnas = list(columnas or [])
+    if len(set(columnas)) != len(columnas):
+        raise ValueError("Hay moderadores repetidos")
+    sobrantes = [c for c in referencias if c not in columnas]
+    if sobrantes:
+        raise ValueError(f"--referencia nombra columnas que no son moderadores: {', '.join(sobrantes)}")
+    presentes = set().union(*(r.keys() for r in rows)) if rows else set()
+    bloques, nombres, descripcion = [], [], {}
+    for col in columnas:
+        if col not in presentes:
+            raise ValueError(f"El moderador '{col}' no es una columna del CSV")
+        valores = [r.get(col) for r in rows]
+        vacias = [i + 1 for i, v in enumerate(valores) if _celda_vacia(v)]
+        if vacias:
+            raise ValueError(f"El moderador '{col}' tiene celdas vacías en la(s) fila(s) "
+                             + ", ".join(map(str, vacias[:10])) + ("…" if len(vacias) > 10 else ""))
+        numeros = [_numero(v) for v in valores]
+        if col not in referencias and all(n is not None for n in numeros):
+            bloques.append(np.asarray(numeros, dtype=float)[:, None])
+            nombres.append(col)
+            descripcion[col] = {"tipo": "numerico"}
+            continue
+        categorias_fila = [categoria_moderador(col, v) for v in valores]
+        categorias = sorted(set(categorias_fila))
+        if col in referencias:
+            referencia = categoria_moderador(col, referencias[col])
+            if referencia not in categorias:
+                raise ValueError(f"La categoría de referencia '{referencias[col]}' no aparece en el moderador "
+                                 f"'{col}' (categorías: {', '.join(categorias)})")
+        else:
+            referencia = categorias[0]
+        if len(categorias) < 2:
+            raise ValueError(f"El moderador categórico '{col}' solo tiene una categoría ({categorias[0]}): "
+                             "no hay contraste que estimar")
+        otras = [c for c in categorias if c != referencia]
+        indicadoras = [f"{col}[{c}]" for c in otras]
+        bloques.append(np.column_stack([[1.0 if x == c else 0.0 for x in categorias_fila] for c in otras]))
+        nombres += indicadoras
+        descripcion[col] = {"tipo": "categorico", "referencia": referencia, "categorias": categorias,
+                            "indicadoras": indicadoras}
+    if not bloques:
+        raise ValueError("Indica al menos un moderador")
+    return np.column_stack(bloques), nombres, descripcion
 
 
 @dataclass
@@ -47,13 +143,19 @@ class MetaRegResult:
     notes: list[str] = field(default_factory=list)
     ajuste: str = "ninguno"
     kh_s2: float | None = None
+    # Con ajuste "hksj" y s² < 1: p e IC de Knapp-Hartung modificado (max(1, s²)), como sensibilidad.
+    p_values_mod: list[float] | None = None
+    ci_low_mod: list[float] | None = None
+    ci_high_mod: list[float] | None = None
+    avisos: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def summary(self) -> str:
         pct = int(round(self.level * 100))
-        lines = [f"Meta-regresión ({self.method}, prueba {self.test}), k = {self.k}",
+        lines = [f"AVISO: {a}" for a in self.avisos]
+        lines += [f"Meta-regresión ({self.method}, prueba {self.test}), k = {self.k}",
                  f"tau² residual = {self.tau2:.4f}; I² residual = {self.I2_res:.1f} %"
                  + (f"; R² = {self.R2:.1f} %" if self.R2 is not None else ""),
                  f"QE({self.QE_df}) = {self.QE:.3f}, p = {self.QE_p:.4g} | QM({self.QM_df}) = {self.QM:.3f}, "
@@ -62,6 +164,11 @@ class MetaRegResult:
         for i, name in enumerate(self.names):
             lines.append(f"{name:<22}{self.coef[i]:>10.4f}{self.se[i]:>10.4f}{self.statistic[i]:>9.3f}"
                          f"{self.p_values[i]:>10.4g}   [{self.ci_low[i]:.4f}; {self.ci_high[i]:.4f}]")
+        if self.p_values_mod is not None:
+            lines.append(f"Knapp-Hartung modificado (max(1, s²), s² = {self.kh_s2:.4g}):")
+            for i, name in enumerate(self.names):
+                lines.append(f"{name:<22}{'':>29}{self.p_values_mod[i]:>10.4g}   "
+                             f"[{self.ci_low_mod[i]:.4f}; {self.ci_high_mod[i]:.4f}]")
         lines += [f"Nota: {n}" for n in self.notes]
         return "\n".join(lines)
 
@@ -154,7 +261,9 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
     resid = y - X @ beta
     alpha = 1 - level
     notes: list[str] = []
+    avisos: list[str] = []
     s2: float | None = None
+    p_mod = ci_low_mod = ci_high_mod = None
     if ajuste != "ninguno":
         s2 = float(np.sum(w * resid ** 2) / (k - p))
         if ajuste == "hksj-mod":
@@ -169,8 +278,14 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
             factor = s2
             test = f"t (Knapp-Hartung, gl = {k - p})"
             if s2 < 1:
-                notes.append(f"Knapp-Hartung con s² = {s2:.4g} < 1: los IC pueden ser más estrechos que los de "
-                             "Wald; repite con ajuste 'hksj-mod' (max(1, s²)) como análisis de sensibilidad.")
+                se_m = np.sqrt(np.diag(cov))  # max(1, s²) = 1
+                crit_m = stats.t.ppf(1 - alpha / 2, k - p)
+                p_mod = list(map(float, 2 * stats.t.sf(np.abs(beta / se_m), k - p)))
+                ci_low_mod = list(map(float, beta - crit_m * se_m))
+                ci_high_mod = list(map(float, beta + crit_m * se_m))
+                avisos.append(f"Knapp-Hartung estándar con s² = {s2:.4g} < 1: los IC pueden ser más estrechos que "
+                              "los de Wald. Se dan también la p y el IC del Knapp-Hartung modificado (max(1, s²)), "
+                              "que es el ajuste por defecto (--ajuste hksj-mod).")
         cov = cov * factor
         se = np.sqrt(np.diag(cov))
         stat = beta / se
@@ -210,6 +325,7 @@ def meta_regression(yi, vi, moderators: np.ndarray | list, names: list[str] | No
         ci_low=list(map(float, beta - crit * se)), ci_high=list(map(float, beta + crit * se)),
         tau2=tau2, I2_res=I2_res, R2=R2, QM=QM, QM_df=QM_df, QM_p=QM_p, QE=QE, QE_df=QE_df,
         QE_p=float(stats.chi2.sf(QE, QE_df)), level=level, notes=notes, ajuste=ajuste, kh_s2=s2,
+        p_values_mod=p_mod, ci_low_mod=ci_low_mod, ci_high_mod=ci_high_mod, avisos=avisos,
     )
 
 

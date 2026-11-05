@@ -77,8 +77,8 @@ def test_hksj_con_q_menor_que_1_da_ic_modificado():
     # El HKSJ estándar es más estrecho que Wald (el problema de D6-7); el modificado no
     wald = meta.random_effects(yi, vi, method="REML")
     assert res.ci_high - res.ci_low < wald.ci_high - wald.ci_low < res.ci_mod_high - res.ci_mod_low
-    assert any("max(1, q)" in n for n in res.notes)
-    assert "HKSJ modificado" in res.summary()
+    assert any("max(1, q)" in a for a in res.avisos)  # el IC estándar es más estrecho que Wald: aviso visible
+    assert "AVISO:" in res.summary() and "HKSJ modificado" in res.summary()
     # "hksj-mod" usa max(1, q) en el resultado principal
     mod = meta.random_effects(yi, vi, method="REML", ajuste="hksj-mod")
     assert (mod.ci_low, mod.ci_high) == pytest.approx((res.ci_mod_low, res.ci_mod_high))
@@ -200,10 +200,11 @@ def test_meta_regresion_ajuste_knapp_hartung(bcg):
     assert kh.se[1] == pytest.approx(z.se[1] * math.sqrt(kh.kh_s2))
     mod = meta_regression(yi, vi, ablat, ["ablat"], ajuste="hksj-mod")
     assert mod.se[1] == pytest.approx(z.se[1] * math.sqrt(max(1.0, kh.kh_s2)))
-    # s² < 1: la nota recomienda el modificado, que usa max(1, s²)
+    # s² < 1: el aviso recomienda el modificado, que usa max(1, s²), y se dan su p y su IC
     yh, vh, dosis = [0.9, 1.0, 1.05, 1.1, 1.0], [0.3] * 5, [1, 2, 3, 4, 5]
     low = meta_regression(yh, vh, dosis, ["dosis"], knha=True)
-    assert low.kh_s2 < 1 and any("hksj-mod" in n for n in low.notes)
+    assert low.kh_s2 < 1 and any("hksj-mod" in a for a in low.avisos)
+    assert low.p_values_mod[1] > low.p_values[1] and "AVISO:" in low.summary()
     low_mod = meta_regression(yh, vh, dosis, ["dosis"], ajuste="hksj-mod")
     assert low_mod.se[1] > low.se[1]
 
