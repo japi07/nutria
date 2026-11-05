@@ -961,9 +961,10 @@ def test_spelled_out_units_count_as_figures(text):
 
 def test_section_14_has_route_and_effective_gate_states(project):
     _opportunity(project)
-    assert main(["--agente", "regulacion-seguridad", "puntuar", "compuerta", "O-0001", "seguridad", "superada",
+    # cada compuerta, propuesta por el rol que la propone según CLAUDE.md
+    assert main(["--agente", "compuestos-toxicologia", "puntuar", "compuerta", "O-0001", "seguridad", "superada",
                  "--motivo", "propuesta"]) == 0
-    assert main(["--agente", "compuestos-toxicologia", "puntuar", "compuerta", "O-0001", "etica", "bloqueada",
+    assert main(["--agente", "sostenibilidad-bienestar", "puntuar", "compuerta", "O-0001", "etica", "bloqueada",
                  "--motivo", "propuesta"]) == 0
     text = _skeleton(project).read_text("utf-8")
     section14 = text.split("## 14.")[1].split("## 15.")[0]
@@ -1038,19 +1039,26 @@ def test_unverifiable_identifiers_are_errors_in_reports_even_in_draft(project):
 
 
 def test_project_rubric_gates_are_used_everywhere(project, online):
-    # Si la rúbrica del proyecto define otras compuertas, la CLI, el sello y el hook exigen las mismas.
+    # Si la rúbrica del proyecto añade una compuerta, el esqueleto, la comprobación, el sello y el hook la exigen
+    # igual; si la rúbrica no se puede leer, se exigen las seis compuertas por defecto (falla en cerrado).
     from importlib import resources
     rubric = resources.files("nutria.data").joinpath("rubrica.toml").read_text("utf-8")
-    head, *gates = rubric.split("[[compuerta]]")
-    kept = [g for g in gates if 'id = "etica"' not in g]
+    extra = ('\n[[compuerta]]\nid = "bioseguridad_granja"\nnombre = "Bioseguridad de la granja"\n'
+             'bloquea_si = "Riesgo de introducir patógenos en la explotación."\n')
     (project / "config").mkdir(exist_ok=True)
-    (project / "config" / "rubrica.toml").write_text(head + "".join("[[compuerta]]" + g for g in kept), "utf-8")
-    assert "etica" not in chk.gate_ids_for(project / "research" / "informes" / "x.md")
+    (project / "config" / "rubrica.toml").write_text(rubric + extra, "utf-8")
+    report_path = project / "research" / "informes" / "x.md"
+    assert "bioseguridad_granja" in chk.gate_ids_for(report_path)
     path = _filled_report(project)
-    assert "| etica |" not in path.read_text("utf-8")
+    text = path.read_text("utf-8")
+    assert "| bioseguridad_granja | no_resuelta |" in text
+    without = text.replace("| bioseguridad_granja |", "| otra |").replace("estado: borrador", "estado: final")
+    assert any("bioseguridad_granja" in e for e in _errors(without, conn=_conn(), path=path))
     assert main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"]) == 0
     assert main(["informe", "comprobar", str(path), "--online", "--sellar"]) == 0
     assert chk.stamp_status(path)[0]
+    (project / "config" / "rubrica.toml").write_text("esto no es TOML [", "utf-8")
+    assert chk.gate_ids_for(report_path) == list(chk.DEFAULT_GATES)
 
 
 def test_out_of_scope_route_shows_blocked_regulatory_gate(project):
