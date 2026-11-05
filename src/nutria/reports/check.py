@@ -13,7 +13,9 @@ Sin red (`check_report`):
   rúbrica del proyecto; con registro, ese estado debe coincidir con el efectivo de la oportunidad del front matter.
 - Etiquetas: se detectan sin distinguir mayúsculas (`[pub]` cuenta como `[PUB]`, con aviso de formato), también en
   encabezados, citas, tablas y bloques de código; una etiqueta escrita en código solo se ignora si el código no
-  contiene nada más (mención del término). Cada segmento que empieza en una `[PUB]` necesita su propio `[Rn]`
+  contiene nada más y no está pegado a un corchete o a una letra (mención del término: «las etiquetas `[PUB]` y
+  `[HIP]`»; «[`PUB`]» sí cuenta), y un acento combinado dentro de un corchete corto no oculta una etiqueta ni una
+  referencia. Cada segmento que empieza en una `[PUB]` necesita su propio `[Rn]`
   antes de la etiqueta siguiente (los `[Rn]` escritos antes de la primera etiqueta cuentan para ella). Por frase
   (hasta «.», «!» o «?», aunque ocupe varias líneas del párrafo): una cifra con unidades (%, L/d, kg/d, mg/kg MS,
   g/t, Mcal, MJ, mmol/L, ppm...) necesita etiqueta o referencia, y una referencia `[Rn]`, una etiqueta (si no,
@@ -28,8 +30,8 @@ Sin red (`check_report`):
 - Anexo A, por afirmación: la afirmación de una `[PUB]` son las palabras de su frase (hasta «.», «!» o «?») que le
   corresponden: las anteriores a la etiqueta desde el inicio de la frase o desde la etiqueta anterior y, si es la
   última etiqueta de la frase, también las que la siguen; si la frase empieza con la etiqueta, las que la siguen hasta
-  la etiqueta siguiente (ver `_claims`). Necesita una fila de su `[Rn]`
-  cuya columna Afirmación la reproduzca y cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar
+  la etiqueta siguiente (ver `_claims`). Necesita una fila de su `[Rn]` cuya columna Afirmación la reproduzca y
+  cuyo Respaldo sea `respalda` o `parcial`. Coincidencia: tras normalizar
   (minúsculas, sin acentos, sin etiquetas ni `[Rn]`, sin formato ni puntuación), el texto de la fila debe aparecer
   literalmente en el párrafo de la afirmación (`...` o `…` separan fragmentos de al menos 2 palabras que deben
   aparecer en orden) y cubrir al menos la mitad de sus palabras, con un mínimo de 4 (o todas si tiene menos). Cada
@@ -43,6 +45,8 @@ Sin red (`check_report`):
   contradigan los del registro (error en estricto, aviso en borrador; una fuente retractada es siempre error). En
   revisado o final, `revisado_por_humano` debe coincidir con una revisión registrada por una persona (`nutria
   informe revisar`) para el contenido exacto del informe: si el informe cambia, deja de valer.
+- Revisión del crítico (informes en revisado o final): `revision_critica` en el front matter enlaza un documento de
+  research/revisiones del proyecto que menciona el informe (su fichero o su oportunidad); no se juzga su contenido.
 
 Con red (`check_report_online`, sin caché): cada DOI/PMID existe, corresponde a la cita (título, año y primer
 autor) y su retractación es conocida y negativa; las referencias con solo URL valen únicamente si una persona las
@@ -893,22 +897,32 @@ class _Support:
     claim_col: bool           # ... y con la columna Afirmación
     lines: set[int]           # índices de las líneas de las tablas de respaldo (cabecera, separador y filas)
     stray: list[tuple[int, bool]] = field(default_factory=list)   # filas antes de la cabecera: (línea, negativa)
+    hidden: list[tuple[int, bool]] = field(default_factory=list)  # filas en código o en una cita: (línea, negativa)
 
 
 def _support_rows(doc: _Doc) -> _Support:
     """Filas de respaldo del Anexo A: las filas de tabla que siguen, dentro de la sección, a una cabecera con la
     columna Respaldo (aunque haya líneas en blanco entre ellas: una fila no_respalda separada de la tabla también
-    cuenta). Las filas anteriores a la cabecera no cuentan como respaldo y se comprueban como texto."""
+    cuenta). Las filas anteriores a la cabecera no cuentan como respaldo y se comprueban como texto; las que van en un
+    bloque de código o en una cita («> | R1 | ... |») tampoco cuentan, y se señalan (una negativa, como error)."""
     rows: list[SupportRow] = []
     issues: list[Issue] = []
     lines: set[int] = set()
     stray: list[tuple[int, bool]] = []
+    hidden: list[tuple[int, bool]] = []
     header = claim_col = False
     for start, end in _annex_ranges(doc, r"anexo\s+a\b"):
         cols = None
         for i in range(start + 1, end):
             stripped = doc.lines[i].strip()
-            if doc.fence[i] or not stripped.startswith("|"):
+            quoted = stripped.startswith(">")
+            if doc.fence[i] or quoted:
+                inner = stripped.lstrip("> \t") if quoted else stripped
+                cells = _cells(inner) if inner.startswith("|") else []
+                if cells and not all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
+                    hidden.append((i + 1, any(_support_value(c) in ("no_respalda", "no_verificable") for c in cells)))
+                continue
+            if not stripped.startswith("|"):
                 continue
             cells = _cells(stripped)
             if all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
@@ -944,7 +958,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 continue
             rows.append(SupportRow(i + 1, refs, cell("claim"), _support_value(cell("value")), cell("value"),
                                    cell("reason")))
-    return _Support(rows, issues, header, claim_col, lines, stray)
+    return _Support(rows, issues, header, claim_col, lines, stray, hidden)
 
 
 def _fragments(claim: str) -> list[list[str]] | None:
@@ -1568,6 +1582,11 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         issues.append(Issue("error" if negative else sev_strict,
                             "Fila del Anexo A antes de la cabecera | Ref | Afirmación | Respaldo | Motivo |: no cuenta "
                             "como respaldo y se comprueba como texto"
+                            + ("; declara que una fuente no respalda una afirmación o no es verificable, y esa "
+                               "valoración no puede quedar fuera de la tabla" if negative else ""), line_no))
+    for line_no, negative in support.hidden:
+        issues.append(Issue("error" if negative else sev_strict,
+                            "Fila del Anexo A dentro de un bloque de código o de una cita: no cuenta como respaldo"
                             + ("; declara que una fuente no respalda una afirmación o no es verificable, y esa "
                                "valoración no puede quedar fuera de la tabla" if negative else ""), line_no))
     if support.header and not support.claim_col:

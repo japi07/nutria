@@ -712,6 +712,12 @@ def test_rows_separated_from_the_table_or_before_its_header_are_not_ignored():
     assert any("antes de la cabecera" in e and "no respalda" in e for e in errors)
     draft = doc.replace("estado: final", "estado: borrador")
     assert any("antes de la cabecera" in e for e in _errors(draft, require_sections=False))   # negativa: siempre
+    # una fila negativa escondida en un bloque de código o en una cita tampoco se pierde, ni en borrador
+    negative = "| R1 | La colina aumentó la leche en vacas | no_respalda | z |"
+    good = _strict_doc(body, "| R1 | La colina aumentó la leche en vacas | respalda | y |")
+    for hidden in (f"\n```\n{negative}\n```\n", f"\n> {negative}\n"):
+        draft = (good + hidden).replace("estado: final", "estado: borrador")
+        assert any("dentro de un bloque de código o de una cita" in e for e in _errors(draft, require_sections=False))
 
 
 def test_annex_quotes_are_checked_against_the_abstract(monkeypatch):
