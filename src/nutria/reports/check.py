@@ -66,6 +66,7 @@ estructura se comprobó entera (en informes), el documento no tiene apartados po
 """
 from __future__ import annotations
 
+import bisect
 import html
 import json
 import math
@@ -76,6 +77,7 @@ import tomllib
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 from .. import __version__
@@ -134,42 +136,63 @@ _WORD_UNITS = ("puntos porcentuales", "por ciento", "ppm", "ppb", "pp", "mEq", "
                "liter", "liters", "litre", "litres", "tonne", "tonnes", "ton", "tons", "percent")
 _SYMBOL_UNITS = ("%", "‰", "°", "€", "£")
 _WORD_UNITS_RE = "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True))
-# Cifra seguida de su unidad, con cualquier espacio en medio (también un salto de línea: la comprobación se hace sobre
-# el texto del párrafo); «ºC» (indicador ordinal, que NFKC convierte en «oC») cuenta como grados; la moneda delante de
-# la cifra («€15», «US$ 2») también.
+_SYMBOL_UNITS_RE = "|".join(re.escape(u) for u in _SYMBOL_UNITS)
+# Cifra seguida de su unidad, con cualquier espacio en medio: varios espacios o un salto de línea (la comprobación se
+# hace sobre el texto del párrafo, no línea a línea). «ºC» (indicador ordinal, que NFKC convierte en «oC») cuenta como
+# grados; la unidad entre paréntesis justo después de la cifra («2,5 (kg/d)») y la moneda delante de la cifra
+# («€15», «US$ 2») también.
 UNIT_RE = re.compile(
-    r"(?:" + _NUM + r"\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:"
-    + "|".join(re.escape(u) for u in _SYMBOL_UNITS) + r")|o\s?C(?![^\W\d_]))"
+    r"(?:" + _NUM + r"\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:" + _SYMBOL_UNITS_RE + r")"
+    + r"|(?-i:o\s?C)(?![^\W\d_])"
+    + r"|\(\s*(?:(?:" + _WORD_UNITS_RE + r")(?![^\W\d_])|(?:" + _SYMBOL_UNITS_RE + r"))"
+    + r"(?:\s*[/·]\s*[^\s()/·]+){0,3}(?:\s+[A-Za-z]{1,3})?\s*\))"
     + r"|(?<![\w$€£])(?:US\$|\$|€|£)\s*\d)",
     re.IGNORECASE)
-# Cabecera de una columna de tabla con unidades: «Leche (kg/d)», «Dosis, g/d», «Grasa %», «Coste €/vaca».
+# Unidad escrita sin cifra: la cabecera de una columna («Leche (kg/d)», «Dosis, g/d», «Grasa %», «Coste €/vaca»), la
+# primera celda de una fila («Leche (kg/d) | 30,1 | 32,4») o una celda de unidades («| 2,5 | kg/d |»).
 _HEADER_UNIT_RE = re.compile(
     r"(?:(?<![^\W\d_])(?:" + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True) if len(u) > 1)
-    + r")(?![^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\))", re.IGNORECASE)
+    + r")(?![^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
+    re.IGNORECASE)
 _MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
            r"january|february|march|april|may|june|july|august|september|october|november|december)")
-# Apellido: mayúscula y al menos otra letra (con apóstrofos o guiones: «O'Neill», «García-López»); no un mes.
+# Apellido: mayúscula y al menos otra letra (con apóstrofos o guiones: «O'Neill», «García-López»); no un mes. Puede
+# llevar iniciales detrás («García J.», «García JM», «García, J. M.»).
 _NAME = rf"(?!(?i:{_MONTHS})\b)[A-ZÀ-ÖØ-Þ][^\W\d_]+(?:['’\-][^\W\d_]+)*"
+_INITIALS = r"(?:,?\s+(?:(?:[A-Z]\.\s?-?){1,3}|[A-Z]{1,3}\b\.?))?"
+_AUTHOR = rf"{_NAME}{_INITIALS}"
 _COAUTHORS = r"(?:et\s+al\.?|[ye]\s+cols?\.?|y\s+colaboradores|and\s+colleagues)"
-_AUTHORS = rf"(?:\s*,\s*{_NAME})*(?:\s+(?:{_COAUTHORS}|(?:y|e|and|&)\s+{_NAME}))?"
+# Hasta siete autores seguidos («García, Pérez, López y Ruiz»): la repetición acotada evita el coste cuadrático en
+# líneas largas de nombres.
+_AUTHORS = rf"(?:\s*,\s*{_AUTHOR}){{0,6}}(?:\s+(?:{_COAUTHORS}|(?:y|e|and|&)\s+{_AUTHOR}))?"
 _YEAR = r"(?P<year>(?:19|20)\d{2})[a-z]?"
-_FIRST = rf"(?P<name>{_NAME})"
+_FIRST = rf"(?P<name>{_NAME}){_INITIALS}"
 AUTHOR_YEAR_RES = (
     # (Smith et al., 2019; ...), [Smith y col. 2019], (véase Smith y Jones, 2019), (Smith, Jones y Brown, 2019)
     re.compile(rf"[(\[]\s*(?:(?:véase|vease|ver|see|cf\.?|p\.\s?ej\.,?|e\.\s?g\.,?)\s+)?{_FIRST}{_AUTHORS}\s*,?\s+"
                rf"{_YEAR}\s*(?=[;),\]])"),
-    # las siguientes de una lista entre paréntesis: (...; Jones, 2017)
+    # las siguientes de una lista entre paréntesis: (...; Jones, 2017); solo cuenta dentro de un paréntesis abierto
     re.compile(rf";\s*{_FIRST}{_AUTHORS}\s*,?\s+{_YEAR}\s*(?=[;)\]])"),
-    # Smith (2019), Smith et al. (2019), Smith y col. (2019), Smith y Jones (2019), Smith, Jones y Brown (2019)
+    # cita narrativa: Smith (2019), Smith et al. (2019), Smith y col. (2019), Smith y Jones (2019), Smith J. (2019)
     re.compile(rf"(?<![\w'’\-]){_FIRST}{_AUTHORS}\s*,?\s*[(\[]\s*{_YEAR}\s*[)\]]"),
     # Smith et al. 2019, Smith y col., 2019 (sin paréntesis, con coautores)
     re.compile(rf"(?<![\w'’\-]){_FIRST}\s+{_COAUTHORS}\s*,?\s+{_YEAR}(?![\w/\-–])"),
+    # según Smith 2019, véase Smith y Jones, 2019 (sin paréntesis, tras una fórmula de cita)
+    re.compile(rf"(?i:\b(?:según|segun|véase|vease|de\s+acuerdo\s+con|conforme\s+a|cf\.?)\s+)"
+               rf"{_FIRST}{_AUTHORS}\s*,?\s+{_YEAR}(?![\w/\-–])"),
     # Smith et al. (sin año): sigue siendo una cita
     re.compile(rf"(?<![\w'’\-]){_FIRST}\s+et\s+al\b"),
 )
-# En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita.
-_CELL_CITATION_RE = re.compile(rf"^\s*{_FIRST}{_AUTHORS}\s*,?\s*[(\[]?\s*{_YEAR}\s*[)\]]?\s*$")
-# Cita numérica «[1]» (no es una referencia [Rn]); no «[^1]» (nota), «[texto][1]» ni «[1]: url» (enlaces).
+_IN_PARENS_ONLY = 1          # índice de AUTHOR_YEAR_RES que solo cuenta dentro de un paréntesis o corchete abierto
+# En una celda de tabla, la celda entera «García 2018», «Pérez et al. 2017» o «García y Pérez, 2018» es una cita si la
+# columna es de estudios o fuentes; en cualquier columna, si lleva coautores, coma o paréntesis.
+_CELL_CITATION_RE = re.compile(rf"^\s*{_FIRST}(?P<authors>{_AUTHORS})\s*(?P<comma>,?)\s*(?P<open>[(\[]?)\s*{_YEAR}"
+                               rf"\s*[)\]]?\s*[.;]?\s*$")
+_SOURCE_COLUMN_RE = re.compile(r"^(?:estudios?|referencias?|fuentes?|autor(?:es)?|autoria|trabajos?|citas?|ensayos?|"
+                               r"experimentos?|articulos?|publicacion(?:es)?|studies|study|references?|sources?|"
+                               r"authors?|papers?|trials?)\b")
+# Cita numérica «[1]» (no es una referencia [Rn]); no «[^1]» (nota), «[texto][1]», «[1]: url» ni «[1](url)» (enlaces)
+# ni un índice pegado a una palabra («x[1]»).
 NUMERIC_CITATION_RE = re.compile(r"(?<![\]\w^])\[\s*([1-9]\d{0,2})\s*\](?![(:\[])")
 _RUMINANT_RE = re.compile(
     r"vacun|bovin|vaca|ternero|ternera|novill|buey|toro|ovin|oveja|cordero|caprin|cabra|cabrit|bufal|rumiant|"
@@ -538,6 +561,16 @@ def human_reviewer(text: str) -> str | None:
     return _reviewer_of(_parse(text))[0]
 
 
+def reviewer_name_problem(name: str | None) -> str | None:
+    """Motivo por el que `name` no vale como nombre de quien revisa un informe (vacío, de relleno como «pendiente»,
+    «-» o «null», que la comprobación lee como «sin revisión», o sin al menos dos letras); None si vale."""
+    text = " ".join((name or "").split())
+    if text.lower() in NO_REVIEWER or sum(ch.isalpha() for ch in text) < 2:
+        return (f"«{text}» no es el nombre de una persona (la comprobación lo leería como «sin revisión humana»): "
+                "escribe el nombre de quien revisó el informe")
+    return None
+
+
 def front_matter_value(text: str, key: str) -> str | None:
     fields, _ = _fm_fields(_parse(text))
     values = [v for _, v, p in fields.get(key.lower(), []) if v and not p]
@@ -885,6 +918,151 @@ def _paragraphs(doc: _Doc, body: set[int]) -> list[list[int]]:
     return paras
 
 
+def _is_table_text(line: str) -> bool:
+    return line.strip().lstrip(">").strip().startswith("|")
+
+
+def _joined(para: list[int], scans: dict[int, _Line]) -> tuple[str, list[int], list[int]]:
+    """Texto comprobable del párrafo (sus líneas unidas por saltos de línea), el desplazamiento en que empieza cada
+    línea y su índice: una cifra y su unidad, o una cita, partidas entre dos líneas se buscan en el párrafo entero."""
+    texts: list[str] = []
+    starts: list[int] = []
+    lines: list[int] = []
+    pos = 0
+    for j in para:
+        scan = scans.get(j)
+        if scan is None:
+            continue
+        starts.append(pos)
+        lines.append(j)
+        texts.append(scan.text)
+        pos += len(scan.text) + 1
+    return "\n".join(texts), starts, lines
+
+
+def _locate(offset: int, starts: list[int], lines: list[int]) -> tuple[int, int]:
+    k = max(0, bisect.bisect_right(starts, offset) - 1)
+    return lines[k], offset - starts[k]
+
+
+def _inside_brackets(text: str, pos: int) -> bool:
+    return text.count("(", 0, pos) + text.count("[", 0, pos) > text.count(")", 0, pos) + text.count("]", 0, pos)
+
+
+def _citation_ends(text: str) -> list[int]:
+    """Final de cada cita autor-año del texto (la cita cuenta en la frase donde termina: «Smith J. (2019) halló...»)."""
+    ends = []
+    for n, rx in enumerate(AUTHOR_YEAR_RES):
+        for m in rx.finditer(text):
+            if n == _IN_PARENS_ONLY and not _inside_brackets(text, m.start()):
+                continue
+            ends.append(m.end() - 1)
+    return ends
+
+
+def _cell_spans(text: str) -> list[tuple[int, int]]:
+    """(inicio, fin) del contenido de cada celda de una fila de tabla, en las posiciones de `text`."""
+    lead = re.match(r"\s*(?:>\s*)*", text).end()
+    seps = [m.start() for m in re.finditer(r"(?<!\\)\|", text) if m.start() >= lead]
+    if not seps:
+        return []
+    edges = ([lead - 1] if seps[0] != lead else []) + seps
+    if text[seps[-1] + 1:].strip():
+        edges.append(len(text))
+    return [(edges[k] + 1, edges[k + 1]) for k in range(len(edges) - 1)]
+
+
+def _has_figure(cell: str) -> bool:
+    return bool(re.search(r"\d", REF_RE.sub("", cell)))
+
+
+def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers: set[int]
+                  ) -> dict[int, list[tuple[int, str]]]:
+    """Cifras con unidades y citas que solo se ven por la estructura de una tabla (GFM: cabecera y fila de
+    separación): un número de una columna cuya cabecera lleva la unidad («Leche (kg/d)»), o de una fila con una celda
+    de unidades («Leche (kg/d) | 30,1» o «2,5 | kg/d»), y una celda «Autor Año» en una columna de estudios o fuentes
+    («García 2018»; en cualquier columna, si lleva coautores, coma o paréntesis). {línea: [(posición, tipo)]}."""
+    out: dict[int, list[tuple[int, str]]] = {}
+    n = len(doc.lines)
+    i = 0
+
+    def table_line(k: int) -> bool:
+        return k in body and not doc.fence[k] and _is_table_text(doc.lines[k])
+    while i < n:
+        if not table_line(i):
+            i += 1
+            continue
+        block = [i]
+        i += 1
+        while i < n and table_line(i):
+            block.append(i)
+            i += 1
+        if len(block) < 3:
+            continue
+        header = _cells(doc.lines[block[0]].strip().lstrip(">").strip())
+        delim = _cells(doc.lines[block[1]].strip().lstrip(">").strip())
+        if not delim or not all(re.fullmatch(r"\s*:?-+:?\s*", c) for c in delim):
+            continue
+        unit_cols = {k for k, c in enumerate(header) if _HEADER_UNIT_RE.search(c)}
+        source_cols = {k for k, c in enumerate(header) if _SOURCE_COLUMN_RE.match(_plain(re.sub(r"[*_`]", "", c)))}
+        for row in block[2:]:
+            scan = scans.get(row)
+            if scan is None:
+                continue
+            spans = _cell_spans(scan.text)
+            cells = [scan.text[a:b] for a, b in spans]
+            row_unit = any(_HEADER_UNIT_RE.search(REF_RE.sub("", c)) for c in cells)
+            events = out.setdefault(row, [])
+            for k, ((a, b), cell) in enumerate(zip(spans, cells)):
+                if row not in no_numbers and (k in unit_cols or row_unit) and _has_figure(cell):
+                    events.append((a, "unit"))
+                m = _CELL_CITATION_RE.match(cell)
+                if m and (k in source_cols or m.group("authors") or m.group("comma") or m.group("open")):
+                    events.append((max(a, b - 1), "cite"))
+    return out
+
+
+# Frases de una [PUB] que remiten a la frase anterior en lugar de enunciar la afirmación: «Así lo indica el ensayo
+# [PUB] [R1].», «Esto se observó en vacas [PUB] [R1].», «Este efecto ... [PUB] [R1].». (Palabras normalizadas.)
+_ANAPHORA_FIRST = {"asi", "esto", "ello", "eso", "aquello", "dicho", "dicha", "dichos", "dichas", "tal", "tales"}
+_ANAPHORA_PAIRS = {("lo", "anterior"), ("lo", "cual"), ("lo", "mismo"), ("todo", "ello"), ("todo", "esto"),
+                   ("por", "ello"), ("por", "eso"), ("segun", "esto"), ("segun", "ello")}
+_DEMONSTRATIVES = {"este", "esta", "estos", "estas", "ese", "esa", "esos", "esas", "aquel", "aquella", "aquellos",
+                   "aquellas", "dicho", "dicha", "dichos", "dichas", "tal", "tales"}
+_RESULT_NOUNS = {"efecto", "efectos", "resultado", "resultados", "hallazgo", "hallazgos", "dato", "datos",
+                 "respuesta", "respuestas", "aumento", "aumentos", "incremento", "incrementos", "reduccion",
+                 "reducciones", "descenso", "descensos", "mejora", "mejoras", "cambio", "cambios", "beneficio",
+                 "beneficios", "observacion", "observaciones", "conclusion", "conclusiones", "relacion",
+                 "asociacion", "tendencia", "patron", "fenomeno", "afirmacion", "punto", "extremo"}
+_ATTRIBUTION_VERBS = {
+    "indica", "indican", "indico", "indicaron", "muestra", "muestran", "mostro", "mostraron", "confirma", "confirman",
+    "confirmo", "confirmaron", "demuestra", "demuestran", "demostro", "demostraron", "respalda", "respaldan",
+    "respaldo", "sostiene", "sostienen", "senala", "senalan", "senalo", "senalaron", "describe", "describen",
+    "describio", "describieron", "observa", "observan", "observo", "observaron", "documenta", "documentan",
+    "documento", "documentaron", "encontro", "encontraron", "establece", "establecen", "establecio", "corrobora",
+    "corroboran", "corroboro", "apoya", "apoyan", "apoyo", "sugiere", "sugieren", "sugirio", "avala", "avalan",
+    "recoge", "recogen", "recogio", "comprobo", "comprobaron", "comprueba", "prueba", "prueban", "probo", "probaron",
+    "refrenda", "atestigua", "constata", "constato", "afirma", "afirman", "afirmo", "concluye", "concluyen",
+    "concluyo", "publica", "publico", "publicaron", "reporta", "reportan", "reporto", "reportaron", "registra",
+    "registraron", "explica", "explican", "explico", "atribuye", "atribuyen", "propone", "proponen", "propuso"}
+
+
+def _anaphoric(words: list[str]) -> bool:
+    """La frase (palabras normalizadas) remite a la anterior: empieza por «así», «esto», «ello», «lo anterior»,
+    «este efecto»...; o dice «lo indica», «lo confirma», «así lo»..."""
+    if not words:
+        return False
+    if words[0] in _ANAPHORA_FIRST or tuple(words[:2]) in _ANAPHORA_PAIRS:
+        return True
+    if words[0] in ("segun", "como") and len(words) > 1 and words[1] in _DEMONSTRATIVES:
+        return True       # «Según este ensayo», «Como estos autores»
+    start = 1 if words[0] in ("y", "e", "pero") else 0
+    if len(words) > start + 1 and words[start] in _DEMONSTRATIVES and words[start + 1] in _RESULT_NOUNS:
+        return True
+    return any((a == "lo" and b in _ATTRIBUTION_VERBS) or (a == "asi" and b in ("lo", "se"))
+               for a, b in zip(words, words[1:]))
+
+
 # ============================================================================ Anexo A
 @dataclass
 class SupportRow:
@@ -926,20 +1104,43 @@ class _Support:
     lines: set[int]           # índices de las líneas de las tablas de respaldo (cabecera, separador y filas)
     stray: list[tuple[int, bool]] = field(default_factory=list)   # filas antes de la cabecera: (línea, negativa)
     hidden: list[tuple[int, bool]] = field(default_factory=list)  # filas en código o en una cita: (línea, negativa)
+    outside: list[tuple[int, bool]] = field(default_factory=list)  # fuera del Anexo A: (línea, es una cabecera)
+
+
+_NEGATIVE_SUPPORT = ("no_respalda", "no_verificable")
+
+
+def _header_cells(cells: list[str]) -> list[str]:
+    return [_plain(re.sub(r"[*_`~]", "", c)) for c in cells]
 
 
 def _support_rows(doc: _Doc) -> _Support:
     """Filas de respaldo del Anexo A: las filas de tabla que siguen, dentro de la sección, a una cabecera con la
     columna Respaldo (aunque haya líneas en blanco entre ellas: una fila no_respalda separada de la tabla también
     cuenta). Las filas anteriores a la cabecera no cuentan como respaldo y se comprueban como texto; las que van en un
-    bloque de código o en una cita («> | R1 | ... |») tampoco cuentan, y se señalan (una negativa, como error)."""
+    bloque de código o en una cita («> | R1 | ... |») tampoco cuentan, y se señalan (una negativa, como error).
+    Fuera del «## Anexo A» (p. ej. en la sección 13, bajo «## Anexo A1» o «## Annex A») una tabla con la columna
+    Respaldo, o una fila con una referencia y una valoración negativa, no cuenta como respaldo y se señala (`outside`):
+    ninguna valoración queda sin leer."""
     rows: list[SupportRow] = []
     issues: list[Issue] = []
     lines: set[int] = set()
     stray: list[tuple[int, bool]] = []
     hidden: list[tuple[int, bool]] = []
+    outside: list[tuple[int, bool]] = []
     header = claim_col = False
-    for start, end in _annex_ranges(doc, r"anexo\s+a\b"):
+    annex = _annex_ranges(doc, r"anexo\s+a\b")
+    in_annex = {i for start, end in annex for i in range(start, end)}
+    for i, line in enumerate(doc.lines):
+        if i in in_annex or doc.in_front_matter(i) or not _is_table_text(line):
+            continue
+        cells = _cells(line.strip().lstrip(">").strip())
+        if "respaldo" in _header_cells(cells):
+            outside.append((i + 1, True))
+        elif (any(_support_value(c) in _NEGATIVE_SUPPORT for c in cells)
+              and any(re.search(r"\bR\d+\b", c) for c in cells)):
+            outside.append((i + 1, False))
+    for start, end in annex:
         cols = None
         for i in range(start + 1, end):
             stripped = doc.lines[i].strip()
@@ -948,7 +1149,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 inner = stripped.lstrip("> \t") if quoted else stripped
                 cells = _cells(inner) if inner.startswith("|") else []
                 if cells and not all(re.fullmatch(r":?-+:?", c) or not c for c in cells):
-                    hidden.append((i + 1, any(_support_value(c) in ("no_respalda", "no_verificable") for c in cells)))
+                    hidden.append((i + 1, any(_support_value(c) in _NEGATIVE_SUPPORT for c in cells)))
                 continue
             if not stripped.startswith("|"):
                 continue
@@ -957,7 +1158,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 if cols is not None:
                     lines.add(i)
                 continue
-            low = [_plain(c) for c in cells]
+            low = _header_cells(cells)
             if "respaldo" in low:
                 cols = {"ref": next((k for k, c in enumerate(low) if c in ("ref", "refs", "referencia", "referencias",
                                                                            "rn")), 0),
@@ -969,7 +1170,7 @@ def _support_rows(doc: _Doc) -> _Support:
                 lines.add(i)
                 continue
             if cols is None:
-                stray.append((i + 1, any(_support_value(c) in ("no_respalda", "no_verificable") for c in cells)))
+                stray.append((i + 1, any(_support_value(c) in _NEGATIVE_SUPPORT for c in cells)))
                 continue
             lines.add(i)
 
@@ -979,14 +1180,14 @@ def _support_rows(doc: _Doc) -> _Support:
             refs = list(dict.fromkeys(re.findall(r"\bR\d+\b", cell("ref"))))
             if not refs:
                 # Una valoración negativa sin referencia no puede quedar sin efecto: error; las demás, aviso.
-                negative = _support_value(cell("value")) in ("no_respalda", "no_verificable")
+                negative = _support_value(cell("value")) in _NEGATIVE_SUPPORT
                 issues.append(Issue("error" if negative else "aviso",
                                     "Fila del Anexo A sin referencia [Rn] reconocible"
                                     + (" (declara no_respalda o no_verificable)" if negative else ""), i + 1))
                 continue
             rows.append(SupportRow(i + 1, refs, cell("claim"), _support_value(cell("value")), cell("value"),
                                    cell("reason")))
-    return _Support(rows, issues, header, claim_col, lines, stray, hidden)
+    return _Support(rows, issues, header, claim_col, lines, stray, hidden, outside)
 
 
 def _fragments(claim: str) -> list[list[str]] | None:
@@ -999,9 +1200,22 @@ def _fragments(claim: str) -> list[list[str]] | None:
     return frags
 
 
-def _find(words: list[str], frag: list[str], start: int) -> list[int]:
+def _word_index(words: list[str]) -> dict[str, list[int]]:
+    index: dict[str, list[int]] = {}
+    for k, word in enumerate(words):
+        index.setdefault(word, []).append(k)
+    return index
+
+
+def _find(words: list[str], frag: list[str], start: int, index: dict[str, list[int]] | None = None) -> list[int]:
+    """Posiciones (desde `start`) en que `frag` aparece en `words`; con `index` (palabra -> posiciones) solo se
+    prueban las posiciones de su primera palabra."""
     n = len(frag)
-    return [k for k in range(start, len(words) - n + 1) if words[k:k + n] == frag]
+    if not n:
+        return []
+    last = len(words) - n
+    candidates = index.get(frag[0], ()) if index is not None else range(start, last + 1)
+    return [k for k in candidates if start <= k <= last and words[k:k + n] == frag]
 
 
 @dataclass
@@ -1016,7 +1230,7 @@ class _Claim:
         n = len(self.span)
         return min(n, max(MIN_ROW_WORDS, math.ceil(MIN_ROW_COVERAGE * n)))
 
-    @property
+    @cached_property
     def key(self) -> tuple[str, ...]:
         """Texto normalizado de la afirmación (dos afirmaciones con el mismo texto son la misma)."""
         return tuple(self.words[k] for k in sorted(self.span))
@@ -1099,23 +1313,31 @@ def _claims(paragraph: list[int], scans: dict[int, _Line], pub_refs: dict[int, l
     return out
 
 
-def _row_coverage(frags: list[list[str]], claim: _Claim) -> int:
-    """Palabras de la afirmación que reproduce la fila: sus fragmentos deben aparecer en orden en el párrafo."""
-    best = 0
-    words = claim.words
-    for first in _find(words, frags[0], 0):
+def _placements(frags: list[list[str]], words: list[str], index: dict[str, list[int]]) -> list[set[int]]:
+    """Posiciones del párrafo que cubre cada colocación de una fila: sus fragmentos, en orden, a partir de cada
+    aparición del primero. Se calculan una vez por fila y párrafo (todas las afirmaciones de un párrafo comparten sus
+    palabras), no una vez por afirmación: el coste no crece con el cubo del número de afirmaciones."""
+    out = []
+    for first in _find(words, frags[0], 0, index):
         covered = set(range(first, first + len(frags[0])))
         pos, ok = first + len(frags[0]), True
         for frag in frags[1:]:
-            hits = _find(words, frag, pos)
+            hits = _find(words, frag, pos, index)
             if not hits:
                 ok = False
                 break
             covered.update(range(hits[0], hits[0] + len(frag)))
             pos = hits[0] + len(frag)
         if ok:
-            best = max(best, len(covered & claim.span))
-    return best
+            out.append(covered)
+    return out
+
+
+def _row_coverage(frags: list[list[str]], claim: _Claim, placements: list[set[int]] | None = None) -> int:
+    """Palabras de la afirmación que reproduce la fila: sus fragmentos deben aparecer en orden en el párrafo."""
+    if placements is None:
+        placements = _placements(frags, claim.words, _word_index(claim.words))
+    return max((len(covered & claim.span) for covered in placements), default=0)
 
 
 # ============================================================================ comprobación sin red
@@ -1263,16 +1485,68 @@ def is_ruminant(species: str | None) -> bool:
 
 
 _GATE_STATE_RE = re.compile(r"\b(superada|bloqueada|no resuelta)\b")
+# Texto tachado («~~no_resuelta~~ superada», <del>, <s>, <strike>): no es lo que el documento declara.
+_STRUCK_RE = re.compile(r"~~.*?~~|<(del|s|strike)\b[^>]*>.*?</\1\s*>", re.IGNORECASE)
+_ROUTE_PHRASE_RE = re.compile(r"\b(?:ruta|via|clasificacion)\s+(?:regulatoria|preliminar|propuesta|de autorizacion)\b")
+_FALLBACK_ROUTES = ("materia_prima", "aditivo_tecnologico", "aditivo_sensorial", "aditivo_nutricional",
+                    "aditivo_zootecnico", "pienso_dietetico", "fuera_de_alcance_medicamento", "fuera_de_alcance_biocida",
+                    "indeterminada")
+
+
+def _unstruck(line: str) -> str:
+    return _STRUCK_RE.sub(" ", line)
+
+
+@lru_cache(maxsize=1)
+def _known_routes() -> tuple[str, ...]:
+    """Rutas regulatorias del esquema de oportunidades (o, si no se puede leer, las de esta versión)."""
+    try:
+        from importlib import resources
+        schema = json.loads(resources.files("nutria.data").joinpath("schemas/oportunidad.schema.json")
+                            .read_text("utf-8"))
+        routes = schema["properties"]["ruta_regulatoria_preliminar"]["enum"]
+        return tuple(dict.fromkeys(list(routes) + list(_FALLBACK_ROUTES)))
+    except Exception:  # noqa: BLE001 - esquema ilegible: se usan las rutas conocidas
+        return _FALLBACK_ROUTES
+
+
+def _declared_routes(lines: list[tuple[int, str]], routes) -> list[tuple[str, int]]:
+    """Rutas que declara la sección 14: en cada bloque (líneas sin una en blanco entre ellas) que nombra la ruta,
+    vía o clasificación regulatoria, la primera ruta conocida que sigue a esa mención (sin el texto tachado).
+    «Ruta regulatoria preliminar: `materia_prima`; se descartó la de aditivo zootécnico» declara materia_prima.
+    [(ruta en forma normalizada, línea)]."""
+    plain_routes = sorted({_plain(r) for r in routes if r}, key=len, reverse=True)
+    if not plain_routes:
+        return []
+    route_re = re.compile(r"\b(" + "|".join(re.escape(r) for r in plain_routes) + r")\b")
+    blocks: list[list[tuple[int, str]]] = [[]]
+    for idx, line in lines:
+        if line.strip():
+            blocks[-1].append((idx, line))
+        elif blocks[-1]:
+            blocks.append([])
+    out = []
+    for block in blocks:
+        if not block:
+            continue
+        text = _plain(" ".join(_unstruck(line) for _idx, line in block))
+        for phrase in _ROUTE_PHRASE_RE.finditer(text):
+            m = route_re.search(text, phrase.end())
+            if m:
+                out.append((m.group(1), block[0][0]))
+                break
+    return out
 
 
 def _stated_gate_states(lines: list[tuple[int, str]], gate_ids) -> list[tuple[str, str, int]]:
     """Estados de compuerta que declara la sección 14: [(compuerta, estado, línea)]. En las filas de tabla cuya
     primera celda es una compuerta, el estado es el primero que aparece después (como en la tabla que genera
     `nutria informe nuevo`); en cualquier otra línea, el primer estado que sigue a cada mención de una compuerta, antes
-    de la mención siguiente («seguridad: superada; etica: bloqueada»). Las mismas líneas sirven para comprobar que la
-    sección recoge el estado de cada compuerta y para contrastarlo con el registro."""
+    de la mención siguiente («seguridad: superada; etica: bloqueada»). El texto tachado no cuenta. Las mismas líneas
+    sirven para comprobar que la sección recoge el estado de cada compuerta y para contrastarlo con el registro."""
     out = []
     for idx, line in lines:
+        line = _unstruck(line)
         stripped = line.strip().lstrip(">").strip()
         if stripped.startswith("|"):
             cells = [_plain(c).strip("` ") for c in _cells(stripped)]
@@ -1350,16 +1624,99 @@ def _gate_registry_issues(conn, doc: _Doc, reg: _RegistryOpportunity, lines: lis
         return [Issue(sev, f"No se pudo leer el estado de las compuertas de {opp_id} en el registro ({exc})")]
     out = []
     route = opp.get("regulatory_route")
-    if route and not re.search(rf"\b{re.escape(_plain(route))}\b", _plain("\n".join(line for _i, line in lines))):
-        out.append(Issue(sev, f"La sección 14 no recoge la ruta regulatoria que el registro tiene para {opp_id} "
-                              f"(«{route}»): actualiza la sección o la clasificación de la oportunidad",
-                         lines[0][0] if lines else None))
+    if route:
+        declared = _declared_routes(lines, _known_routes() + (route,))
+        for stated, idx in declared:
+            if stated != _plain(route):
+                out.append(Issue(sev, f"La sección 14 declara la ruta regulatoria «{stated.replace(' ', '_')}», pero el "
+                                      f"registro tiene «{route}» para {opp_id} (cuenta la primera ruta que sigue a «ruta "
+                                      "regulatoria»): actualiza la sección o la clasificación de la oportunidad",
+                                 idx + 1))
+        if not declared:
+            out.append(Issue(sev, f"La sección 14 no recoge la ruta regulatoria que el registro tiene para {opp_id} "
+                                  f"(«{route}»; escríbela tras «Ruta regulatoria»): actualiza la sección o la "
+                                  "clasificación de la oportunidad", lines[0][0] + 1 if lines else None))
     for gate, stated, idx in _stated_gate_states(lines, gate_ids):
         real = effective.get(gate)
         if real and stated != real:
             out.append(Issue(sev, f"La sección 14 dice «{stated}» para la compuerta {gate}, pero su estado efectivo en "
                                   f"el registro de {opp_id} es «{real}» («superada» solo cuenta con firma humana; una "
                                   "propuesta «bloqueada» actúa de inmediato): actualiza la sección", idx + 1))
+    return out
+
+
+def _label_refs(plines: list[int], scans: dict[int, _Line], by_line: dict[int, list[list[str] | None]]
+                ) -> list[tuple[int, list[str] | None]]:
+    """Referencias de cada etiqueta de un párrafo: las [Rn] de su segmento (hasta la etiqueta siguiente o el final de
+    la frase, aunque estén en la línea siguiente: «... [PUB]\n[R1].») y, para la primera etiqueta de la frase, también
+    las que la preceden en esa frase («Según [R1] [PUB] ...»). Rellena `by_line` (línea -> referencias de cada
+    etiqueta de la línea, en orden; None si no es [PUB]) y devuelve [(línea, referencias o None)] por etiqueta."""
+    seq = [(j, kind, value) for j in plines for kind, value, _pos in scans[j].tokens
+           if kind in ("label", "ref") or (kind == "stop" and value in ".!?")]
+    out: list[tuple[int, list[str] | None]] = []
+    sentence_start = 0
+    first_in_sentence = True
+    for t, (j, kind, value) in enumerate(seq):
+        if kind == "stop":
+            sentence_start, first_in_sentence = t + 1, True
+            continue
+        if kind != "label":
+            continue
+        refs: list[str] = []
+        if first_in_sentence:
+            refs = [v for _j, k, v in seq[sentence_start:t] if k == "ref"]
+            first_in_sentence = False
+        k = t + 1
+        while k < len(seq) and seq[k][1] == "ref":      # el segmento: las [Rn] hasta la etiqueta o el punto siguiente
+            refs.append(seq[k][2])
+            k += 1
+        entry = list(dict.fromkeys(refs)) if value == "PUB" else None
+        by_line.setdefault(j, []).append(entry)
+        out.append((j, entry))
+    return out
+
+
+def _sentences(para: list[int], scans: dict[int, _Line]) -> list[tuple[list[str], list[tuple[str, int]]]]:
+    """Frases de un párrafo (hasta «.», «!» o «?»): [(palabras normalizadas, [(etiqueta, línea)])]."""
+    out: list[tuple[list[str], list[tuple[str, int]]]] = [([], [])]
+    for j in para:
+        scan = scans.get(j)
+        if scan is None:
+            continue
+        for kind, value, _pos in scan.tokens:
+            if kind == "word":
+                out[-1][0].append(value)
+            elif kind == "label":
+                out[-1][1].append((value, j))
+            elif kind == "stop" and value in ".!?":
+                out.append(([], []))
+    return [s for s in out if s[0] or s[1]]
+
+
+def _anaphora_issues(doc: _Doc, paragraphs: list[list[int]], scans: dict[int, _Line], sev: str) -> list[Issue]:
+    """Una frase con [PUB] que remite a la anterior («Así lo indica el ensayo», «Esto se observó...», «Este efecto...»,
+    «... lo confirma») cuando la frase anterior (del mismo párrafo, o la última del párrafo inmediatamente anterior)
+    no lleva etiqueta: la afirmación real quedaría sin etiqueta y el Anexo A solo comprobaría la frase de la [PUB]."""
+    out: list[Issue] = []
+    previous: tuple[bool, list[str], int] | None = None    # (tiene etiqueta, palabras, última línea del párrafo)
+    for para in paragraphs:
+        first = para[0]
+        if doc.heading_at(first) or doc.fence[first] or _is_table_text(doc.lines[first]):
+            previous = None
+            continue
+        if previous is not None and any(doc.lines[k].strip() for k in range(previous[2] + 1, first)):
+            previous = None                                 # no son párrafos contiguos
+        prev = previous[:2] if previous is not None else None
+        for words, labels in _sentences(para, scans):
+            pub_lines = [line for name, line in labels if name == "PUB"]
+            if pub_lines and prev is not None and not prev[0] and _anaphoric(words[:8]):
+                excerpt = " ".join(prev[1])
+                excerpt = excerpt if len(excerpt) <= 80 else excerpt[:77] + "..."
+                out.append(Issue(sev, f"La afirmación [PUB] remite a la frase anterior («{excerpt}»), que no lleva "
+                                      "etiqueta: escribe la afirmación en la frase de su etiqueta (el Anexo A comprueba "
+                                      "esa frase) o etiqueta también la frase anterior", pub_lines[0] + 1))
+            prev = (bool(labels), words)
+        previous = (prev[0], prev[1], para[-1]) if prev is not None else None
     return out
 
 
@@ -1459,9 +1816,11 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     record_lines: set[int] = set()
     for start, end in records:
         record_lines |= set(range(start, end))
-    no_numbers = {i for i, lvl, _ in doc.headings if lvl == 1} | record_lines
-    # En la sección 1 solo queda exenta de la comprobación de cifras la línea que repite el título del informe.
-    titles = {tuple(_norm_words(title)) for _i, lvl, title in doc.headings if lvl == 1}
+    # Exentos de la comprobación de cifras: el título (el primer encabezado de nivel 1; otro «# ...» del cuerpo se
+    # comprueba) y, en la sección 1, la línea que lo repite.
+    title_heading = [(i, title) for i, lvl, title in doc.headings if lvl == 1][:1]
+    no_numbers = {i for i, _title in title_heading} | record_lines
+    titles = {tuple(_norm_words(title)) for _i, title in title_heading}
     for i in numbered.get(1, [])[:1]:
         for j in range(i + 1, doc.section_end(i, 2)):
             if doc.lines[j].strip() and tuple(_norm_words(doc.lines[j])) in titles:
@@ -1495,55 +1854,59 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             if raw != f"[{name}]":
                 issues.append(Issue("aviso", f"Etiqueta «{raw}» con formato no canónico: cuenta como [{name}]; "
                                              f"escribe [{name}]", i + 1))
-        pub_refs: list[str] = []
-        if scan.labels:
-            # Las [Rn] de una etiqueta son las de su segmento (hasta la etiqueta siguiente o el final de la frase) y,
-            # para la primera, las que la preceden en la misma frase («Según [R1] [PUB] ...»).
-            stops = [pos for kind, value, pos in scan.tokens if kind == "stop" and value in ".!?"]
-            first_pos = scan.labels[0][0]
-            last_stop = max((p for p in stops if p < first_pos), default=-1)
-            prefix = [r for p, r in scan.refs if last_stop < p < first_pos]
-            by_label: list[list[str] | None] = []
-            for k, (pos, name, _raw) in enumerate(scan.labels):
-                end = scan.labels[k + 1][0] if k + 1 < len(scan.labels) else len(scan.text)
-                end = min([end] + [p for p in stops if p > pos])
-                seg = list(dict.fromkeys([r for p, r in scan.refs if pos <= p < end] + (prefix if k == 0 else [])))
-                by_label.append(seg if name == "PUB" else None)
-                if name == "PUB":
-                    if not seg:
-                        issues.append(Issue("error", "Afirmación [PUB] sin referencia [Rn] (cada [PUB] necesita su "
-                                                     "propio [Rn] antes de la etiqueta siguiente)", i + 1))
-                    pub_refs += seg
-            pub_refs_by_label[i] = by_label
-        if pub_refs:
-            pub_lines.append((i, list(dict.fromkeys(pub_refs))))
         if any(name == "DER" for _p, name, _r in scan.labels) and not re.search(
                 r"c[aá]lculo|nutria |script|anexo c|\[R\d+\]", scan.text, re.IGNORECASE):
             issues.append(Issue("aviso", "[DER] sin indicar el cálculo u orden usada", i + 1))
-        if not scan.refs and any(rx.search(scan.text) for rx in AUTHOR_YEAR_RES):
-            issues.append(Issue("error", "Cita autor-año sin referencia [Rn] verificable", i + 1))
+        if not doc.fence[i]:
+            numeric = NUMERIC_CITATION_RE.search(scan.text)
+            if numeric:
+                issues.append(Issue("error", f"Cita numérica «{numeric.group(0)}»: no se puede verificar; cita con "
+                                             "[Rn] y su entrada en la bibliografía (sección 20)", i + 1))
         m = ENTRY_RE.match(line)
         if m and ID_HINT_RE.search(m.group(2)):
             issues.append(Issue(sev_unverified, f"Entrada bibliográfica [{m.group(1)}] fuera de la bibliografía: no "
                                                 "se verifica; muévela a la sección 20", i + 1))
             stray_entries.add(i)
-    # Cifras con unidades y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?») puede ocupar varias
-    # líneas de un párrafo, y una línea puede tener varias frases; cada frase con una cifra necesita una etiqueta o
-    # una referencia, y cada frase con una referencia, una etiqueta.
+    # Cifras con unidades, citas autor-año y referencias sin etiqueta, por frase: una frase (hasta «.», «!» o «?»)
+    # puede ocupar varias líneas de un párrafo, y una línea puede tener varias frases. Las cifras y las citas se buscan
+    # en el texto del párrafo entero (una cifra y su unidad partidas por un salto de línea siguen siendo una cifra con
+    # unidades) y, en las tablas, también por su estructura (unidad en la cabecera o en otra celda; «Autor Año» en
+    # una columna de estudios). Cada frase con una cifra necesita una etiqueta o una referencia; cada frase con una
+    # referencia, una etiqueta; y cada frase con una cita autor-año, su [Rn].
     paragraphs = _paragraphs(doc, body)
+    table_extra = _table_events(doc, body, scans, no_numbers)
+    uncited: list[int] = []
+    pub_by_line: dict[int, list[str]] = {}
     for para in paragraphs:
-        events: list[tuple[int, int, str]] = []
-        for j in para:
-            scan = scans.get(j)
-            if scan is None:
+        joined, starts, plines = _joined(para, scans)
+        if not plines:
+            continue
+        for j, refs in _label_refs(plines, scans, pub_refs_by_label):
+            if refs is None:
                 continue
-            for kind, value, pos in scan.tokens:
+            if not refs:
+                issues.append(Issue("error", "Afirmación [PUB] sin referencia [Rn] (cada [PUB] necesita su propio [Rn] "
+                                             "antes de la etiqueta siguiente, en la misma frase)", j + 1))
+            pub_by_line.setdefault(j, []).extend(refs)
+        events: list[tuple[int, int, str]] = []
+        for j in plines:
+            for kind, value, pos in scans[j].tokens:
                 if kind in ("label", "ref"):
                     events.append((j, pos, kind))
                 elif kind == "istop" or (kind == "stop" and value in ".!?"):
                     events.append((j, pos, "stop"))
-            if j not in no_numbers:
-                events += [(j, m.start(), "unit") for m in UNIT_RE.finditer(scan.text)]
+            events += [(j, pos, kind) for pos, kind in table_extra.get(j, [])]
+        in_table = _is_table_text(doc.lines[plines[0]])
+        for m in UNIT_RE.finditer(joined):
+            j, pos = _locate(m.start(), starts, plines)
+            # En una tabla, «Semana 4 (kg/d)» es una cabecera con su unidad; las cifras de sus columnas se cuentan
+            # por la estructura de la tabla.
+            if j in no_numbers or (in_table and "(" in m.group(0)):
+                continue
+            events.append((j, pos, "unit"))
+        for end in _citation_ends(joined):
+            j, pos = _locate(end, starts, plines)
+            events.append((j, pos, "cite"))
         events.sort(key=lambda e: (e[0], e[1]))
         sentence: list[tuple[int, int, str]] = []
         for ev in events + [(-1, -1, "stop")]:
@@ -1557,7 +1920,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 refs_at = [j for j, _p, kind in sentence if kind == "ref"]
                 if refs_at and not all(j in record_lines or j in stray_entries for j in refs_at):
                     unlabeled_refs.append(refs_at[0] + 1)
+            if "cite" in kinds and "ref" not in kinds:
+                uncited.append(next(j for j, _p, kind in sentence if kind == "cite") + 1)
             sentence = []
+    pub_lines = [(j, list(dict.fromkeys(refs))) for j, refs in sorted(pub_by_line.items()) if refs]
+    for line_no in dict.fromkeys(uncited):
+        issues.append(Issue("error", "Cita autor-año sin referencia [Rn] verificable en la misma frase: añade su [Rn] "
+                                     "(y su entrada en la bibliografía) o reescribe la frase sin la cita", line_no))
     for n, line_no in enumerate(unlabeled):
         if n < 10:
             issues.append(Issue(sev_strict, "Cifra con unidades sin etiqueta de evidencia ni referencia", line_no))
@@ -1617,6 +1986,11 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                             "Fila del Anexo A dentro de un bloque de código o de una cita: no cuenta como respaldo"
                             + ("; declara que una fuente no respalda una afirmación o no es verificable, y esa "
                                "valoración no puede quedar fuera de la tabla" if negative else ""), line_no))
+    for line_no, is_header in support.outside:
+        issues.append(Issue("error", ("Tabla de respaldo (columna Respaldo) fuera del Anexo A" if is_header else
+                                      "Fila con una referencia y una valoración de respaldo negativa fuera del Anexo A")
+                            + ": no cuenta como respaldo y ninguna valoración puede quedar sin leer; las filas de "
+                              "respaldo van en la tabla de la sección «## Anexo A»", line_no))
     if support.header and not support.claim_col:
         issues.append(Issue(sev_strict, "La tabla del Anexo A no tiene la columna Afirmación: el respaldo se "
                                         "comprueba por afirmación, no por referencia"))
@@ -1644,6 +2018,17 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     assigned: dict[tuple[int, str], list[SupportRow]] = {}
     ambiguous: dict[tuple[int, str], list[int]] = {}
     handled: set[int] = set()
+    indexes: dict[int, dict[str, list[int]]] = {}
+    placed: dict[tuple[int, int], list[set[int]]] = {}
+
+    def placements(row: SupportRow, frags: list[list[str]], claim: _Claim) -> list[set[int]]:
+        key = (row.line, id(claim.words))
+        if key not in placed:
+            index = indexes.get(id(claim.words))
+            if index is None:
+                index = indexes[id(claim.words)] = _word_index(claim.words)
+            placed[key] = _placements(frags, claim.words, index)
+        return placed[key]
     for r in rows:
         frags = frags_of[r.line]
         if not frags or r.value not in SUPPORT_VALUES:
@@ -1652,7 +2037,7 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             scored = []
             for idx, claim in enumerate(claims):
                 if ref in claim.refs:
-                    covered = _row_coverage(frags, claim)
+                    covered = _row_coverage(frags, claim, placements(r, frags, claim))
                     if covered >= max(1, claim.needed):
                         scored.append((Fraction(covered, max(1, len(claim.span))), idx))
             if not scored:
@@ -1705,6 +2090,10 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
         issues.append(Issue(row_sev(r), f"Fila del Anexo A ({', '.join(r.refs)}, {r.value}) que no corresponde a "
                                         "ninguna afirmación [PUB] actual con esa referencia: si la afirmación se "
                                         "reformuló, actualiza la fila y comprueba la nueva versión", r.line))
+
+    # ---- [PUB] que remite a una frase anterior sin etiqueta («La colina aumenta la leche. Así lo indica el ensayo
+    # [PUB] [R1].»): la afirmación quedaría sin etiqueta y la fila del Anexo A solo reproduciría «así lo indica».
+    issues += _anaphora_issues(doc, paragraphs, scans, sev_strict)
 
     # ---- registro: oportunidad del front matter y fuentes
     reg = _registry_opportunity(conn, doc) if conn is not None else None

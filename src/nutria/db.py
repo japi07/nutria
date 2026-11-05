@@ -706,6 +706,10 @@ def add_report_review(conn: sqlite3.Connection, report: str, digest: str, review
                             "`nutria informe revisar` en su propia terminal")
     if not reviewer or not reviewer.strip():
         raise RegistryError("La revisión humana exige el nombre de la persona que revisó el informe")
+    from .reports.check import reviewer_name_problem      # aquí: check importa db
+    problem = reviewer_name_problem(reviewer)
+    if problem:
+        raise RegistryError(f"No se registra la revisión: {problem}")
     if not digest or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise RegistryError("Huella del informe no válida")
     _ensure_report_reviews(conn)

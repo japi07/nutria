@@ -950,8 +950,8 @@ def _review_report(args, cfg) -> int:
     """`nutria informe revisar`: una persona registra que revisó el contenido exacto del informe."""
     import os
     from .reports.check import (check_report, front_matter_value, is_report_path, report_key, review_digest,
-                                set_front_matter_fields, status_info, REVIEW_CODE)
-    signer = (getattr(args, "firma_humana", None) or "").strip()
+                                reviewer_name_problem, set_front_matter_fields, status_info, REVIEW_CODE)
+    signer = " ".join((getattr(args, "firma_humana", None) or "").split())
     if not signer:
         raise SystemExit("La revisión humana exige --firma-humana NOMBRE: solo la registra la persona que revisó el "
                          "informe, en su propia terminal")
@@ -959,6 +959,9 @@ def _review_report(args, cfg) -> int:
                                                                                   "CLAUDE_CODE_ENTRYPOINT")):
         raise SystemExit("La revisión humana no la registra un agente: la persona que revisó el informe ejecuta la orden "
                          "en su propia terminal (fuera de Claude Code), sin --agente ni NUTRIA_AGENT")
+    problem = reviewer_name_problem(signer)
+    if problem:
+        raise SystemExit(f"No se registra la revisión: {problem}")
     path = Path(args.archivo)
     conn = _report_registry(cfg, path)
     if conn is None:

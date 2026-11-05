@@ -1005,8 +1005,11 @@ def test_section_14_gate_states_must_match_the_registry(project):
     assert any("no declara la oportunidad" in e for e in _errors(missing, conn=_conn(), path=path))
     other_route = re.sub(r"(?m)^Ruta regulatoria preliminar del registro: .*$",
                          "Ruta regulatoria preliminar: `aditivo_zootecnico` [SUP].", final)
-    assert any("no recoge la ruta regulatoria que el registro tiene para O-0001 («indeterminada»)" in e
+    assert any("declara la ruta regulatoria «aditivo_zootecnico», pero el registro tiene «indeterminada»" in e
                for e in _errors(other_route, conn=_conn(), path=path))
+    no_route = re.sub(r"(?m)^Ruta regulatoria preliminar del registro: .*$", "Clasificación pendiente [DESC].", final)
+    assert any("no recoge la ruta regulatoria que el registro tiene para O-0001 («indeterminada»" in e
+               for e in _errors(no_route, conn=_conn(), path=path))
 
 
 def test_section_14_gate_states_in_any_wording_are_checked_against_the_registry(project):
