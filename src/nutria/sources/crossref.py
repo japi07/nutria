@@ -8,8 +8,9 @@ nunca en False: que Crossref no traiga aviso no demuestra que el trabajo no est�
 
 Licencia: el campo `license` de Crossref es una lista de URL con su `content-version` (`vor`, versión publicada;
 `am`, manuscrito aceptado; `tdm`, minería de textos; `unspecified`) y su `delay-in-days` (embargo). `extra["license"]`
-guarda la de la versión publicada si existe (si no, la del manuscrito aceptado y la no especificada); una licencia
-solo de minería de textos (`tdm`) no es la del artículo y no se toma como tal. `extra["licenses"]` guarda todas.
+guarda la de la versión publicada si existe (si no, la del manuscrito aceptado y la no especificada, indicándolo entre
+paréntesis, igual que un embargo: "<URL> (manuscrito aceptado; embargo: 365 días)"); una licencia solo de minería de
+textos (`tdm`) no es la del artículo y no se toma como tal. `extra["licenses"]` guarda todas.
 Para comprobar la cita, `extra` guarda además los apellidos de los autores (`families`), los subtítulos, los demás
 títulos del registro y el título original (`alternative_titles`: revistas bilingües y traducciones) y los títulos de
 la revista (completos y abreviados).
@@ -78,14 +79,31 @@ def licenses(msg: dict) -> list[dict]:
     return out
 
 
+def _delay(entry: dict) -> int:
+    try:
+        return max(0, int(entry.get("delay_days") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+_VERSION_NOTES = {"am": "manuscrito aceptado", "unspecified": "versión no especificada"}
+
+
 def best_license(msg: dict) -> str | None:
     """URL de la licencia de la versión publicada (o la mejor disponible según `_LICENSE_PREFERENCE`); None si solo
-    hay licencias de minería de textos o ninguna."""
+    hay licencias de minería de textos o ninguna. Si no es la de la versión publicada o tiene embargo, lo dice entre
+    paréntesis tras la URL ("... (manuscrito aceptado; embargo: 365 días)"): la licencia CC del manuscrito aceptado
+    de un artículo de suscripción no es la del artículo publicado. Entre varias de la misma versión, la que se aplica
+    antes."""
     found = licenses(msg)
     for version in _LICENSE_PREFERENCE:
-        for entry in found:
-            if entry["version"].lower() == version:
-                return entry["url"]
+        entries = [entry for entry in found if entry["version"].lower() == version]
+        if entries:
+            entry = min(entries, key=_delay)
+            notes = [_VERSION_NOTES[version]] if version in _VERSION_NOTES else []
+            if _delay(entry):
+                notes.append(f"embargo: {_delay(entry)} días")
+            return entry["url"] + (f" ({'; '.join(notes)})" if notes else "")
     return None
 
 

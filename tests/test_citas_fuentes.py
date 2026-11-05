@@ -965,6 +965,14 @@ def test_licencias_de_crossref_openalex_y_datacite():
     tdm_only = crossref.parse(cr_msg(DOI, license=[{"URL": "https://www.elsevier.com/tdm/userlicense/1.0/",
                                                     "content-version": "tdm"}]))
     assert tdm_only.extra["license"] is None      # minería de textos no es la licencia del artículo
+    # artículo de suscripción: la CC es solo del manuscrito aceptado y tras el embargo; se dice así
+    am = crossref.parse(cr_msg(DOI, license=[
+        {"URL": "https://www.elsevier.com/tdm/userlicense/1.0/", "content-version": "tdm", "delay-in-days": 0},
+        {"URL": "http://creativecommons.org/licenses/by-nc-nd/4.0/", "content-version": "am", "delay-in-days": 365}]))
+    assert am.extra["license"] == "http://creativecommons.org/licenses/by-nc-nd/4.0/ (manuscrito aceptado; embargo: 365 días)"
+    from nutria.cli import _license_label
+    assert _license_label(am.extra["license"]) == "CC BY-NC-ND 4.0 (manuscrito aceptado; embargo: 365 días)"
+    assert _license_label("https://creativecommons.org/licenses/by/4.0/") == "CC BY 4.0"
     best = openalex.parse({"id": "W1", "best_oa_location": {"license": "cc-by-nc"},
                            "primary_location": {"license": "cc-by"}})
     assert best.extra["license"] == "cc-by-nc"

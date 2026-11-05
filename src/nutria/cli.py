@@ -234,14 +234,18 @@ def _license_label(value) -> str:
     if not value:
         return "?"
     text = str(value).strip()
+    qualifier = re.search(r"\s(\([^()]*\))\s*$", text)       # "(manuscrito aceptado; embargo: 365 días)"
+    note = f" {qualifier.group(1)}" if qualifier else ""
+    if qualifier:
+        text = text[:qualifier.start()].strip()
     match = re.search(r"creativecommons\.org/licenses/([a-z-]+)/(\d(?:\.\d)?)", text, re.IGNORECASE)
     if match:
-        return f"CC {match.group(1).upper()} {match.group(2)}"
+        return f"CC {match.group(1).upper()} {match.group(2)}{note}"
     if re.search(r"creativecommons\.org/publicdomain/zero|^cc0", text, re.IGNORECASE):
-        return "CC0"
+        return "CC0" + note
     if re.fullmatch(r"cc-by(?:-[a-z]{2})*", text, re.IGNORECASE):
-        return "CC " + text[3:].upper()
-    return text if len(text) <= 40 else text[:37] + "..."
+        return "CC " + text[3:].upper() + note
+    return (text if len(text) <= 40 else text[:37] + "...") + note
 
 
 def _change_lines(changes: list[dict]) -> list[str]:
