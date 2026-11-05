@@ -515,6 +515,29 @@ BLOQUEADAS = [
     "dtach -n /tmp/s nutria estado",
     "ssh -tt localhost nutria estado",
     "ssh -o RequestTTY=force localhost nutria estado",
+    # revisión de la ronda 2: terminal propia y entorno vacío con formas que el hook no reconocía aunque se escriban
+    # literalmente (su -P, script desde una lista de Python, env con otras opciones delante, exec -a, pty importado)
+    "su -P root -c 'nutria estado'",
+    "/bin/su - root -c 'nutria estado'",
+    "(python3 -c \"import os; os.execve('/bin/su', ['su','-P','-','root','-c','nutria estado'], {})\" &)",
+    "python3 -c \"import subprocess; subprocess.run(['su', '--pty', 'root'])\"",
+    "(python3 -c \"import os; os.execve('/usr/bin/script', ['script','-qc','nutria estado','/dev/null'], "
+    "{'PATH':'/usr/bin:/bin'})\" &)",
+    "python3 -c \"import subprocess; subprocess.run(['script', '-qc', 'nutria estado', '/dev/null'])\"",
+    "python3 -c \"__import__('pty').spawn(['sh','-c','nutria estado'])\"",
+    "python3 -c \"import importlib; importlib.import_module('pty').spawn('sh')\"",
+    "python3 -c \"from pty import spawn; spawn('sh')\"",
+    "env --ignore-env PATH=/usr/bin:/bin python3 -m nutria estado",
+    "env --i PATH=/usr/bin nutria estado",
+    "env -C /tmp -i PATH=/usr/bin:/bin python3 -m nutria estado",
+    "env --chdir /tmp -i PATH=/usr/bin python3 -m nutria estado",
+    "env --chdir=/tmp -vi nutria estado",
+    "env -S '-i PATH=/usr/bin python3 -m nutria estado'",
+    "exec -a x -c python3 -m nutria estado",
+    "exec -l -a x -c nutria estado",
+    "python3 -c \"import os; os.execve('/usr/bin/python3', ['python3','-m','nutria','estado'], {})\"",
+    "python3 -c \"import subprocess; subprocess.run(['nutria', 'estado'], env={})\"",
+    "pkexec nutria estado",
     # registro por fuera de la CLI
     "sqlite3 research/nutria.sqlite \"UPDATE gates SET human_signoff='Ana'\"",
     "python3 -c \"import sqlite3; sqlite3.connect('research/nutria.sqlite').execute('DELETE FROM decisions')\"",
@@ -554,6 +577,51 @@ BLOQUEADAS = [
     "git rm -r research",
     "git rm --cached research/nutria.sqlite",
     "git mv research/procedencia.jsonl /tmp/p.jsonl",
+    # revisión de la ronda 2: comodines que cubren el registro, find que borra research/, pathspecs mágicos y
+    # abreviaturas de las opciones de git (git las acepta: reset --ha es --hard)
+    "rm -f research/*.sqlite research/*.jsonl",
+    "rm -f research/nutria.sq*",
+    "rm research/{nutria.sqlite,x}",
+    "truncate -s 0 research/proc*.jsonl",
+    "shred -u research/p?ocedencia.jsonl",
+    "cp /dev/null research/*.jsonl",
+    "rm -f */*.sqlite",
+    ": > research/proc*.jsonl",
+    "cd research && rm -f *.sqlite",
+    "cd research; truncate -s 0 *",
+    "python3 -c \"import glob, os; [os.remove(f) for f in glob.glob('research/*.sqlite')]\"",
+    "find research -name '*.sqlite' -delete",
+    "find . -name 'nutria.sq*' -exec rm {} +",
+    "find research -mindepth 1 -delete",
+    "find research/ -type f -delete",
+    "find ./research -not -name '*.md' -delete",
+    "find . -path '*/research/*' -delete",
+    "git restore --source=HEAD~1 '*.sqlite'",
+    "git checkout HEAD~2 -- ':/research'",
+    "git restore -s HEAD~2 :/research",
+    "git checkout HEAD -- ':(top)research'",
+    "git checkout -- ':!src'",
+    "git restore :/",
+    "git checkout-index -a -f",
+    "git read-tree -u --reset HEAD",
+    "cd research && git checkout HEAD~3 -- nutria.sq*",
+    "git reset --ha",
+    "git reset --har HEAD~1",
+    "git reset --h",
+    "git reset --merg HEAD~1",
+    "git checkout --forc main",
+    "git checkout -qf main",
+    "git switch --discard main",
+    "git switch --force main",
+    "git restore --wor src/",
+    # lo que borraría el reflog con el que `procedencia verificar` detecta la historia reescrita
+    "git reflog expire --expire=now --all",
+    "git reflog delete HEAD@{1}",
+    "git -c gc.reflogExpire=now -c gc.reflogExpireUnreachable=now gc --prune=now",
+    "git config core.logAllRefUpdates false",
+    "git update-ref refs/heads/main HEAD~3",
+    "rm -rf .git/logs",
+    "rm -rf .git",
     # falsos positivos aceptados (hay alternativa): el texto '--firma' dentro de un motivo y leer la procedencia con
     # Python (usa `nutria procedencia --json` o un cat/tail simple)
     "nutria --agente director-cientifico decision registrar --decision d --motivo 'falta --firma de la persona'",
@@ -567,6 +635,15 @@ BLOQUEADAS = [
     "cat ~/.config/./nutria/k",
     "cat ~/.config//nutria/k",
     "cat \"${XDG_CONFIG_HOME:-$HOME/.config}\"/nut*/*",
+    "cd ~/.config && cat nutria/*",                           # ronda 3: cd en .config y comodines en la ruta
+    "pushd $HOME/.config; cat nutria/k",
+    "cat ~/.con*/nut*/*",
+    "cat ~/.c?nfig/n*/c*",
+    "head -c 100 ~/.*/nutria/k",
+    "grep -r HMAC ~/.config",
+    "find ~/.config -type f",
+    "tar czf /tmp/c.tgz ~/.config/",
+    "find / -name 'clave*'",
     "echo $NUTRIA_CLAVE_SELLO",
     "python3 -c \"from nutria import sello; print(sello.sign({}))\"",
     "python3 -c \"import nutria.sello\"",
@@ -625,6 +702,31 @@ PERMITIDAS = [
     "head -c 200 research/procedencia.jsonl",
     "cat research/nutria.sqlite | head -c 16",
     "nutria --agente desarrollo-industrial puntuar compuerta O-0001 analitica superada --motivo m --datos=$F",
+    # ronda 3: lo que no debe confundirse con las reglas nuevas (su, script, env, exec, comodines, git, .config)
+    "nutria --agente director-cientifico decision registrar --entidad O-0001 --decision 'ajustar su dosis' "
+    "--motivo 'su efecto depende de la dieta basal'",
+    "nutria buscar pubmed \"script-based screening of rumen modifiers\" --max 25",
+    "nutria buscar pubmed \"(su OR 'sulfonylurea') AND rumen\" --max 25",
+    "env LC_ALL=C grep -i rumen notas.md | head",
+    "env PYTHONPATH=src python3 -i -c 'print(1)' </dev/null",
+    "exec 3>&1; nutria estado",
+    "rm -f /tmp/x/*.sqlite",
+    "rm -rf build/* dist/*",
+    "rm -f *.log",
+    "cp research/revisiones/*.md /tmp/copia/",
+    "ls research/*.jsonl > /tmp/lista.txt",
+    "find . -name '*.pyc' -delete",
+    "find research/datos/tmp -type f -delete",
+    "find research -name '*.md' -newer x",
+    "git restore --staged src/nutria/cli.py",
+    "git checkout -- 'src/*.py'",
+    "git log --all --oneline -- research/",
+    "git reset --soft HEAD~1",                         # reescribe la historia sin descartar cambios: lo detecta verificar
+    "git commit --amend -m 'mensaje corregido'",
+    "git reflog -n 5",
+    "ls -la ~/.config/",
+    "cat ~/.config/git/config",
+    "ls ~/.*rc",
 ]
 
 
@@ -689,6 +791,24 @@ def _subagente(agent_type: str, command: str) -> dict:
     ("evaluador-independiente", "nutria --agente director-cientifico puntuar ranking"),
     ("evaluador-independiente", "python3 -c \"from nutria.cli import main; main(['puntuar', 'ranking'])\""),
     ("evaluador-independiente", "strings research/nutria.sqlite | grep evaluador"),
+    # ronda 3: NUTRIA_AGENT fijado sin escribir `NUTRIA_AGENT=` (set -a, read, printf -v, export de un nombre
+    # construido) o leído de un fichero: cada orden nutria de un subagente lleva --agente, que prevalece
+    ("critico-red-team", "set -a; read NUTRIA_AGENT <<< evaluador-1; nutria puntuar registrar --datos p.json"),
+    ("critico-red-team", "set -a; printf -v NUTRIA_AGENT evaluador-1; nutria puntuar registrar --datos p.json"),
+    ("critico-red-team", "V=NUTRIA_AGENT; export $V=evaluador-1; nutria puntuar registrar --datos p.json"),
+    ("critico-red-team", "V=NUTRIA_; export ${V}AGENT=evaluador-1; nutria --agente critico-red-team estado"),
+    ("critico-red-team", "V=NUTRIA_; read ${V}AGENT <<< x; nutria --agente critico-red-team estado"),
+    ("critico-red-team", "set -o allexport; . ./vars.sh; nutria --agente critico-red-team estado"),
+    ("critico-red-team", ". ./vars.sh && nutria puntuar registrar --datos p.json"),
+    ("critico-red-team", "nutria oportunidad ver O-0001 --sin-puntuaciones --json"),     # antes permitido: sin --agente
+    ("critico-red-team", "echo \"$(nutria estado)\"; nutria --agente critico-red-team estado"),
+    ("critico-red-team", "X=nutria; $X puntuar registrar --datos p.json"),
+    # git: un subagente no reescribe la historia ni mueve referencias
+    ("critico-red-team", "git commit --amend -a --no-edit"),
+    ("critico-red-team", "git reset --soft HEAD~3"),
+    ("critico-red-team", "git push --force origin main"),
+    ("critico-red-team", "git -C /home/u/nutria rebase -i HEAD~3"),
+    ("critico-red-team", "git checkout main"),
 ])
 def test_el_hook_ata_la_identidad_al_tipo_de_subagente(agent_type, command):
     res = _hook("guard_bash.sh", _subagente(agent_type, command))
@@ -700,7 +820,12 @@ def test_el_hook_ata_la_identidad_al_tipo_de_subagente(agent_type, command):
     ("compuestos-toxicologia", "nutria --agente compuestos-toxicologia puntuar compuerta O-0001 seguridad superada --motivo x"),
     ("extractor-datos", "nutria --agente extractor-datos-A extraccion depositar --datos a.json"),
     ("general-purpose", "nutria --agente orquestador --json oportunidad ver O-0001 --sin-puntuaciones"),
-    ("critico-red-team", "nutria oportunidad ver O-0001 --sin-puntuaciones --json"),     # sin --agente: sin privilegios
+    ("critico-red-team", "nutria --agente critico-red-team oportunidad ver O-0001 --sin-puntuaciones --json"),
+    ("critico-red-team", "git status && git log --oneline -5 && git diff --stat"),
+    ("critico-red-team", "grep -rn colina research/revisiones/ | head -20"),
+    ("critico-red-team", "nutria --agente critico-red-team buscar pubmed \"$(cat research/revisiones/q.txt)\" --max 25"),
+    ("critico-red-team", "while read -r doi; do nutria --agente critico-red-team verificar --doi \"$doi\"; done "
+                         "< research/revisiones/dois.txt"),
     ("evaluador-independiente", "nutria --agente evaluador-2 --json oportunidad ver O-0001 --sin-puntuaciones"),
     ("evaluador-independiente", "sha256sum research/oportunidades/O-0001_puntuacion_evaluador-2.json"),
     ("evaluador-independiente", "nutria --agente evaluador-2 --json puntuar registrar --datos "
@@ -721,6 +846,52 @@ def test_sin_tipo_de_subagente_el_hook_no_comprueba_la_identidad():
     """En el hilo principal no hay agent_type: --agente es una declaración (residuo declarado)."""
     command = "nutria --agente compuestos-toxicologia puntuar compuerta O-0001 seguridad superada --motivo x"
     assert _hook("guard_bash.sh", _bash(command)).returncode == 0
+
+
+@pytest.mark.parametrize("command,where,blocked", [
+    ("rm -rf r*", "proyecto", True),           # research/ entera, desde el directorio del proyecto
+    ("rm -rf *", "proyecto", True),
+    ("mv * /tmp/x/", "proyecto", True),
+    ("find . -delete", "proyecto", True),
+    ("rm -f *.sqlite", "research", True),      # el registro, desde research/
+    ("rm -rf r*", "otro", False),               # en otro directorio, los mismos patrones no tocan el registro
+    ("rm -rf *", "otro", False),
+    ("rm -f *.sqlite", "otro", False),
+    ("find . -delete", "otro", False),
+    ("rm -rf {dir}/r*", "otro", True),          # con la ruta del proyecto delante
+])
+def test_los_comodines_cuentan_segun_el_directorio_de_trabajo(tmp_path, command, where, blocked):
+    """Revisión (ronda 2): `rm -f research/*.jsonl`, `find research -mindepth 1 -delete`... pasaban el hook. Un patrón
+    sin directorio solo puede cubrir el registro o research/ si se ejecuta en el proyecto o en research/ (cwd de la
+    entrada del hook) o si la orden cambia de directorio."""
+    project_dir = tmp_path / "proyecto"
+    (project_dir / "research").mkdir(parents=True)
+    other = tmp_path / "otro"
+    other.mkdir()
+    cwd = {"proyecto": project_dir, "research": project_dir / "research", "otro": other}[where]
+    payload = _bash(command.format(dir=project_dir))
+    payload["cwd"] = str(cwd)
+    assert _hook("guard_bash.sh", payload).returncode == (2 if blocked else 0)
+
+
+def test_el_hook_no_se_agota_con_ordenes_largas_o_repetitivas():
+    """Revisión: cada --agente se comprobaba con procesos aparte; con miles, el hook superaba su tiempo máximo y
+    Claude Code ejecutaba la orden. Los valores repetidos se comprueban una vez, más de 20 distintos se bloquean y una
+    orden de más de 100 000 caracteres no se analiza: se bloquea."""
+    import time
+    repeated = "nutria --agente critico-red-team estado; " * 1500 + "R=compuestos-toxicologia; nutria --agente $R estado"
+    start = time.monotonic()
+    res = _hook("guard_bash.sh", _subagente("critico-red-team", repeated))
+    assert res.returncode == 2 and "'$R'" in res.stderr
+    assert time.monotonic() - start < 8
+    many = "; ".join(f"nutria --agente critico-red-team-{i} estado" for i in range(25))
+    res = _hook("guard_bash.sh", _subagente("critico-red-team", many))
+    assert res.returncode == 2 and "demasiados valores" in res.stderr
+    res = _hook("guard_bash.sh", _bash("echo " + "a" * 100001))
+    assert res.returncode == 2 and "demasiado larga" in res.stderr
+    globs = "rm -f " + " ".join(f"/tmp/x{i}/*.tmp" for i in range(60))
+    res = _hook("guard_bash.sh", _bash(globs))
+    assert res.returncode == 2 and "demasiados patrones" in res.stderr
 
 
 @pytest.mark.parametrize("path,blocked", [
