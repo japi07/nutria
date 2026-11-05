@@ -884,6 +884,10 @@ def test_clasificar_registra_la_decision_del_triage_con_su_actor(project, capsys
     assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_nutricional", "--grupo-funcional",
                  "zootecnico.digestibilidad", "--motivo", "triage"]) == 3
     assert main([*REG, "oportunidad", "clasificar", "O-0099", "--ruta", "premezcla", "--motivo", "triage"]) == 3
+    capsys.readouterr()
+    assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_nutricional", "--motivo",
+                 "triage"]) == 3                                   # un aditivo sin su grupo funcional
+    assert "exige --grupo-funcional" in capsys.readouterr().err
     assert main([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "premezcla", "--motivo", "  "]) == 3
     assert _code([*REG, "oportunidad", "clasificar", "O-0001", "--ruta", "fuera_de_alcance_medicamentos",
                   "--motivo", "x"]) == 2
@@ -908,8 +912,9 @@ def test_clasificar_fuera_de_alcance_bloquea_y_salir_exige_firma(project, capsys
     assert main(["--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0001", "--ruta",
                  "aditivo_zootecnico", "--motivo", "rediseño"]) == 3
     assert db.get_opportunity(_conn(), "O-0001")["regulatory_route"] == "fuera_de_alcance_medicamento"
-    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_zootecnico", "--motivo",
-                 "Rediseño revisado: dosis y alegación nutricionales", SIGN, "Ana"]) == 0
+    assert main(["oportunidad", "clasificar", "O-0001", "--ruta", "aditivo_zootecnico", "--grupo-funcional",
+                 "zootecnico.otros_zootecnicos", "--motivo", "Rediseño revisado: dosis y alegación nutricionales",
+                 SIGN, "Ana"]) == 0
     assert db.effective_gates(_conn(), "O-0001", GATES)["regulatoria"] == "bloqueada"
     assert db.list_decisions(_conn(), "O-0001")[-1]["human_signoff"] == "Ana"
 

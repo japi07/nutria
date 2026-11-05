@@ -1460,9 +1460,9 @@ def build_parser() -> argparse.ArgumentParser:
             x.add_argument("--ruta", required=True, choices=_opciones_esquema("oportunidad", "ruta_regulatoria_preliminar"))
             x.add_argument("--grupo-funcional", dest="grupo_funcional", metavar="CATEGORIA.GRUPO",
                            choices=_opciones_esquema("oportunidad", "grupo_funcional"),
-                           help="categoría y grupo funcional del anexo I del Reglamento (CE) 1831/2003, si es un aditivo "
-                                "(p. ej. zootecnico.estabilizadores_condiciones_fisiologicas; valores en "
-                                "src/nutria/data/schemas/oportunidad.schema.json)")
+                           help="categoría y grupo funcional del anexo I del Reglamento (CE) 1831/2003; obligatorio con "
+                                "una ruta aditivo_* (p. ej. zootecnico.estabilizadores_condiciones_fisiologicas; valores "
+                                "en src/nutria/data/schemas/oportunidad.schema.json)")
             x.add_argument("--situacion", choices=_opciones_esquema("oportunidad", "situacion"))
             x.add_argument("--motivo", required=True, help="resultado del triage que justifica la clasificación")
             x.add_argument("--firma-humana", dest="firma_humana",

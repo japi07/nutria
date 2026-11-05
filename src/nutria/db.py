@@ -1552,6 +1552,10 @@ def classify_opportunity(conn: sqlite3.Connection, opp_id: str, route: str, reas
         candidate = {"ruta_regulatoria_preliminar": route, "grupo_funcional": functional_group, "situacion": situation,
                      "alegacion_prevista": data.get("alegacion_prevista")}
         errors = classification_errors({k: v for k, v in candidate.items() if v is not None})
+        if route.startswith("aditivo_") and not functional_group:
+            # el triage de un aditivo determina su categoría y grupo funcional (anexo I del Reglamento (CE) 1831/2003)
+            errors.append(f"la ruta {route} exige --grupo-funcional (categoría y grupo funcional del anexo I del "
+                          "Reglamento (CE) 1831/2003; si ninguno encaja, el grupo 'otros' de su categoría)")
         if errors:
             raise RegistryError("Clasificación no válida: " + "; ".join(errors))
         old = {"ruta": opp.get("regulatory_route"), "grupo_funcional": opp.get("functional_group"),
