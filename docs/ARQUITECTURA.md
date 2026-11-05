@@ -97,6 +97,7 @@ falsificados o desactualizados, no una protección criptográfica frente a quien
 | PreToolUse | Bash | `scripts/hooks/guard_bash.sh` | Bloquea cualquier orden de un agente que incluya `--firma-humana` o que toque la clave de los sellos (`clave_sello`, `NUTRIA_CLAVE_SELLO`) |
 | PreToolUse | Write, Edit, MultiEdit | `scripts/hooks/guard_write.sh` | Bloquea la escritura directa de sellos (`*.verificacion.json`) y de la clave: los sellos solo los genera `nutria informe comprobar ... --online --sellar` |
 | PostToolUse | Write, Edit, MultiEdit | `scripts/hooks/run_hook.sh` → `scripts/hooks/check_research_file.py` | Valida lo que se escribe en `research/`: informes (estructura, referencias, etiquetas y, si están en estado revisado o final, sello válido), planes y revisiones (referencias y etiquetas) y JSON de oportunidades e hipótesis (esquema). Si hay errores, bloquea y explica por qué |
+| PostToolUse | WebFetch, WebSearch | `scripts/hooks/registrar_web.sh` → `scripts/hooks/registrar_web.py` | Registra cada consulta web en `research/procedencia.jsonl`; nunca bloquea |
 
 `run_hook.sh` busca primero el intérprete del proyecto (`.venv/bin/python` o `.venv\Scripts\python.exe`) y, si no
 existe, `python3` o `python`. Falla cerrado: si no encuentra Python, o el intérprete no tiene las dependencias de

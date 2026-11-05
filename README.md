@@ -199,6 +199,8 @@ leer la base de datos directamente. `extraccion exportar` (formato `analisis`) s
   si hay errores. En un borrador solo comprueba la forma (cada `[PUB]` con su `[Rn]`, cada referencia con DOI, PMID
   o URL); que los identificadores existan y correspondan a la cita se comprueba en línea al sellar, y el sello válido
   es obligatorio para marcar un informe como revisado o final.
+- **PostToolUse de WebFetch y WebSearch** (`scripts/hooks/registrar_web.sh`): registra cada consulta web en la
+  procedencia; nunca bloquea.
 - Son barreras frente a errores y atajos de los agentes, no un control de seguridad: comparan texto, y el PostToolUse
   no ve lo que se escribe por otras vías, como Bash (compruébalo con `nutria informe sello <informe>`).
 
