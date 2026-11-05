@@ -469,13 +469,14 @@ def test_malformed_labels_and_references_are_errors(bad):
 
 @pytest.mark.parametrize("text", ["un 45 % de los casos", "un 30%.", "3,1 L/d", "12 kg/d", "20 g/d", "5 mg/kg MS",
                                   "200 g/t", "1,6 Mcal", "12 MJ", "2,1 mmol/L", "50 ppm", "0,30 €/d", "38,5 °C",
-                                  "5 puntos porcentuales", "4 UFC"])
+                                  "5 puntos porcentuales", "4 UFC", "2,5  kg/d", "2,5\nkg/d", "38,1 oC", "2,5 (kg/d)",
+                                  "€15", "US$ 2", "3 cm", "2 log UFC/g", "1,2 UFL"])
 def test_units_regex_matches_nutrition_units(text):
     assert chk.UNIT_RE.search(text)
 
 
 @pytest.mark.parametrize("text", ["3 grupos", "[R1]", "DOI 10.1234/x", "21 días", "PMID: 12345678", "H-0001",
-                                  "## 14. Seguridad"])
+                                  "## 14. Seguridad", "grupo 2 (t de Student)", "en 2 o cuatro", "los 3 (tres)"])
 def test_units_regex_ignores_non_quantities(text):
     assert not chk.UNIT_RE.search(text)
 
@@ -1433,6 +1434,8 @@ def test_pub_sentence_that_only_points_to_an_unlabeled_sentence(body):
      "Este efecto se mantuvo hasta la semana 12 en multíparas"),
     ("La colina es un nutriente. Como indica el ensayo, la colina protegida aumentó la producción de leche en vacas "
      "[PUB] [R1].", "Como indica el ensayo, la colina protegida aumentó la producción de leche en vacas"),
+    ("La betaína es un osmolito. La colina protegida aumenta la producción de leche; así lo indica el ensayo [PUB] [R1].",
+     "La colina protegida aumenta la producción de leche; así lo indica el ensayo"),
 ])
 def test_substantive_or_chained_pub_sentences_are_not_anaphora(body, row):
     assert not any("remite a la frase anterior" in e

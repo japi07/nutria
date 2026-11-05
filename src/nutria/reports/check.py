@@ -26,13 +26,13 @@ Sin red (`check_report`):
   partidas por un salto de línea, con varios espacios o con la unidad entre paréntesis: «2,5 (kg/d)») y, en las
   tablas (también las escritas sin «|» en los extremos), por su estructura: un número de una columna cuya cabecera
   lleva la unidad («Leche (kg/d)»), o de una fila con una celda de unidades (la primera, «Leche (kg/d) | 30,1», una
-  columna «Unidad» o una fila de unidades bajo la cabecera). Una cita autor-año necesita su `[Rn]` en la misma frase (error siempre): entre paréntesis
-  («(García, 2018)»), narrativa («García (2018)», «García et al. (2018, p. 3)», «Smith J. (2019)»), con coautores sin
-  paréntesis («García et al. 2018»), tras «según» o «véase» («según García 2018») o, en una columna de estudios o
-  fuentes de una tabla, «García 2018». Una cita numérica «[1]» y una referencia «(R1)» son error. Solo quedan
-  exentos de la comprobación de cifras el título (el primer encabezado de nivel 1) y la línea que lo repite en la
-  sección 1, el front matter, la bibliografía, las tablas de respaldo del Anexo A y los anexos B y C (registros
-  generados; encabezados de nivel 2 después de la bibliografía).
+  columna «Unidad» o una fila de unidades bajo la cabecera). Una cita autor-año necesita su `[Rn]` en la misma frase
+  (error siempre): entre paréntesis («(García, 2018)»), narrativa («García (2018)», «García et al. (2018, p. 3)»,
+  «Smith J. (2019)»), con coautores sin paréntesis («García et al. 2018»), tras «según» o «véase» («según García
+  2018») o, en una columna de estudios o fuentes de una tabla, «García 2018». Una cita numérica «[1]» y una
+  referencia «(R1)» son error. Solo quedan exentos de la comprobación de cifras el título (el primer encabezado de
+  nivel 1) y la línea que lo repite en la sección 1, el front matter, la bibliografía, las tablas de respaldo del
+  Anexo A y los anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
 - Bibliografía: la sección 20 o, si no existe, la última sección de nivel 2 titulada Bibliografía o Referencias.
   Una entrada puede ocupar varias líneas (hasta la siguiente entrada, una línea en blanco o un encabezado). Un
   `[Rn]` duplicado es error; una entrada `[Rn]` con identificador fuera de la bibliografía (o un identificador de la
@@ -143,7 +143,7 @@ QUOTE_RE = re.compile(r"«([^»]+)»|\"([^\"]+)\"|“([^”]+)”")
 _NUM = r"(?<![\w.,/])[-+±−]?\d+(?:[.,]\d+)*"
 _WORD_UNITS = ("puntos porcentuales", "por ciento", "ppm", "ppb", "pp", "mEq", "mmol", "μmol", "umol", "nmol", "mol",
                "mg", "μg", "ug", "ng", "kg", "g", "t", "Mcal", "kcal", "cal", "MJ", "kJ", "mL", "dL", "L", "UI", "IU",
-               "UFC", "CFU", "EUR", "USD",
+               "UFC", "CFU", "EUR", "USD", "cm", "mm", "km", "μm", "kPa", "MPa", "UFL", "UFV", "UGM", "log",
                # unidades escritas con todas sus letras
                "gramo", "gramos", "kilogramo", "kilogramos", "kilo", "kilos", "miligramo", "miligramos",
                "microgramo", "microgramos", "litro", "litros", "mililitro", "mililitros", "tonelada", "toneladas",
@@ -170,7 +170,8 @@ UNIT_RE = re.compile(
 _HEADER_UNIT_RE = re.compile(
     r"(?:(?<![^\W\d_])(?<![^\W\d_][-‐])(?:"
     + "|".join(re.escape(u) for u in sorted(_WORD_UNITS, key=len, reverse=True) if len(u) > 1)
-    + r")(?![^\W\d_])(?![-‐][^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
+    + r")(?![^\W\d_])(?![-‐][^\W\d_])|[%‰°€£$]|(?<![^\W\d_])[gLt](?=\s*[/·)])|[(,]\s*[gLt]\s*\)"
+    + r"|(?-i:(?<![^\W\d_])o\s?C)(?![^\W\d_]))",
     re.IGNORECASE)
 _MONTHS = (r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|"
            r"january|february|march|april|may|june|july|august|september|october|november|december)")
@@ -1140,12 +1141,15 @@ def _anaphoric(words: list[str]) -> bool:
     start = 1 if words[0] in ("y", "e", "pero") else 0
     if len(words) > start + 1 and words[start] in _DEMONSTRATIVES and words[start + 1] in _RESULT_NOUNS:
         return True
-    head = words[:8]
-    if any((a == "lo" and b in _ATTRIBUTION_VERBS) or (a == "asi" and b in ("lo", "se"))
-           for a, b in zip(head, head[1:])):
-        return True
-    if any(a == "lo" and b == "que" and c in _ATTRIBUTION_VERBS for a, b, c in zip(head, head[1:], head[2:])):
-        return True
+    # «El ensayo de campo así lo indica», «Es lo que muestra el estudio»: la fórmula de remisión, sin contenido antes
+    # de ella («La colina aumenta la leche; así lo indica el ensayo» sí enuncia la afirmación).
+    for k in range(len(words) - 1):
+        a, b, c = words[k], words[k + 1], words[k + 2] if k + 2 < len(words) else ""
+        if (a == "lo" and (b in _ATTRIBUTION_VERBS or (b == "que" and c in _ATTRIBUTION_VERBS))) or (
+                a == "asi" and b in ("lo", "se")):
+            return True
+        if a not in _NON_CONTENT:
+            break
     return sum(1 for w in words if w not in _NON_CONTENT) <= 1
 
 
