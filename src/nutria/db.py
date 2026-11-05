@@ -111,6 +111,13 @@ CREATE TABLE IF NOT EXISTS decisions (
   ts TEXT NOT NULL, entity_id TEXT, decision TEXT NOT NULL, rationale TEXT NOT NULL,
   decided_by TEXT, human_signoff TEXT
 );
+
+CREATE TABLE IF NOT EXISTS report_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report TEXT NOT NULL, sha256 TEXT NOT NULL, reviewer TEXT NOT NULL, reviewed_at TEXT NOT NULL,
+  status TEXT, note TEXT, entity_id TEXT, recorded_by TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_report_reviews_sha256 ON report_reviews(sha256);
 """
 
 # Columnas añadidas después de la versión 1 del esquema (migración aditiva).
@@ -671,6 +678,41 @@ def add_decision(conn: sqlite3.Connection, entity_id: str | None, decision: str,
         raise RegistryError("Toda decisión necesita un motivo")
     with transaction(conn):
         _log_decision(conn, entity_id, decision, rationale, actor, human_signoff)
+
+
+# ---------------------------------------------------------------------------- revisiones humanas de informes
+def add_report_review(conn: sqlite3.Connection, report: str, digest: str, reviewer: str, status: str | None = None,
+                      note: str | None = None, entity_id: str | None = None, actor: str | None = None) -> int:
+    """Registra que una persona revisó el contenido exacto de un informe (huella `digest`, ver
+    `nutria.reports.check.review_digest`). La firma la pone la persona con `nutria informe revisar`."""
+    if not reviewer or not reviewer.strip():
+        raise RegistryError("La revisión humana exige el nombre de la persona que revisó el informe")
+    if not digest or len(digest) != 64:
+        raise RegistryError("Huella del informe no válida")
+    with transaction(conn):
+        cur = conn.execute(
+            "INSERT INTO report_reviews (report, sha256, reviewer, reviewed_at, status, note, entity_id, recorded_by) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (report, digest, reviewer.strip(), utc_now(), status, note, entity_id, current_actor(actor)))
+        _log_decision(conn, entity_id, f"informe {report} revisado por una persona (estado: {status or 'sin estado'}; "
+                                       f"sha256 {digest[:12]})", note or "Revisión humana del contenido exacto del informe",
+                      actor, reviewer.strip())
+        return int(cur.lastrowid)
+
+
+def report_reviews(conn: sqlite3.Connection, digest: str | None = None, report: str | None = None) -> list[dict]:
+    """Revisiones humanas registradas (por huella del contenido o por informe), de la más antigua a la última."""
+    sql, args = "SELECT * FROM report_reviews WHERE 1=1", []
+    if digest:
+        sql += " AND sha256 = ?"
+        args.append(digest)
+    if report:
+        sql += " AND report = ?"
+        args.append(report)
+    try:
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+    except sqlite3.OperationalError:   # registro antiguo sin la tabla: no hay revisiones
+        return []
 
 
 def list_decisions(conn: sqlite3.Connection, entity_id: str | None = None) -> list[dict]:

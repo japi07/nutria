@@ -318,7 +318,10 @@ def cmd_verificar(args, cfg) -> int:
         return 0
     if not targets:
         raise SystemExit("Indica --doi, --pmid, --pendientes, un fichero .md o 'manual <URL>'")
-    args.sin_secciones = True  # verificar comprueba referencias; la estructura de informe la exige `informe comprobar`
+    from .reports.check import is_report_path
+    # En un informe (research/informes, también en subcarpetas) se exige la misma estructura que en `informe
+    # comprobar`, así que las dos órdenes producen el mismo sello; en otros documentos no se exigen las 20 secciones.
+    args.sin_secciones = not is_report_path(Path(targets[0]))
     return _check_report_file(args, cfg, Path(targets[0]), online=True)
 
 
@@ -879,57 +882,141 @@ def cmd_econ(args, cfg) -> int:
 
 
 # ============================================================================ informes
+_NO_COMPROBADO = ("que cada fuente respalde la afirmación que se le atribuye (lo registra verificador-citas en el "
+                  "Anexo A y lo revisa una persona) ni el texto completo de las fuentes")
+
+
+def _report_registry(cfg, path: Path):
+    """Registro del proyecto del documento (o, si el documento no está en un proyecto, el del proyecto actual)."""
+    from .reports.check import open_registry_for
+    conn = open_registry_for(path)
+    if conn is None and cfg.db_path.is_file():
+        conn = registry.connect(cfg.db_path)
+    return conn
+
+
 def _check_report_file(args, cfg, path: Path, online: bool) -> int:
-    from .reports.check import check_report, check_report_online, write_stamp
-    text = path.read_text("utf-8")
-    checked_hash = sha256_text(text)
+    from .reports.check import StampError, is_report_path, stamp_status, verify_report, write_stamp
     structure = not getattr(args, "sin_secciones", False)
-    issues = check_report(text, require_sections=structure)
-    details: list[dict] = []
-    summary: dict | None = None
-    if online:
-        conn = registry.connect(cfg.db_path) if cfg.db_path.is_file() else None
-        more, details, summary = check_report_online(_client(cfg, fresh=True), text, conn)
-        issues += more
-    errors = [i for i in issues if i.severity == "error"]
+    conn = _report_registry(cfg, path)
+    result = verify_report(path, client=_client(cfg, fresh=True) if online else None, conn=conn,
+                           require_sections=structure, gate_ids=[g.id for g in _rubric(cfg).gates])
+    issues, details, summary = result.issues, result.details, result.summary
+    errors = result.errors
+    seal = None
     if getattr(args, "sellar", False):
-        if sha256_file(path) != checked_hash:
-            raise SystemExit("El informe cambió durante la verificación: no se sella. Vuelve a ejecutar la comprobación.")
-        stamp = write_stamp(path, text, issues, online, details, summary, structure)
+        try:
+            stamp = write_stamp(result)
+        except StampError as exc:
+            raise SystemExit(str(exc))
+        seal = stamp_status(path, conn=conn)
         log_event(cfg, "sello_informe", inputs={"informe": str(path)},
                   outputs={"sha256": stamp["sha256"], "errores": stamp["errores"],
-                           "verificacion_completa": stamp["verificacion_completa"]}, actor=args.agente)
+                           "verificacion_completa": stamp["verificacion_completa"], "sello_valido": seal[0]},
+                  actor=args.agente)
     lines = [str(i) for i in issues] or ["Sin incidencias"]
     if online and summary is not None:
-        lines.append(f"Referencias: {summary['verificadas']}/{summary['total']} verificadas, {summary['pendientes']} sin "
-                     f"verificar, {summary['con_error']} con error"
-                     + ("" if summary["completa"] else " — verificación INCOMPLETA: el sello no será válido"))
+        if not summary["total"]:
+            lines.append("Referencias: no había referencias que verificar")
+        else:
+            lines.append(f"Referencias: {summary['verificadas']}/{summary['total']} verificadas en línea (existencia, "
+                         f"correspondencia con la cita y retractación), {summary['pendientes']} sin verificar, "
+                         f"{summary['con_error']} con error"
+                         + ("" if summary["completa"] else " — verificación INCOMPLETA: el sello no será válido"))
     elif not online:
-        lines.append("Sin verificación en línea de las referencias")
+        lines.append("Sin verificación en línea de las referencias (usa --online): no se puede sellar como válido")
     lines.append(f"Resultado: {len(errors)} error(es), {len(issues) - len(errors)} aviso(s)")
-    _emit(args, {"incidencias": [i.__dict__ for i in issues], "referencias": details, "resumen": summary},
-          "\n".join(lines))
+    lines.append(f"No se comprueba: {_NO_COMPROBADO}.")
+    if seal is not None:
+        lines.append(("Sello guardado: " if seal[0] else "Sello guardado, pero NO es válido: ") + seal[1])
+        if not structure and not is_report_path(path):
+            lines.append("Este sello no comprobó la estructura de informe: no vale para un informe de research/informes.")
+    data = {"incidencias": [i.__dict__ for i in issues], "referencias": details, "resumen": summary,
+            "citas_anexo_a": result.quotes, "no_comprobado": _NO_COMPROBADO}
+    if seal is not None:
+        data["sello"] = {"valido": seal[0], "mensaje": seal[1]}
+    _emit(args, data, "\n".join(lines))
+    if conn is not None:
+        conn.close()
     incomplete = online and summary is not None and not summary["completa"]
-    return 1 if errors or incomplete else 0
+    return 1 if errors or incomplete or (seal is not None and not seal[0]) else 0
+
+
+def _review_report(args, cfg) -> int:
+    """`nutria informe revisar`: una persona registra que revisó el contenido exacto del informe."""
+    import os
+    from .reports.check import (check_report, front_matter_value, is_report_path, report_key, review_digest,
+                                set_front_matter_fields, status_info, REVIEW_CODE)
+    signer = (getattr(args, "firma_humana", None) or "").strip()
+    if not signer:
+        raise SystemExit("La revisión humana exige --firma-humana NOMBRE: solo la registra la persona que revisó el "
+                         "informe, en su propia terminal")
+    if getattr(args, "agente", None) or os.environ.get("NUTRIA_AGENT") or os.environ.get("CLAUDECODE"):
+        raise SystemExit("La revisión humana no la registra un agente: la persona que revisó el informe ejecuta la orden "
+                         "en su propia terminal (fuera de Claude Code), sin --agente ni NUTRIA_AGENT")
+    path = Path(args.archivo)
+    conn = _report_registry(cfg, path)
+    if conn is None:
+        raise SystemExit("No hay registro del proyecto (research/nutria.sqlite): la revisión humana se registra en él. "
+                         "Ejecuta `nutria init` en la raíz del proyecto.")
+    text = path.read_text("utf-8")
+    before = sha256_text(text)
+    updates = {"revisado_por_humano": signer}
+    if args.estado:
+        updates["estado"] = args.estado
+    try:
+        new_text = set_front_matter_fields(text, updates)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    problems = [i for i in check_report(new_text, require_sections=is_report_path(path), conn=conn, path=path,
+                                        gate_ids=[g.id for g in _rubric(cfg).gates])
+                if i.severity == "error" and i.code != REVIEW_CODE]
+    if problems:
+        raise SystemExit(f"No se registra la revisión: el informe tiene {len(problems)} error(es); corrígelos antes:\n"
+                         + "\n".join(str(i) for i in problems[:25]))
+    if sha256_file(path) != before:
+        raise SystemExit("El informe cambió mientras se revisaba: vuelve a ejecutar la orden")
+    digest = review_digest(new_text)
+    status = status_info(new_text).value
+    review_id = registry.add_report_review(conn, report_key(path), digest, signer, status, args.nota,
+                                           entity_id=front_matter_value(new_text, "oportunidad"))
+    tmp = path.with_name(path.name + ".tmp-revision")
+    tmp.write_text(new_text, "utf-8")
+    os.replace(tmp, path)
+    log_event(cfg, "revision_humana_informe", inputs={"informe": str(path)},
+              outputs={"sha256_revision": digest, "firma": signer, "estado": status, "id": review_id})
+    conn.close()
+    _emit(args, {"informe": str(path), "revisado_por_humano": signer, "estado": status, "sha256_revision": digest},
+          f"Revisión humana registrada: {path} (estado '{status}', revisado por {signer}; huella {digest[:12]}). "
+          "Si el informe cambia, la revisión deja de valer. El sello anterior ya no vale: vuelve a sellar con "
+          f"`nutria informe comprobar {path} --online --sellar`.")
+    return 0
 
 
 def cmd_informe(args, cfg) -> int:
     if args.accion == "nuevo":
         from .reports.render import new_report
         conn = _conn(cfg)
-        text = new_report(conn, args.id)
+        text = new_report(conn, args.id, gate_ids=[g.id for g in _rubric(cfg).gates])
         out = Path(args.salida) if args.salida else cfg.research_dir / "informes" / f"{args.id}.md"
         if out.exists() and not args.forzar:
             raise SystemExit(f"{out} ya existe (usa --forzar para sobrescribir)")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, "utf-8")
-        _emit(args, {"informe": str(out)}, f"Esqueleto de informe creado: {out}")
+        _emit(args, {"informe": str(out)}, f"Esqueleto de informe creado: {out} (borrador con apartados "
+                                           "[POR COMPLETAR]; ningún sello lo convierte en un informe completo)")
         return 0
     if args.accion == "sello":
         from .reports.check import stamp_status
-        ok, msg = stamp_status(Path(args.archivo))
+        path = Path(args.archivo)
+        conn = _report_registry(cfg, path)
+        ok, msg = stamp_status(path, conn=conn)
+        if conn is not None:
+            conn.close()
         _emit(args, {"valido": ok, "mensaje": msg}, msg)
         return 0 if ok else 1
+    if args.accion == "revisar":
+        return _review_report(args, cfg)
     return _check_report_file(args, cfg, Path(args.archivo), online=args.online)
 
 
@@ -1028,7 +1115,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cita", help="texto de la cita para comprobar que el identificador corresponde")
     s.add_argument("--pendientes", action="store_true",
                    help="verifica las fuentes sin verificar o con retractación desconocida")
-    s.add_argument("--sellar", action="store_true")
+    s.add_argument("--sellar", action="store_true",
+                   help="(documento .md) guarda el sello firmado; en un informe de research/informes exige la misma "
+                        "estructura que `informe comprobar --online --sellar`")
     s.add_argument("--firma-humana", dest="firma_humana", help="(verificar manual) persona que comprobó la URL")
     s.add_argument("--nota", help="(verificar manual) qué se comprobó")
     s.set_defaults(func=cmd_verificar)
@@ -1250,6 +1339,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="no exige las 20 secciones (planes, notas); el sello no valdrá para informes")
     x = ins.add_parser("sello", parents=[common])
     x.add_argument("archivo")
+    x = ins.add_parser("revisar", parents=[common],
+                       help="registra la revisión humana del contenido exacto del informe (solo personas)")
+    x.add_argument("archivo")
+    x.add_argument("--firma-humana", dest="firma_humana", help="persona que revisó el informe (solo personas)")
+    x.add_argument("--estado", choices=["revisado", "final"], help="cambia también el estado del informe")
+    x.add_argument("--nota", help="qué se revisó")
     s.set_defaults(func=cmd_informe)
 
     s = sub.add_parser("procedencia", parents=[common], help="consulta el registro de procedencia")
