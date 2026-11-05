@@ -1364,11 +1364,16 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                              f"escribe [{name}]", i + 1))
         pub_refs: list[str] = []
         if scan.labels:
+            # Las [Rn] de una etiqueta son las de su segmento (hasta la etiqueta siguiente o el final de la frase) y,
+            # para la primera, las que la preceden en la misma frase («Según [R1] [PUB] ...»).
+            stops = [pos for kind, value, pos in scan.tokens if kind == "stop" and value in ".!?"]
             first_pos = scan.labels[0][0]
-            prefix = [r for p, r in scan.refs if p < first_pos]
+            last_stop = max((p for p in stops if p < first_pos), default=-1)
+            prefix = [r for p, r in scan.refs if last_stop < p < first_pos]
             by_label: list[list[str] | None] = []
             for k, (pos, name, _raw) in enumerate(scan.labels):
                 end = scan.labels[k + 1][0] if k + 1 < len(scan.labels) else len(scan.text)
+                end = min([end] + [p for p in stops if p > pos])
                 seg = list(dict.fromkeys([r for p, r in scan.refs if pos <= p < end] + (prefix if k == 0 else [])))
                 by_label.append(seg if name == "PUB" else None)
                 if name == "PUB":

@@ -362,6 +362,15 @@ def test_each_pub_segment_needs_its_own_reference():
                    _errors(_draft("Según [R1] [PUB] hubo cambios en la leche."), require_sections=False))
 
 
+def test_a_reference_counts_only_within_its_sentence():
+    for body in ("La colina aumentó la leche en vacas [PUB]. Otros estudios [R1] sugieren lo mismo [HIP].",
+                 "La colina aumentó la leche [R1]. La cetosis bajó en vacas [PUB]."):
+        assert any("[PUB] sin referencia" in e for e in _errors(_draft(body), require_sections=False)), body
+    for body in ("La colina aumentó la leche en vacas [PUB] (Fig. 2; p. 23) [R1].",
+                 "Según D. Sauvant [R1] [PUB] la respuesta fue lineal."):
+        assert not any("[PUB] sin referencia" in e for e in _errors(_draft(body), require_sections=False)), body
+
+
 @pytest.mark.parametrize("bad", ["[PUB, R1]", "[R1, R2]", "[r1]"])
 def test_malformed_labels_and_references_are_errors(bad):
     assert _errors(_draft(f"La colina reduce la cetosis [PUB] [R1] {bad}."), require_sections=False)

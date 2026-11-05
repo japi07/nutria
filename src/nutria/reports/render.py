@@ -59,12 +59,14 @@ def _claim_text(claim) -> str:
                 "justificación científica; puede referirse a la optimización de la nutrición o al apoyo o la "
                 "protección de las condiciones fisiológicas, art. 13.2), finalidad nutricional específica (solo en "
                 "piensos dietéticos, Reglamento (UE) 2020/354) o ninguna. Ningún pienso puede alegar que previene, "
-                "trata o cura enfermedades (art. 13.3).")
+                "trata o cura enfermedades (art. 13.3.a; sus excepciones limitadas están pendientes de verificar en "
+                "docs/REGULACION_UE.md).")
     tipo = claim.get("tipo") or "indeterminado"
     text = f"{_oneline(claim.get('texto', ''))} (tipo {_CLAIM_TYPES.get(tipo, tipo)})"
     if claim.get("fundamento"):
         text += f". Fundamento previsto: {_oneline(claim['fundamento'])}"
-    return text + ". No puede alegar que previene, trata o cura enfermedades (art. 13.3)."
+    return text + (". No puede alegar que previene, trata o cura enfermedades (art. 13.3.a; sus excepciones limitadas "
+                   "están pendientes de verificar en docs/REGULACION_UE.md).")
 
 
 def _gate_ids(gate_ids) -> list[str]:
