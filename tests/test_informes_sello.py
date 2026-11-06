@@ -1369,7 +1369,7 @@ def test_legitimate_forms_are_not_flagged(body, row):
 # R1 = García 2018): una cita de memoria llegaba a un informe con sello válido. Ahora sus apellidos (o la institución)
 # y su año deben figurar en la entrada de alguna [Rn] de la frase: error en revisado o final y aviso en borrador.
 _CITE_BIB = ("[R1] García A, López B. 2018. Colina protegida en vacas en transición. J Dairy Sci 101:1-10. "
-             "DOI: 10.1234/colina.2018\n"
+             "DOI: 10.3168/jds.2017-13000\n"
              "[R2] National Research Council (NRC). 2001. Nutrient requirements of dairy cattle. DOI: 10.17226/9825\n"
              "[R3] de los Santos M, Şahin K, St-Pierre NR, Van Soest PJ. 2019a. Grasa y colina. Animal 13:1-9. "
              "DOI: 10.1234/grasa.2019\n"
@@ -1388,6 +1388,7 @@ def _cite_issues(body: str, status: str) -> list[chk.Issue]:
     "La producción aumentó [R1] [PUB] (Han et al., 2020).",
     "La producción aumentó [R1] [PUB] (Han et al., 2018).",                 # mismo año, otro apellido
     "La producción aumentó [R1] [PUB] (García et al., 2019).",              # mismo apellido, otro año
+    "La producción aumentó [R1] [PUB] (García et al., 2017).",              # el año solo está en el DOI
     "La producción aumentó [R1] [PUB] (García y Han, 2018).",               # un coautor ajeno
     "La producción aumentó [R1] [PUB] (García, 2018; Han, 2020).",          # la segunda de la lista
     "La producción aumentó [R1] [PUB] (Şahin et al., 2019).",

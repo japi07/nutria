@@ -175,7 +175,9 @@ si se cumplen todas estas condiciones:
    subcarpetas); fuera de ellos el sello puede no comprobarla (`--sin-secciones`), y lo dice. Ningún `[POR
    COMPLETAR]` ni sección vacía (el esqueleto de `informe nuevo` nunca tiene sello válido) y ningún error: cifras con
    unidades y medidas de efecto con su etiqueta, por frase y en las tablas por su estructura; citas solo como `[Rn]`
-   (las autor-año y las numéricas son error); ningún identificador de artículo en el cuerpo fuera de la bibliografía
+   (las numéricas y las autor-año sin `[Rn]` en su frase son error, y en revisado o final también la autor-año cuyos
+   apellidos y año no figuran en la entrada de ninguna `[Rn]` de su frase; la comparación es léxica); ningún
+   identificador de artículo en el cuerpo fuera de la bibliografía
    (el sello cuenta los enlaces del cuerpo sin verificar); y una `[PUB]` que no se limite a remitir a la frase
    anterior.
 3. Si el estado es `revisado` o `final`: tabla de respaldo en el Anexo A, `| Ref | Afirmación | Respaldo | Motivo |`,

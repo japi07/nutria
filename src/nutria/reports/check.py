@@ -37,7 +37,12 @@ Sin red (`check_report`):
   figura en el título o en una nota de la tabla. Quedan exentos el título (el primer encabezado de nivel 1) y la
   línea que lo repite en la sección 1, el front matter, la bibliografía, las tablas de respaldo del Anexo A y los
   anexos B y C (registros generados; encabezados de nivel 2 después de la bibliografía).
-- Citas: una cita autor-año necesita su `[Rn]` en la misma frase (error siempre): entre paréntesis o corchetes
+- Citas: una cita autor-año necesita su `[Rn]` en la misma frase (error; en borrador, aviso si el nombre coincide
+  con una palabra común o, fuera de los informes, con los patrones débiles: verbo de cita o línea con forma de
+  referencia), y en una frase con `[Rn]` cada cita autor-año debe ser la de una de esas referencias: sus apellidos (o
+  la institución) y su año deben figurar en la entrada de la bibliografía, sin contar sus identificadores (error en
+  revisado o final, aviso en borrador; la comparación es léxica: no comprueba el orden de los autores, y el año puede
+  ser cualquier número de la entrada). Formas reconocidas: entre paréntesis o corchetes
   («(García, 2018)», «(García Pérez, 2018)», «(van Soest, 1994)», «(de la Fuente y col., 2019)», «(St. Pierre,
   2001)», «(Smith, Jones, & Brown, 2019)», «(García, 2018: 23)»), con una entradilla de cita («(revisado por García,
   2018)», «(citado en ...)», «(véase también ...)», «(datos de ...)»), narrativa («García (2018)», «García y otros
@@ -1478,10 +1483,14 @@ def _cite_from_match(m: re.Match, text: str, kind: str, end: int | None = None) 
                  " ".join(text[m.start():m.end()].split()).strip(" ([;-*+"))
 
 
+_ENTRY_ID_RE = re.compile(r"\b10\.\d{4,9}/\S+|\bhttps?://\S+|\bwww\.\S+|\bPMID\s*:?\s*\d+|\bPMC\d+", re.IGNORECASE)
+
+
 def _cite_in_entry(cite: _Cite, entry_text: str) -> bool:
-    """La entrada de la bibliografía contiene los apellidos (o la institución) y el año de la cita (palabras
-    completas, normalizadas; «2018a» cuenta como 2018)."""
-    pieces = set(_word_pieces(entry_text))
+    """La entrada de la bibliografía, sin sus identificadores (DOI, PMID, enlaces: «jds.2017-13000» no da el año
+    2017), contiene los apellidos (o la institución) y el año de la cita (palabras completas, normalizadas; «2018a»
+    cuenta como 2018). Es léxico: vale cualquier lugar de la entrada (un coautor, un número de las páginas)."""
+    pieces = set(_word_pieces(_ENTRY_ID_RE.sub(" ", entry_text)))
     if not set(cite.words) <= pieces:
         return False
     return cite.year is None or any(re.fullmatch(rf"{cite.year}[a-z]?", piece) for piece in pieces)

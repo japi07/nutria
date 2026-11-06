@@ -20,8 +20,9 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
    `[DER]` derivado por cálculo propio (indica la orden `nutria` o el script), `[HIP]` hipótesis, `[SUP]` supuesto
    de trabajo, `[DESC]` desconocido (indica cómo obtenerlo). En los informes, las citas se escriben como `[Rn]` en
    la misma frase que la afirmación, y los DOI, PMID y enlaces de artículos van solo en la bibliografía: la
-   comprobación da error ante las formas habituales de cita autor-año, numérica («[1]», «(R1)») o por identificador
-   en el texto, aunque no las detecta todas.
+   comprobación da error ante las formas habituales de cita autor-año sin `[Rn]` en su frase (o con apellidos y año
+   que no figuran en la entrada de esas `[Rn]`), numérica («[1]», «(R1)») o por identificador en el texto, aunque
+   no las detecta todas.
 2. **Nunca inventes** publicaciones, autores, resultados, dosis, precios ni datos. Solo se citan trabajos
    obtenidos con `nutria buscar`/WebSearch/WebFetch y verificados (`nutria fuente agregar`, `nutria verificar`).
    Citar de memoria está prohibido.

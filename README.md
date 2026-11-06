@@ -541,8 +541,11 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   `parcial`; una `no_respalda` nunca se compensa, y las filas de respaldo van solo en el Anexo A;
   (4) las fuentes de esas afirmaciones, registradas y verificadas;
   (5) las cifras con unidades y los `[Rn]` con su etiqueta, comprobados por frase y, en las tablas, por su estructura;
-  (6) las citas solo como `[Rn]` en la misma frase: las autor-año (también las narrativas) y las numéricas («[1]»,
-  «(R1)») son error, y la afirmación de una `[PUB]` va en su propia frase;
+  (6) las citas solo como `[Rn]` en la misma frase: una cita autor-año (también narrativa) sin `[Rn]` en su frase y
+  las numéricas («[1]», «(R1)») son error; en una frase con `[Rn]`, los apellidos (o la institución) y el año de una
+  cita autor-año deben figurar en la entrada de alguna de esas referencias (si no, es error: «... [R1] [PUB], como ya
+  observaron Han et al. (2020)» con R1 = García 2018 nombra un trabajo que nadie verifica); y la afirmación de una
+  `[PUB]` va en su propia frase;
   (7) en la sección 14, la ruta del registro y el estado efectivo de cada compuerta, sin contar el texto tachado u
   oculto.
   La comprobación de cifras y citas detecta las formas habituales, no todas (ver [Limitaciones](#limitaciones)).
@@ -714,7 +717,10 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
 - **Detección de cifras y citas sin etiqueta**: es heurística. No detecta cifras escritas con letras, unidades fuera
   de su lista (las de tiempo se excluyen a propósito), la unidad que solo está en el título o en una nota de la tabla,
   «Autor Año» sin paréntesis en prosa sin «según», «véase» ni verbo de cita, una cita tras una entradilla sin
-  palabra de cita, ni afirmaciones sin etiqueta que no llevan cifras ni citas.
+  palabra de cita, ni afirmaciones sin etiqueta que no llevan cifras ni citas. La correspondencia de una cita
+  autor-año con la entrada de su `[Rn]` es léxica: basta con que sus apellidos y su año aparezcan en la entrada (un
+  coautor, un número de las páginas; no los identificadores), sin comprobar el orden de los autores, y una cita que
+  no se reconoce como tal tampoco se contrasta.
 - **Firma humana**: es una atestación sin autenticar. En Linux la falsifica una sola orden de Bash lanzada desde
   Claude Code que deje el proceso huérfano, con el entorno vacío y con una terminal propia, si el hook no la reconoce
   (sus listas no son exhaustivas y no ve nombres construidos ni la opción leída de un fichero); en Windows basta

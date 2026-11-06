@@ -20,7 +20,8 @@ desacuerdos. Las puntuaciones solo se registran si el informe obtiene un sello v
    Normativa y literatura gris solo con URL valen únicamente si una persona las registró con
    `nutria verificar manual <URL> --firma-humana NOMBRE` (solo personas; ningún agente lo hace).
    Reglas de redacción que comprueba el código: las citas, solo como `[Rn]` en la misma frase (ni autor-año, ni
-   «[1]», «(1)», «(R1)» o «según R1», ni DOI o enlaces de artículos en el texto: van en la bibliografía); cada frase
+   «[1]», «(1)», «(R1)» o «según R1», ni DOI o enlaces de artículos en el texto: van en la bibliografía; una
+   autor-año junto a un `[Rn]` solo pasa si sus apellidos y su año están en la entrada de ese `[Rn]`); cada frase
    y cada fila de tabla con cifras lleva su etiqueta, aunque la unidad esté en la cabecera o en la etiqueta de la
    fila; la afirmación de una `[PUB]` va en su propia frase (no «Así lo indica el ensayo [PUB]» tras una frase sin
    etiqueta); en la sección 14, la ruta del registro va justo después de «Ruta regulatoria».
