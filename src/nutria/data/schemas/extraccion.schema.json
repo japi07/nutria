@@ -188,6 +188,7 @@
       "type": "number",
       "minimum": 0
     },
+    "correlacion_intrasujeto": {"type": ["number", "null"], "minimum": 0, "exclusiveMaximum": 1, "description": "Correlación intrasujeto (r) de la variable en un diseño cruzado (crossover, cuadrado latino), en [0, 1): solo si la fuente la publica o se calcula de sus datos publicados (indícalo en ubicacion). La usa la SMD emparejada de nutria meta analizar (columna rho_intrasujeto); si no consta, se omite y el análisis declara un valor supuesto [SUP] con --rho-intrasujeto."},
     "p_valor": {
       "type": "number",
       "minimum": 0,

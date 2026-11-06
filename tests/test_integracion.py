@@ -664,3 +664,44 @@ def test_coord_error_de_escritura_en_stdout_tiene_su_codigo(tmp_path, argv, codi
                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
     assert res.returncode == codigo, res.stderr
     assert "Exception ignored" not in res.stderr and "Traceback" not in res.stderr
+
+
+# ============================================================================ fase de coordinación (2): P5 → P7
+def test_coord_correlacion_intrasujeto_publicada_llega_al_csv_de_analisis(project, capsys):
+    """Petición de P5 al paquete del registro: el campo opcional correlacion_intrasujeto (r publicada en un diseño
+    cruzado, en [0, 1)) se registra con la doble extracción y se exporta como columna rho_intrasujeto, que meta
+    analizar usa sin suponerla."""
+    import csv
+
+    from nutria import db
+    from nutria.config import load_config
+    conn = db.connect(load_config().db_path)
+    try:
+        db.upsert_source(conn, {"doi": "10.1000/cruzado", "title": "Ensayo cruzado", "year": 2020, "verified": True,
+                                "retracted": False, "verified_via": "prueba"})
+    finally:
+        conn.close()
+    recs = json.loads((ROOT / "ejemplos" / "extraccion_ejemplo.json").read_text("utf-8"))
+    for r in recs:
+        r.update(fuente="doi:10.1000/cruzado", diseno="crossover", correlacion_intrasujeto=0.6)
+    for copia, indent in (("A", None), ("B", 1)):
+        (project / f"x_{copia}.json").write_text(json.dumps(recs, ensure_ascii=False, indent=indent), "utf-8")
+        code, _, err = _run(capsys, ["--agente", f"extractor-datos-{copia}", "extraccion", "depositar", "--datos",
+                                     str(project / f"x_{copia}.json")])
+        assert code == 0, err
+    code, _, err = _run(capsys, ["--agente", "extractor-datos-C", "extraccion", "comparar", str(project / "x_A.json"),
+                                 str(project / "x_B.json"), "--registrar"])
+    assert code == 0, err
+    variable = recs[0]["variable"]
+    code, _, err = _run(capsys, ["--agente", "estadistico", "extraccion", "exportar", "--variable", variable, "--csv",
+                                 str(project / "l.csv")])
+    assert code in (0, 1), err
+    with open(project / "l.csv", encoding="utf-8") as fh:
+        filas = list(csv.DictReader(fh))
+    assert filas and all(float(f["rho_intrasujeto"]) == 0.6 for f in filas)
+    # fuera de [0, 1): el esquema lo rechaza (código 2)
+    malo = [dict(recs[0], correlacion_intrasujeto=1.0)]
+    (project / "malo.json").write_text(json.dumps(malo, ensure_ascii=False), "utf-8")
+    code, _, err = _run(capsys, ["--agente", "extractor-datos-D", "extraccion", "depositar", "--datos",
+                                 str(project / "malo.json")])
+    assert code == 2 and "correlacion_intrasujeto" in err

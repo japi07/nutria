@@ -175,6 +175,8 @@ MIGRATIONS = {
     # Licencia del artículo o del dato según la API (Crossref, OpenAlex, DataCite): URL o código (cc-by...).
     "sources": [("license", "TEXT")],
 }
+# Correlación intrasujeto publicada de los diseños cruzados (petición de P5): columna rho_intrasujeto del CSV de análisis.
+MIGRATIONS["extractions"].append(("within_r", "REAL"))
 # PDR, ventanas respecto al hito y definición de caso, doble extracción (comparación y pareja de registros), contexto
 # biológico de las afirmaciones y clasificación regulatoria de las oportunidades.
 for _table, _columns in {
@@ -817,6 +819,7 @@ EXTRACTION_FIELDS = {
     "n_control": "n_ctrl", "n_tratamiento": "n_trt", "media_control": "mean_ctrl",
     "media_tratamiento": "mean_trt", "tipo_dispersion": "dispersion_type",
     "dispersion_control": "disp_ctrl", "dispersion_tratamiento": "disp_trt", "p_valor": "p_value",
+    "correlacion_intrasujeto": "within_r",
     "eventos_control": "ev_ctrl", "eventos_tratamiento": "ev_trt",
     "forraje_pct_ms": "forage_pct_dm", "fnd_pct_ms": "ndf_pct_dm", "almidon_pct_ms": "starch_pct_dm",
     "grasa_pct_ms": "fat_pct_dm", "pb_pct_ms": "cp_pct_dm", "dcad_meq_kg_ms": "dcad_meq_kg_dm",

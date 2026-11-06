@@ -184,7 +184,7 @@
             "finalidad_nutricional_especifica",
             "ninguna"
           ],
-          "description": "funcional: art. 13.1 (objetiva, comprobable y con justificación científica); finalidad_nutricional_especifica: art. 13.2, solo piensos dietéticos (Reglamento (UE) 2020/354); ninguna: sin alegación."
+          "description": "funcional: art. 13.1 (objetiva, comprobable y con justificación científica; puede referirse a la optimización de la nutrición o al apoyo o la protección de las condiciones fisiológicas, art. 13.2); finalidad_nutricional_especifica: solo piensos dietéticos, para un uso previsto del Reglamento (UE) 2020/354; ninguna: sin alegación."
         },
         "fundamento": {
           "type": "string",
