@@ -153,7 +153,7 @@ y las huellas), `cache_exportar`, `cache_importar` y `normativa`. Los hooks web 
 `src/nutria/http.py` concentra las peticiones: caché con integridad confirmada por la procedencia (una copia alterada
 o plantada se descarta con aviso), validación de cada respuesta (`validate=`, también de las versiones de las bases,
 con `sources/base.py:checked_version`), intervalos y turnos de concurrencia entre procesos que comparten la caché
-(límites de Crossref), `NetworkError` con su motivo (red, bloqueado, conexion, servicio, peticion, credenciales,
+(límites de Crossref; con `fcntl`, en POSIX: en Windows solo dentro de cada proceso), `NetworkError` con su motivo (red, bloqueado, conexion, servicio, peticion, credenciales,
 limite, respuesta, offline, no_encontrado) y la sonda de `doctor`. `sources/eurlex.py` da los metadatos de normativa,
 `sources/doiorg.py` consulta doi.org y DataCite, y `verify/citations.py` verifica las referencias. La tabla de
 códigos de salida está en `cli.CODIGOS_SALIDA` (también en `nutria --help`); `cli._error` escribe siempre el error

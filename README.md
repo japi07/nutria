@@ -446,7 +446,7 @@ Lista completa: `nutria --help` y `nutria <orden> --help`. Otras órdenes que co
   verificación manual de la persona).
 - `nutria afirmacion comprobar [A-xxxx ...]`: compara la cita textual de las afirmaciones `[PUB]` del registro con el
   resumen de su fuente (estados `en_resumen`, `no_en_resumen`, `sin_resumen` y `sin_cita`; 1 si alguna no aparece,
-  4 sin red).
+  también si la red falla y queda `sin_resumen`; 4 solo con `--offline`).
 - `nutria oportunidad clasificar <ID> --ruta R [--grupo-funcional G] [--situacion S] --motivo "..."`: registra la
   clasificación del triage regulatorio (la propone `regulacion-seguridad`; `--grupo-funcional`, obligatorio en las
   rutas `aditivo_*`).
@@ -611,9 +611,9 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   corrales y en diseños cruzados y la plantilla de `exportar-r`. La meta-regresión es de casos completos (avisa de
   las filas que excluye). `meta` se niega, salvo con `--exploratorio`, con las filas que el CSV de
   `extraccion exportar` marca sin doble extracción verificada (columnas `doble_extraccion_verificada` y
-  `estado_verificacion`, que añade `--incluir-sin-conciliar`); **un CSV preparado a mano o sin esas columnas se
-  analiza sin esa comprobación y sin aviso**, así que para un análisis que cuente usa siempre el CSV que exporta
-  `extraccion exportar`.
+  `estado_verificacion`, que el CSV de análisis lleva siempre; esas filas solo se exportan con
+  `--incluir-sin-conciliar`); **un CSV preparado a mano o sin esas columnas se analiza sin esa comprobación y sin
+  aviso**, así que para un análisis que cuente usa siempre el CSV que exporta `extraccion exportar`.
 - **Economía**: el modelo de la empresa declara su propio precio, dosis y días por ciclo; `econ coherencia` y
   `econ desarrollador --ganadero` comprueban que coinciden con los del modelo del ganadero (código 1 si no), y
   `econ desarrollador` sin `--ganadero` termina con 0 y solo avisa: la coherencia no se impone al puntuar. Con
@@ -635,7 +635,8 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   `--incluir-confidenciales`; `patentes` guarda solo la huella de la consulta salvo `--registrar-consulta`. Una huella
   sin sal permite confirmar una consulta adivinada.
 - **Límites de uso de Crossref**: 5 peticiones/s y concurrencia 1 en el pool público, o 10/s y 3 con correo de
-  contacto; se comparten solo entre procesos que usan la misma caché y no se han comprobado en vivo.
+  contacto; se comparten solo entre procesos que usan la misma caché (en Windows, sin `fcntl`, solo dentro de cada
+  proceso) y no se han comprobado en vivo.
 - **Secretos**: las claves de API no se escriben en la caché, la procedencia ni los mensajes de error.
 
 ### Lo que hacen los hooks de Claude Code

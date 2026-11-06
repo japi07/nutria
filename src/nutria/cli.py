@@ -357,6 +357,13 @@ def _run_hook_black_box(root: Path) -> dict | None:
     return {"ok": False, "codigo": proc.returncode}
 
 
+# Lo que pasa si el hook PostToolUse no tiene un Python con las dependencias: falla en cerrado, pero actúa después de
+# escribir, así que no impide la escritura.
+_HOOK_SIN_PYTHON = ("el hook devolverá a Claude Code un bloqueo («block») por cada escritura en research/ que debía "
+                    "validar, sin validarla (falla en cerrado), aunque el fichero queda escrito: un hook PostToolUse "
+                    "actúa después de escribir")
+
+
 def _doctor_hook(root: Path) -> dict:
     """¿Puede scripts/hooks/run_hook.sh ejecutar los hooks de Claude Code? Se ejecuta una copia del propio
     run_hook.sh con una sonda que importa, como check_research_file.py (con <raíz>/src antepuesto a sys.path),
@@ -371,7 +378,7 @@ def _doctor_hook(root: Path) -> dict:
     candidates = _hook_candidates(root)
     if not candidates:
         return {"estado": "no_encontrado", "esencial": True,
-                "detalle": "run_hook.sh no encuentra Python: bloqueará las escrituras en research/ (falla cerrado)"}
+                "detalle": "run_hook.sh no encuentra Python: " + _HOOK_SIN_PYTHON}
     checks = []
     for interpreter in candidates:
         ok, why = _probe_interpreter(interpreter, root)
@@ -384,7 +391,7 @@ def _doctor_hook(root: Path) -> dict:
             return {"estado": "ok", "esencial": True, "interprete": first["interprete"], "candidatos": checks}
         return {"estado": "sin_dependencias", "esencial": True, "interprete": first["interprete"],
                 "candidatos": checks,
-                "detalle": f"{failed} — el hook bloqueará las escrituras en research/ que debía validar"}
+                "detalle": f"{failed} — {_HOOK_SIN_PYTHON}"}
     if runner["ok"]:
         out = {"estado": "ok", "esencial": True, "interprete": runner.get("interprete"), "nutria": runner.get("nutria"),
                "candidatos": checks}
@@ -393,7 +400,7 @@ def _doctor_hook(root: Path) -> dict:
         return out
     return {"estado": "sin_dependencias", "esencial": True, "interprete": checks[0]["interprete"], "candidatos": checks,
             "detalle": (failed or f"run_hook.sh terminó con código {runner.get('codigo')} sin ejecutar la sonda")
-            + " — el hook bloqueará las escrituras en research/ que debía validar"}
+            + f" — {_HOOK_SIN_PYTHON}"}
 
 
 def _doctor_r() -> dict:

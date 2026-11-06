@@ -179,7 +179,7 @@ fuente; tabla completa en `nutria --help`.
   `nutria oportunidad clasificar <ID> --ruta R [--grupo-funcional G] [--situacion S] --motivo "..."` (tras el triage,
   con `--agente regulacion-seguridad`; `--grupo-funcional` es obligatorio en las rutas `aditivo_*`) ·
   `nutria afirmacion agregar --datos f.json` · `nutria afirmacion comprobar [A-xxxx ...]` (cita textual frente al
-  resumen de la fuente; 1 si alguna no aparece, 4 sin red) ·
+  resumen de la fuente; 1 si alguna no aparece o queda `sin_resumen` porque falla la red; 4 con `--offline`) ·
   `nutria decision registrar --entidad <ID> --decision "..." --motivo "..."` (la entidad debe existir)
 - Extracción (doble extracción registrada; plantilla en `ejemplos/conciliacion_ejemplo.json`): cada extractor deposita
   su copia con su identidad, `nutria --agente extractor-datos-A extraccion depositar --datos A.json` (una copia

@@ -1613,6 +1613,24 @@ def test_doctor_checks_the_hook_interpreter(proj, router, capsys, monkeypatch):
     assert code == cli.SALIDA_RESULTADO and json.loads(out)["hook"]["estado"] == "no_encontrado"
 
 
+def test_doctor_dice_que_el_hook_sin_python_no_impide_la_escritura(proj, monkeypatch):
+    # Revisión de la documentación (ronda 2): el PostToolUse actúa después de escribir; sin un Python que sirva
+    # devuelve «block» por cada escritura en research/, pero el fichero queda escrito.
+    (proj / "scripts" / "hooks").mkdir(parents=True)
+    (proj / "scripts" / "hooks" / "run_hook.sh").write_text((ROOT / "scripts" / "hooks" / "run_hook.sh").read_text(
+        "utf-8"), "utf-8")
+    monkeypatch.setattr(cli, "_hook_candidates", lambda root: [])
+    hook = cli._doctor_hook(proj)
+    assert hook["estado"] == "no_encontrado" and "no encuentra Python" in hook["detalle"]
+    assert "queda escrito" in hook["detalle"] and "bloqueará las escrituras" not in hook["detalle"]
+    monkeypatch.setattr(cli, "_hook_candidates", lambda root: ["python3"])
+    monkeypatch.setattr(cli, "_probe_interpreter", lambda interpreter, root: (False, "falta jsonschema"))
+    monkeypatch.setattr(cli, "_run_hook_black_box", lambda root: {"ok": False, "codigo": 3})
+    hook = cli._doctor_hook(proj)
+    assert hook["estado"] == "sin_dependencias" and "falta jsonschema" in hook["detalle"]
+    assert "queda escrito" in hook["detalle"] and "bloqueará las escrituras" not in hook["detalle"]
+
+
 def test_doctor_hook_check_follows_the_installed_runner(proj, router, capsys, monkeypatch):
     # Con un run_hook.sh que prueba el siguiente intérprete, una .venv rota no impide el hook si python3 sirve
     monkeypatch.setattr(cli, "_doctor_r", lambda: {"estado": "no_instalado"})
