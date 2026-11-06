@@ -32,3 +32,13 @@ Expresa la dosis en las tres bases (g/animal/día, mg/kg de MS y g/t de pienso) 
 `nutria --agente nutricion-formulacion dosis convertir` (salida `[DER]`); la ingestión se declara con fuente o `[SUP]`.
 Rangos exploratorios de dosis justificados con datos publicados (`[PUB]`) o etiquetados como `[SUP]`, con el
 experimento que los acotaría. Calcula el coste por animal y día con `nutria --agente nutricion-formulacion econ ganadero` cuando haya precios con fuente.
+
+## Modelo de este agente
+
+El modelo asignado (`model:` arriba) se eligió por criterio, no por rendimiento medido: la competencia en nutrición
+de rumiantes de los modelos no se ha medido. Se mide con el banco `evals/dominio_semilla.jsonl` (área `nutricion`):
+una persona decide qué modelos comparar y los activa en `config/modelos.toml`, y la sesión principal ejecuta
+`nutria --agente director-cientifico llm evaluar evals/dominio_semilla.jsonl --modelo <id>` para cada uno; decide con la exactitud de
+`solo_validadas` y de `por_area`. Las preguntas con estado `pendiente_validacion` las valida antes una persona
+experta. nutria no tiene racionamiento: los requerimientos salen de software oficial o validado y de fuentes
+verificadas, nunca de memoria.

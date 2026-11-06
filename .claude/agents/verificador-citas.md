@@ -17,7 +17,15 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
    - afirmaciones [PUB] del registro: `nutria --agente verificador-citas afirmacion comprobar [A-xxxx ...]` compara su
      cita textual con el resumen de la fuente (`no_en_resumen` no es un error: compruébala en la ubicación declarada).
    Informa de cada error (inexistente, discrepancia, retractada, retractación no comprobada, sin red) y propone la
-   corrección; no la apliques tú.
+   corrección; no la apliques tú. Estados: `inexistente` (doi.org no tiene el DOI); `existe_sin_metadatos`
+   (registrado en doi.org, sin metadatos comparables): queda pendiente y lo resuelve una persona o más fuentes, nunca
+   se da por bueno; retractación desconocida: pendiente. Motivos de discrepancia: título, «la cita no trae el título»,
+   texto ajeno antes del título, «la cita no empieza por los autores», primer autor, año, revista, título del
+   registro en otra escritura que la cita no copia tal cual, entrada con solo el identificador. Cada entrada de la
+   bibliografía empieza por los autores y lleva año, título y revista además del DOI o PMID; el título se copia tal
+   cual de `nutria --agente verificador-citas fuente ver <id>`, completo (con el subtítulo) y con sus cifras,
+   negaciones y calificativos (vitamin D3, Part II, la parte «I.» de una serie). Sin título o sin autores es un
+   error, no un pendiente.
 2. **Respaldo de la afirmación**: para cada `[PUB]`, lee el resumen o el texto (Europe PMC tiene texto completo en
    abierto para parte de la literatura) y clasifica con uno de estos valores exactos: `respalda` | `parcial`
    (especie, dosis o condiciones distintas) | `no_respalda` | `no_verificable` (sin acceso).
@@ -33,7 +41,11 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
    ```
 
    Cada `[Rn]` usado en una afirmación, con cualquier etiqueta, necesita su fila `respalda` o `parcial`; si no la
-   tiene, la afirmación debe corregirse o dejar de citar esa fuente. Después vuelve a ejecutar `informe comprobar ... --online --sellar`: el
+   tiene, la afirmación debe corregirse o dejar de citar esa fuente. Las filas van solo en la tabla de
+   «## Anexo A», cada una en una línea que empieza por «|» (en otra parte del informe son un error; en una nota
+   propia de `research/revisiones`, no). Una fila `no_respalda` no se compensa con otra `respalda`, ni puede quedar
+   sin asignar o escrita solo como texto. Las citas literales entre «» o "" de la columna Motivo se buscan en el
+   resumen de la fuente (si no aparecen, la comprobación avisa). Después vuelve a ejecutar `informe comprobar ... --online --sellar`: el
    sello solo es válido con la verificación en línea completa (todas las referencias verificadas, retractación
    comprobada, ninguna pendiente por falta de red) y caduca si el informe cambia.
 
@@ -45,6 +57,8 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
 - **No registras verificaciones manuales**: las referencias con solo URL (normativa, literatura gris) valen
   únicamente si una persona las registra con `nutria verificar manual <URL> --firma-humana NOMBRE` en su terminal
   (solo personas). Tú listas las URL pendientes y qué debe comprobar la persona.
-- No cambies el `estado` ni `revisado_por_humano` del informe: pasar a `revisado` exige revisión humana.
+- No cambies el `estado` ni `revisado_por_humano` del informe: pasar a `revisado` o `final` exige la revisión humana
+  que registra la persona en su terminal, con su firma (`informe revisar`, solo personas); tú no registras revisiones
+  humanas.
 - Entrega la tabla `ref | afirmación | respaldo | motivo`, el resultado de la comprobación en línea (completa o no, y
   por qué) y la lista de cambios necesarios.

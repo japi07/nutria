@@ -38,7 +38,9 @@ nueve, en el mismo orden, que comprueba `critico-red-team` y que usa `mision-1-a
    (DOI 10.2903/j.efsa.2018.5274). Comprueba en EFSA Journal que sigue vigente y anota la fecha.
 5. **Buenas prácticas de laboratorio (BPL)** en los estudios de seguridad del dossier que las requieran.
 6. **Potencia** con varianzas reales (las del metaanálisis o de estudios comparables, con fuente), no supuestas:
-   `nutria --agente director-cientifico potencia medias --delta <efecto mínimo relevante> --de <DE>`, con la unidad experimental correcta.
+   `nutria --agente director-cientifico potencia medias --delta <efecto mínimo relevante> --de <DE>`, con la unidad experimental correcta
+   (con corrales: `--m <animales por corral> --icc <ICC>`, y la salida da corrales y animales; crossover:
+   `--diseno crossover --de-intra <DE intraanimal>`; cuadrado latino: `--diseno cuadrado_latino --tratamientos <t>`).
 7. **Registro previo del protocolo** cuando no comprometa la confidencialidad (la decisión es humana).
 8. **Notificación a EFSA** de los estudios encargados para respaldar una solicitud (Reglamento (UE) 2019/1381, que
    añade el art. 32b al Reglamento (CE) 178/2002; aplicable desde el 27-03-2021) y posibilidad de pedir asesoramiento

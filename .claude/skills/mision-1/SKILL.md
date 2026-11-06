@@ -31,7 +31,8 @@ lanzar ningún agente. El registro del workflow da una estimación del número d
 
 ## Paso 0. Preparación (en cada fase)
 
-1. `nutria --agente <tu-rol> doctor`. Si alguna fuente no es accesible, dilo al usuario y continúa con las demás (el workflow acepta
+1. `nutria --agente <tu-rol> doctor` (sale con 1 si fallan comprobaciones esenciales: PubMed, Europe PMC, Crossref,
+   el registro o el intérprete del hook). Si alguna fuente no es accesible, dilo al usuario y continúa con las demás (el workflow acepta
    el estado de cada fuente como texto, "OK (200)", o como objeto, `{"estado": "ok", ...}`).
 2. `nutria --agente <tu-rol> estado` (en texto: una línea `O-xxxx [estado] título` por oportunidad). No dupliques oportunidades ya
    registradas: compara los títulos normalizados con los registrados (el workflow no genera, comprueba ni registra de
@@ -81,12 +82,17 @@ el foco) antes de continuar.
 - Registra cada oportunidad el agente que la generó: JSON en `research/oportunidades/M1_<fecha>_<título normalizado>.json`
   (sin sobrescribir ficheros existentes) y `nutria --agente <generador> oportunidad nueva --datos <f>`; hipótesis
   con `nutria --agente <tu-rol> hipotesis nueva` en `research/hipotesis/M1_<fecha>_<título normalizado>_H<n>.json`.
+  Cada oportunidad lleva una especie y una etapa concretas: el registro rechaza los valores genéricos (también
+  «animales productores de alimentos» o «rumiantes en general»); `raza` y `estado_fisiologico` son opcionales
+  (`no_consta` si no aplican).
 
 ## Paso 3 (M1c, fase "oportunidades"). Triage, crítica y puntuación ciega
 
 Para cada oportunidad, en paralelo, cada especialista **propone** la compuerta de la que es propietario y la registra
 sin `--firma-humana` (`nutria --agente <rol> puntuar compuerta <ID> <compuerta> <estado> --motivo "..."`):
-- `regulacion-seguridad`: clasificación y vía (skill `triage-regulatorio`) → `regulatoria`;
+- `regulacion-seguridad`: clasificación y vía (skill `triage-regulatorio`), que registra con
+  `nutria --agente regulacion-seguridad oportunidad clasificar <ID> --ruta R [--grupo-funcional G] [--situacion S] --motivo "..."`
+  (sin esa clasificación, la compuerta no se propone `superada`) → `regulatoria`;
 - `compuestos-toxicologia`: seguridad → `seguridad`;
 - `fisiologia-bioquimica`: destino digestivo con `nutria --agente fisiologia-bioquimica destino ruminal` → `destino_digestivo`;
 - `desarrollo-industrial`: fabricación y método analítico → `analitica`;

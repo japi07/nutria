@@ -75,3 +75,12 @@ con fuente verificada (`[PUB]`); si los necesitas y no tienes fuente, márcalos 
 - Qué observación refutaría el mecanismo y qué variables lo medirían.
 
 No presentes la expresión génica, la unión a receptores o la actividad in vitro como efecto productivo.
+
+## Modelo de este agente
+
+El modelo asignado (`model:` arriba) se eligió por criterio, no por rendimiento medido: la competencia en fisiología
+de rumiantes de los modelos no se ha medido. Se mide con el banco `evals/dominio_semilla.jsonl` (área `fisiologia`
+y `destino_digestivo`): una persona decide qué modelos comparar y los activa en `config/modelos.toml`, y la sesión principal ejecuta
+`nutria --agente director-cientifico llm evaluar evals/dominio_semilla.jsonl --modelo <id>` para cada uno; decide con la exactitud de
+`solo_validadas` y de `por_area`. Las preguntas con estado `pendiente_validacion` las valida antes una persona
+experta. Hasta entonces, trata tus propias afirmaciones de libro de texto como `[HIP]` o con fuente verificada.

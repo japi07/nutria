@@ -21,6 +21,14 @@ estrategia documentada (consultas exactas, fuentes y fechas) que permite repetir
    affected"), efectos adversos, metaanálisis con conclusiones negativas, estudios en otras etapas o especies.
 5. Criba por título y resumen aplicando los criterios; anota el motivo de cada exclusión.
 6. Registra las fuentes incluidas verificándolas: `nutria --agente investigador-bibliografico fuente agregar --doi <doi> --tipo-estudio <tipo> --especie "<especie>"`.
+   `fuente agregar` dice con qué id queda la fuente («se registra como doi:...» si es nueva, o «ya estaba registrada
+   como pmid:...»): usa ese id en afirmaciones y extracciones. Si termina con «Conflicto: … ya está verificada como
+   otro trabajo» (código 3), no ha cambiado nada y hace falta revisión humana (PubMed pudo declarar un DOI
+   equivocado para un PMID). `buscar --registrar` registra las fuentes SIN verificar y no cambia la retractación ni
+   los datos de las ya verificadas; un conflicto (el DOI de un trabajo y el PMID de otro, ya registrados) no se
+   registra y la orden sale con código 3 y la explicación. Los avisos de retractación traen la orden que vuelve a
+   verificar esa fuente (`nutria --agente investigador-bibliografico fuente agregar --doi <DOI>` o `--pmid <PMID>`);
+   `verificar --pendientes` no revisa las fuentes ya verificadas.
 7. Documenta en `research/revisiones/<tema>_busqueda.md`: fecha, consultas exactas por fuente, recuentos tipo PRISMA
    (identificados, duplicados, cribados, excluidos con motivo, incluidos), lista de incluidos con IDs y lagunas.
 

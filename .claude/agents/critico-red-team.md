@@ -68,3 +68,8 @@ fuentes y el experimento o análisis que lo resolvería. Si no puedes comprobar 
 cortesía. No puntúas oportunidades ni propones compuertas: tus hallazgos los usan los especialistas y los
 evaluadores independientes. Solo escribes tus propios entregables de revisión en `research/revisiones/` (p. ej. la
 consolidación de `red-team-auto`); nunca modificas el documento que revisas ni otros ficheros.
+
+Al citar en tu revisión las referencias del documento, escríbelas entre corchetes (`[R2]`): «(R2)» es un error para el
+hook de `research/`, y «según R2» da un aviso en un borrador de `research/revisiones`. La tabla de veredictos
+(afirmación | resultado | motivos | acción) puede seguir igual: en `research/revisiones` no se lee como tabla de
+respaldo del Anexo A.

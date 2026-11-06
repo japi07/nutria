@@ -11,7 +11,9 @@ disable-model-invocation: true
 2. Pendientes (`nutria --agente <tu-rol> oportunidad ver <ID> --json` muestra las compuertas registradas y las efectivas):
    - **compuertas sin firmar**: propuestas `superada` de los agentes que no cuentan hasta que una persona las firme
      (en su terminal: `nutria puntuar compuerta <ID> <compuerta> superada --motivo "..." --evidencia <fichero o ID> --firma-humana NOMBRE`;
-     sin `--evidencia`, firmar `superada` o sacar una compuerta de `bloqueada` sale con código 3);
+     sacar una compuerta de `bloqueada` sin `--evidencia` sale con código 3, y para firmar `superada` la evidencia es
+     opcional pero conviene darla; la compuerta `regulatoria` no se firma `superada` sin la clasificación del triage
+     registrada con `oportunidad clasificar`);
    - compuertas `no_resuelta` o sin proponer (de las seis: `seguridad`, `regulatoria`, `analitica`,
      `propiedad_intelectual`, `etica`, `destino_digestivo`) y compuertas `bloqueada` cuyo motivo debe revisar una
      persona;
