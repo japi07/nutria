@@ -505,6 +505,23 @@ def test_coord3_hook_la_ruta_del_proyecto_no_es_una_orden_nutria(command):
     assert _hook_bash(command, "critico-red-team").returncode == 0, command
 
 
+@pytest.mark.parametrize("command, esperado", [
+    # nutria como texto detrás de una orden nutria bien atribuida (revisión final de P1: falsos positivos)
+    ("nutria --agente critico-red-team informe nuevo O-0001 && grep -n nutria research/informes/O-0001.md", 0),
+    ("nutria --agente critico-red-team estado && git commit -m 'registro de nutria; ver estado'", 0),
+    # en cuanto hay otra orden que puede ejecutar el texto, se comprueba cada orden (la segunda versión de la
+    # coordinación quitaba el echo y dejaba pasar «echo nutria estado | sh»)
+    ("nutria --agente critico-red-team estado; echo nutria estado | sh", 2),
+    ("echo nutria estado > x.sh; sh x.sh", 2),
+    ("grep -o 'nutria estado' notas.txt | sh", 2),
+    ("cat x | nutria estado", 2),
+    ("nutria --agente critico-red-team estado; nutria estado", 2),
+    ("echo \"comillas sin cerrar nutria estado", 2),
+])
+def test_coord3_hook_quita_solo_las_ordenes_que_no_ejecutan_nada(command, esperado):
+    assert _hook_bash(command, "critico-red-team").returncode == esperado, command
+
+
 @pytest.mark.parametrize("command, agente", [
     # nutria por su ruta en posición de orden o seguida de una orden de nutria
     ("timeout 10 /usr/bin/nutria estado", "critico-red-team"),
