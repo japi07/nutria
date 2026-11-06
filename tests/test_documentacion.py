@@ -519,7 +519,7 @@ def test_readme_ejemplos_son_ordenes_validas():
 def test_documentos_citan_ordenes_que_existen():
     parser = build_parser()
     errores = []
-    for doc in DOCS:
+    for doc in (*DOCS, "CLAUDE.md", "config/LEEME.md"):
         for orden in _inline_nutria(_read(doc)):
             motivo = _invalid_path(parser, orden)
             if motivo:
@@ -541,3 +541,118 @@ def test_diagramas_mermaid_con_comillas_equilibradas():
         for bloque in re.findall(r"```mermaid\n(.*?)```", _read(doc), flags=re.DOTALL):
             for linea in bloque.splitlines():
                 assert linea.count('"') % 2 == 0, f"{doc}: {linea}"
+
+
+# ============================================================================ enlaces y rutas internas (D10-4)
+DOCS_CON_ENLACES = (README, "CLAUDE.md", "config/LEEME.md",
+                    *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs").glob("*.md")))
+_RUTA_REPO_RE = re.compile(r"`((?:docs|src|scripts|tests|ejemplos|evals|\.claude|requirements)/[^`\s]*)`")
+
+
+def _sin_bloques_de_codigo(texto: str) -> str:
+    return re.sub(r"```.*?```", "", texto, flags=re.DOTALL)
+
+
+def _enlaces_relativos(texto: str) -> list[str]:
+    """Destinos de los enlaces Markdown que no son URL ni anclas de la misma página."""
+    destinos = []
+    for m in re.finditer(r"\[[^\]]*\]\(([^)\s]+)\)", _sin_bloques_de_codigo(texto)):
+        destino = m.group(1)
+        if not re.match(r"[a-z][a-z0-9+.-]*:", destino) and not destino.startswith("#"):
+            destinos.append(destino.split("#")[0])
+    return destinos
+
+
+def _ancla(titulo: str) -> str:
+    """Ancla de un título como la genera GitHub: minúsculas, sin signos (salvo guiones) y con guiones por espacios."""
+    titulo = re.sub(r"[^\w\- ]", "", titulo.strip().lower())
+    return titulo.replace(" ", "-")
+
+
+def test_enlaces_relativos_de_la_documentacion_apuntan_a_ficheros_existentes():
+    rotos = [f"{doc}: {destino}" for doc in DOCS_CON_ENLACES for destino in _enlaces_relativos(_read(doc))
+             if not ((ROOT / doc).parent / destino).exists()]
+    assert rotos == []
+    assert "docs/ESTADO_Y_LIMITACIONES.md" in _enlaces_relativos(_read(README))
+
+
+def test_rutas_del_repositorio_citadas_en_la_documentacion_existen():
+    faltan = []
+    for doc in DOCS_CON_ENLACES:
+        for m in _RUTA_REPO_RE.finditer(_read(doc)):
+            ruta = re.sub(r":\d+(-\d+)?$", "", m.group(1).rstrip(".,;:"))
+            if any(c in ruta for c in "<>*{}$|[]"):
+                continue                       # marcadores (<ID>, *.md...), no ficheros concretos
+            if not (ROOT / ruta).exists():
+                faltan.append(f"{doc}: {ruta}")
+    assert faltan == []
+
+
+def test_anclas_internas_del_readme_existen():
+    texto = _read(README)
+    titulos = {_ancla(t) for t in re.findall(r"^#{1,6}\s+(.+)$", _sin_bloques_de_codigo(texto), re.MULTILINE)}
+    anclas = re.findall(r"\]\(#([^)\s]+)\)", _sin_bloques_de_codigo(texto))
+    assert anclas, "el README enlaza sus secciones"
+    assert [a for a in anclas if a not in titulos] == []
+
+
+def test_comprobadores_de_enlaces_detectan_lo_roto():
+    assert _enlaces_relativos("[a](docs/X.md) [b](https://x.org) [c](#seccion) ```\n[d](no.md)\n```") == ["docs/X.md"]
+    assert _ancla("Usar nutria en tu ordenador (Claude Code en local)") == "usar-nutria-en-tu-ordenador-claude-code-en-local"
+
+
+# ============================================================================ estado real y uso local (D4-1, D11-1, D4-10, D11-2, D11-3)
+def test_readme_y_arquitectura_declaran_que_no_se_ha_ejecutado_ninguna_mision():  # D4-1, D11-1
+    readme = _flat(_read(README)).replace("**", "")
+    assert "todavía no se ha ejecutado ninguna misión ni investigación" in readme
+    assert "nada demuestra aún la calidad de sus resultados" in readme
+    assert "no se ha ejecutado ninguna misión ni investigación" in _flat(_read(ARQUITECTURA)).replace("**", "")
+    guia = _flat(_section(_read(README), "Primera misión en tu ordenador"))
+    for clave in ("nutria init", "nutria doctor", "pruebas en vivo", "/mision-1", "mision-1-auto",
+                  '{"fase": "mapa"', "seleccionada M1", "Qué se versiona", "research/procedencia.jsonl -text",
+                  "demostración sin red"):
+        assert clave in guia, clave
+
+
+def test_readme_usar_nutria_en_tu_ordenador():
+    seccion = _flat(_section(_read(README), "Usar nutria en tu ordenador"))
+    for clave in ("Python 3.11", "2.1.318", "Git Bash", "WSL", "requirements/constraints.txt", "nutria init",
+                  "nutria doctor", "OPENALEX_API_KEY", "NCBI_API_KEY", "LENS_API_TOKEN", "email",
+                  "NUTRIA_PRUEBAS_EN_VIVO=1", "fuera de Claude Code", "claude --teleport", "http://localhost:11434/v1",
+                  "LM Studio", "vLLM", 'politica_datos = "local"', "activo = true", "nutria llm modelos",
+                  "nutria llm preguntar", "siguen usando Claude"):
+        assert clave in seccion, clave
+
+
+def test_modelo_local_del_readme_es_utilizable_por_el_registro(tmp_path):
+    from nutria.config import Config
+    from nutria.llm import router
+    bloque = re.search(r"```toml\n(.*?)```", _section(_read(README), "Usar nutria en tu ordenador"), re.DOTALL).group(1)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "modelos.toml").write_text(bloque, "utf-8")
+    [spec] = router.load_registry(Config(root=tmp_path, cache_dir=tmp_path / "cache"))
+    assert spec.usable(Config(root=tmp_path, cache_dir=tmp_path / "cache")) == (True, "ok")
+    assert spec.data_policy == "local" and spec.base_url == "http://localhost:11434/v1" and "critico" in spec.roles
+
+
+def test_asignacion_de_modelos_declarada_sin_medir_y_como_medirla():  # D4-10
+    readme = _flat(_section(_read(README), "Modelos de los agentes"))
+    for clave in ("no se ha medido", "nutria --json llm evaluar evals/dominio_semilla.jsonl", "solo_validadas",
+                  "pendiente_validacion", "evals/clasificacion_regulatoria.jsonl"):
+        assert clave in readme, clave
+    for agente in ("fisiologia-bioquimica", "nutricion-formulacion"):
+        texto = _flat(_read(f".claude/agents/{agente}.md"))
+        assert "no se ha medido" in texto and "llm evaluar evals/dominio_semilla.jsonl" in texto, agente
+
+
+def test_registro_y_procedencia_los_crea_init_y_verificada_sin_traza():  # D11-2
+    donde = _flat(_section(_read("CLAUDE.md"), "Dónde va cada cosa"))
+    assert "Los crea `nutria init`" in donde and "Ambos se versionan con git" not in donde
+    for doc in (REVISION, REGULACION, FUENTES):
+        assert "sin dejar traza en el registro" in _flat(_read(doc)) or "no dejó traza en el registro" in _flat(_read(doc)), doc
+
+
+def test_revision_r6_lleva_el_doi_pendiente_de_verificar():  # D11-3
+    r6 = _references(_read(REVISION))["R6"]
+    assert "DOI: 10.3168/jds.S0022-0302(01)74530-4" in r6 and "pendiente de verificación con `nutria verificar`" in r6
+    assert "(verificada" not in r6

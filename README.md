@@ -189,9 +189,10 @@ siguen usando Claude: el modelo local solo da esa segunda opinión, que es una o
 
 ## Primera misión en tu ordenador
 
-1. **Instala y comprueba**: los pasos de [Usar nutria en tu ordenador](#usar-nutria-en-tu-ordenador-claude-code-en-local),
-   con `nutria doctor` en verde con red y las pruebas en vivo. Si quieres ver antes el recorrido sin red, ejecuta la
-   [demostración sin red](#demostración-sin-red).
+1. **Instala y comprueba**: los pasos de [Usar nutria en tu ordenador](#usar-nutria-en-tu-ordenador-claude-code-en-local):
+   `nutria init` en la raíz del proyecto, `nutria doctor` con red y sin fallos esenciales, y las pruebas en vivo
+   (`NUTRIA_PRUEBAS_EN_VIVO=1 python -m pytest -m vivo tests/test_vivo.py`). Si quieres ver antes el recorrido sin
+   red, ejecuta la [demostración sin red](#demostración-sin-red).
 2. **Abre Claude Code en el proyecto**, con el entorno activado: `source .venv/bin/activate` y `claude`.
 3. **Fase mapa**: escribe `/mision-1 "<foco>"` (paso a paso) o pide a la sesión principal «ejecuta el workflow
    `mision-1-auto` con `{"fase": "mapa", "foco": "transición en vacuno lechero"}`». El resultado queda en
