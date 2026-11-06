@@ -20,9 +20,12 @@ del compuesto y el sistema de puntuación da falsa precisión.
 
 La corrección tiene dos partes:
 1. **Prompt corregido y modular** (`PROMPT_MAESTRO_v2.md`): sirve para cualquier modelo y es la referencia del método.
-2. **Organización convertida en código**: subagentes con contextos separados, procedimientos (skills), workflows
-   deterministas, herramientas que verifican referencias y registran la procedencia, metaanálisis validado,
-   priorización con compuertas y Monte Carlo, y un hook que bloquea informes con referencias no verificables.
+2. **Organización convertida en código**: subagentes con contextos separados, procedimientos (skills), workflows con
+   el control de flujo fijo (las respuestas de cada agente cambian entre ejecuciones), herramientas que verifican
+   referencias y registran la procedencia, metaanálisis validado, priorización con compuertas y Monte Carlo, y un
+   hook que bloquea informes con errores de forma y, en revisado o final, sin revisión humana registrada ni sello
+   válido (verificación en línea completa). Con esa organización todavía no se ha ejecutado ninguna misión: ver la
+   última sección.
 
 ## Qué se conserva
 
@@ -60,9 +63,11 @@ automática de existencia (Crossref, PubMed, OpenAlex), de correspondencia entre
 verificación de respaldo por un agente que lee la fuente (tabla del Anexo A); sello de verificación con huella SHA-256
 que caduca al editar el informe y que solo es válido con verificación en línea completa.
 **Implementación**: `nutria verificar`, `nutria fuente agregar` (solo registra lo verificado),
-`nutria informe comprobar --online --sellar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`,
-que bloquea informes con `[PUB]` sin referencia, referencias sin identificador o marcados como revisados sin sello
-válido.
+`nutria informe comprobar --online --sellar`, `nutria informe revisar` (revisión humana registrada),
+`nutria afirmacion comprobar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`, que bloquea
+informes con `[PUB]` sin referencia, referencias sin identificador, citas fuera del formato `[Rn]` o marcados como
+revisados o finales sin revisión humana registrada ni sello válido. La correspondencia entre identificador y cita es
+una heurística que falla en cerrado (la cita debe traer el título completo del registro).
 
 ### C3. Encuadre "farmacológico" sin frontera regulatoria, y regulación al final
 
@@ -139,13 +144,17 @@ PMC, OpenAlex, Crossref, EFSA Journal, ChEMBL, PubChem, UniProt, STRING, Reactom
     filas del mismo estudio.
 11. **Efecto mínimo relevante** fijado antes de analizar, y control de la multiplicidad.
 
-**Implementación**: `nutria.stats`: efectos fijos, DL, REML, Hartung-Knapp [R11] (por defecto), intervalo de
-confianza de tau², Egger y meta-regresión, validados frente a los resultados publicados de metafor [R10]
-(`tests/test_meta.py`); Paule-Mandel, intervalo de predicción, uno-fuera, subgrupos, medidas binarias (RR, OR, RD),
-agregación de efectos dependientes (`--agregar-estudio --rho`), modelo de St-Pierre con descomposición intra y entre
-estudios, validación dejando un estudio fuera (`nutria meta validar-predictivo`) y potencia, con pruebas propias pero
-sin validación frente a otro programa; `nutria meta exportar-r` genera el script de R (metafor) para modelos
-multinivel.
+**Implementación**: `nutria.stats`: efectos fijos, DL, REML, Hartung-Knapp [R11] (por defecto, en su variante
+modificada max(1, q), que coincide con la estándar si q ≥ 1), intervalo de confianza de tau², Egger y
+meta-regresión, validados frente a los resultados publicados de metafor [R10] (`tests/test_meta.py`). Tienen pruebas
+propias pero no validación frente a otro programa: el intervalo de predicción (t con k − 2 gl y EE de Wald, con
+pruebas numéricas en `tests/test_estadistica_v2.py`: BCG calculado a mano y, con z, la coincidencia con `predict()`
+de metafor), Paule-Mandel, uno-fuera, subgrupos, medidas binarias (RR, OR, RD), agregación de efectos dependientes
+(`--agregar-estudio --rho`), diseños cruzados (fórmulas de grupos emparejados con la correlación intrasujeto),
+moderadores categóricos, el modelo de St-Pierre con descomposición intra y entre estudios y elección de la pendiente
+aleatoria por razón de verosimilitudes, validación dejando un estudio fuera (`nutria meta validar-predictivo`),
+potencia por animales, por corrales y en diseños cruzados, y la plantilla de `nutria meta exportar-r`, que genera el
+script de R (metafor) para modelos multinivel con la misma inferencia.
 
 ### C7. Puntuación 0-100 con falsa precisión
 
@@ -271,15 +280,19 @@ legibles y, además, estructuradas (JSON validado contra esquemas).
 ## Referencias
 
 Estado de verificación a 2026-11-04: "verificada" = comprobada con búsqueda web en la fuente o en índices
-bibliográficos; "pendiente" = sin comprobar en esta sesión (la red bloqueaba Crossref y PubMed). Ejecuta
-`nutria verificar docs/REVISION_PROMPT_ORIGINAL.md` en un entorno con acceso para cerrarlas todas.
+bibliográficos; "pendiente" = sin comprobar en esta sesión (la red bloqueaba Crossref y PubMed). Esa comprobación por
+búsqueda web no dejó traza en el registro de nutria ni en la procedencia, así que no es reproducible, y la frontera
+entre "verificada" y "pendiente" refleja solo lo que se llegó a buscar. La vía reproducible es
+`nutria verificar docs/REVISION_PROMPT_ORIGINAL.md` en un entorno con red, que comprueba cada DOI o PMID y deja la
+traza; las referencias con solo URL valen únicamente con la verificación manual firmada por una persona
+(`nutria verificar manual <URL> --firma-humana NOMBRE`; los agentes no pueden hacerla).
 
 [R1] Page MJ, McKenzie JE, Bossuyt PM, et al. 2021. The PRISMA 2020 statement: an updated guideline for reporting systematic reviews. BMJ 372:n71. DOI: 10.1136/bmj.n71 (pendiente)
 [R2] Tricco AC, Lillie E, Zarin W, et al. 2018. PRISMA Extension for Scoping Reviews (PRISMA-ScR): checklist and explanation. Ann Intern Med 169(7):467-473. DOI: 10.7326/M18-0850 (pendiente)
 [R3] Hooijmans CR, Rovers MM, de Vries RB, et al. 2014. SYRCLE's risk of bias tool for animal studies. BMC Med Res Methodol 14:43. DOI: 10.1186/1471-2288-14-43 (pendiente)
 [R4] O'Connor AM, Sargeant JM, Gardner IA, et al. 2010. The REFLECT statement: methods and processes of creating reporting guidelines for randomized controlled trials for livestock and food safety. Prev Vet Med 93:11-18. DOI: 10.1016/j.prevetmed.2009.10.008 (verificada parcialmente: el DOI varía entre las versiones publicadas en distintas revistas)
 [R5] Percie du Sert N, Hurst V, Ahluwalia A, et al. 2020. The ARRIVE guidelines 2.0: updated guidelines for reporting animal research. PLoS Biol 18(7):e3000410. DOI: 10.1371/journal.pbio.3000410 (pendiente)
-[R6] St-Pierre NR. 2001. Invited review: Integrating quantitative findings from multiple studies using mixed model methodology. J Dairy Sci 84(4):741-755. URL: https://www.journalofdairyscience.org/ (pendiente: la URL es la portada de la revista y no identifica el trabajo; falta el DOI)
+[R6] St-Pierre NR. 2001. Invited review: Integrating quantitative findings from multiple studies using mixed model methodology. J Dairy Sci 84(4):741-755. DOI: 10.3168/jds.S0022-0302(01)74530-4 (pendiente de verificación con `nutria verificar`: es el DOI que usan las pruebas de `tests/test_citations.py`; antes figuraba solo la portada de la revista)
 [R7] Sauvant D, Schmidely P, Daudin JJ, St-Pierre NR. 2008. Meta-analyses of experimental data in animal nutrition. Animal 2(8):1203-1214. DOI: 10.1017/S1751731108002280 (verificada)
 [R8] Sauvant D, Letourneau-Montminy MP, Schmidely P, Boval M, Loncke C, Daniel JB. 2020. Review: Use and misuse of meta-analysis in Animal Science. Animal 14(S2):s207-s222. DOI: 10.1017/S1751731120001688 (verificada)
 [R9] Lean IJ, Rabiee AR, Duffield TF, Dohoo IR. 2009. Invited review: Use of meta-analysis in animal health and reproduction: methods and applications. J Dairy Sci 92(8):3545-3565. DOI: 10.3168/jds.2009-2140 (verificada)
@@ -300,4 +313,6 @@ Esta revisión trata del prompt original. La implementación que se construyó a
 auditoría externa de línea base, cuyos hallazgos se identifican como Dx-y. Lo que ya se ha corregido, lo que
 queda pendiente y los límites reales del sistema están en `docs/ESTADO_Y_LIMITACIONES.md`. Esa auditoría motivó,
 en este documento, la nota de [R15], la referencia [R19], el criterio funcional del medicamento veterinario (C3 y
-C4) y la corrección del estado de [R6].
+C4), la corrección del estado de [R6] y su DOI (pendiente de verificación) y la aclaración de qué significa
+"verificada". Hasta la fecha no se ha ejecutado ninguna misión ni investigación con la implementación: nada demuestra
+aún la calidad de los resultados que produzca.
