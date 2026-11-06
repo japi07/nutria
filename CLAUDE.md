@@ -67,9 +67,9 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
 10. **Trazabilidad**: toda alta, descarte, cambio de estado o compuerta queda en el registro con su motivo. Las
     hipótesis descartadas no se borran: se marcan `refutada` o `descartada` con el motivo. Los fallos de agentes se
     cuentan e informan; nunca se descartan en silencio. La procedencia es una cadena de hashes:
-    `nutria procedencia verificar` sale con 1 si no es íntegra (líneas corruptas, eventos alterados o quitados, o lo
-    confirmado en git reescrito o borrado). Las decisiones, el historial de puntuaciones y la autoría son solo de
-    inserción.
+    `nutria procedencia verificar` sale con 1 si no es íntegra (líneas corruptas, eventos alterados o quitados de en
+    medio, o lo confirmado en git reescrito o borrado; no detecta el truncado de lo que aún no se ha confirmado). Las
+    decisiones, el historial de puntuaciones y la autoría son solo de inserción.
 11. **Confidencialidad y PI**: Claude Code funciona con las condiciones de la cuenta de Anthropic del usuario. La
     política de datos del registro de modelos (`nutria llm modelos`) se aplica a los proveedores adicionales que
     consulta `nutria llm preguntar`, cuya sensibilidad por defecto es `confidencial` (solo modelos locales o con
