@@ -16,6 +16,14 @@ cache = ".cache/nutria"
 cache_dias = 30
 timeout_s = 30
 offline = false
+# Con --offline, antigüedad máxima (días) de las copias de la caché que se aceptan; amplíala para una orden
+# con --antiguedad-maxima DIAS. La fecha de cada copia es la de su registro en la procedencia.
+antiguedad_maxima_offline_dias = 180
+
+[fuentes]
+# Dirección versionada de STRING (resultados estables entre consultas). Cámbiala para usar otra versión;
+# la orden `nutria red` registra la versión que responde.
+string_url = "https://version-12-0.string-db.org"
 
 [puntuacion]
 # Perfil de pesos por defecto: "recomendado" (v2) u "original" (pesos del prompt inicial).

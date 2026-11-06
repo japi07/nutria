@@ -199,6 +199,8 @@ Las hipótesis descartadas no se borran: se marcan refutadas o descartadas con e
   distinto de los dos extractores registra la conciliación con una resolución por discrepancia
   (`nutria extraccion conciliar CE-xxxx --datos f.json`, también hacia un dato que la fuente no publica). Nadie
   declara el estado de verificación: lo fija el registro, y si una extracción se repite, la hacen extractores nuevos.
+  Las identidades son declaradas (`--agente`): la independencia de las dos copias depende de que las hagan agentes
+  distintos que no vean la otra copia antes de depositar la suya.
   El tipo de dispersión (DE, EE, SEM combinado, SED o IC 95 %) es obligatorio y la dieta basal se registra en campos
   numéricos, con la PDR (% de la PB y/o % de la MS, coherentes con la PB) entre sus moderadores. En el periodo de
   transición, cada dato lleva su ventana respecto al parto u otro hito, y las incidencias (también las publicadas
@@ -213,8 +215,10 @@ Las hipótesis descartadas no se borran: se marcan refutadas o descartadas con e
   variante modificada max(1, q), que es igual a la estándar si q ≥ 1 y nunca da un intervalo más estrecho que Wald
   (con q < 1 la estándar puede darlo); la estándar y la prueba de Wald sin ajuste, solo como sensibilidad. Informa
   tau², I², intervalo de predicción (t con k − 2 gl) y análisis uno-fuera. Efectos fijos solo como sensibilidad. La
-  meta-regresión es de casos completos (se avisa de las filas excluidas) y el análisis se niega con filas sin doble
-  extracción verificada salvo que se declare exploratorio (`--exploratorio`).
+  meta-regresión es de casos completos (se avisa de las filas excluidas) y el análisis se niega, salvo que se declare
+  exploratorio (`--exploratorio`), con las filas que el CSV de `nutria extraccion exportar` marca sin doble
+  extracción verificada; un CSV preparado a mano o sin esas columnas no se comprueba, así que el análisis que cuenta
+  usa el CSV exportado.
 - **Dependencia**: cuando varios tratamientos comparten control o hay varias variables o momentos por estudio, agrega
   los efectos dependientes de cada estudio con una correlación supuesta (ρ = 0,5, repitiendo con otros valores como
   sensibilidad: `nutria meta analizar --agregar-estudio --rho 0.5`) o usa un modelo multinivel con varianza robusta
@@ -328,8 +332,11 @@ se promedian para ocultarlos. En la evaluación en profundidad (F9), los evaluad
 redacte la síntesis, el informe y la decisión propuesta, y solo leen la evidencia de los especialistas, la crítica y
 la verificación; sus puntuaciones se registran solo si el sello del informe es válido según la salida literal de
 `nutria informe comprobar` y `nutria informe sello`, con una orden literal `sha256sum -c` seguida de
-`puntuar registrar`, y un registro prematuro se detecta en la procedencia. En la revisión adversarial (red team),
-ningún paso lo hace el autor del documento.
+`puntuar registrar`, y un registro prematuro se detecta en la procedencia (en la fase de oportunidades de la misión 1,
+cada evaluador registra las suyas al terminar). En este repositorio, la CLI oculta a un evaluador las puntuaciones
+ajenas, las decisiones y los motivos de los cambios de estado, pero ningún hook le impide leer los ficheros de
+`research/` (registro, procedencia, puntuaciones de otros evaluadores, informes): esa parte de la ceguera depende de
+su instrucción. En la revisión adversarial (red team), ningún paso lo hace el autor del documento.
 
 **Modelos**: asigna modelos a roles según su rendimiento medido en un banco de preguntas del dominio, no por
 reputación. Registra para cada modelo el identificador exacto, la versión, la fecha de verificación y la política de
@@ -462,9 +469,10 @@ y de probabilidad desconocida. Indica todos los supuestos y las correlaciones re
 
 **Cómo lo hace este repositorio** (`nutria econ`, `nutria dosis`):
 - Las ventas de la empresa se construyen como censo direccionable × adopción × ciclos × días × dosis × precio que
-  paga el ganadero × (1 − margen de distribución), con el mismo precio, la misma dosis y los mismos días que el modelo
-  del ganadero; lo comprueban `nutria econ coherencia` (tolerancia de 0,05 como máximo, diferencia en % del valor del
-  ganadero) y `nutria econ desarrollador --ganadero`.
+  paga el ganadero × (1 − margen de distribución). El modelo de la empresa declara su propio precio, dosis y días, que
+  deben ser los del modelo del ganadero; lo comprueban `nutria econ coherencia` (tolerancia de 0,05 como máximo,
+  diferencia en % del valor del ganadero) y `nutria econ desarrollador --ganadero`, y sin `--ganadero`
+  `econ desarrollador` solo avisa (la coherencia no se impone al puntuar).
 - La empresa recibe la distribución del VPN realizado, P(VPN < 0) y P(pérdida > umbral), con un umbral configurable
   (`--umbral-perdida`); la salida declara la versión del muestreo del Monte Carlo (`version_muestreo`), porque con la
   misma semilla otra versión da otras cifras.

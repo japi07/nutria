@@ -9,6 +9,9 @@
   se recalculan aquí con las propias herramientas.
 - D5-16: casos de clasificación regulatoria con respuesta esperada; cada uno cita normas que figuran en
   docs/REGULACION_UE.md, y su ruta y su grupo funcional son los del registro.
+- Revisión de la documentación: una pregunta que depende de una norma (o de la parte de una norma) pendiente de
+  verificar en docs/REGULACION_UE.md lleva el estado "pendiente_validacion" y no cuenta en solo_validadas; y
+  `llm evaluar` nunca sobrescribe el detalle de una ejecución anterior.
 """
 
 from __future__ import annotations
@@ -203,3 +206,94 @@ def test_casos_de_clasificacion_cubren_las_ramas_del_arbol():
     for tipo in ("pienso dietético con alegación permitida", "medicamento por alegación", "medicamento por función",
                  "aditivo zootécnico", "aditivo tecnológico", "materia prima", "biocida", "sustancia prohibida"):
         assert tipo in tipos, tipo
+
+
+# ============================================================================ solo_validadas (revisión de la documentación)
+_NUMERO_NORMA = r"\d{1,4}/\d{1,4}(?:/(?:CE|UE))?"
+
+
+def _tabla_normativa() -> list[tuple[str, str]]:
+    """(Norma sin enlaces, Verificación) de cada fila de la tabla «Normativa de referencia» de docs/REGULACION_UE.md."""
+    seccion = REGULACION.split("## Normativa de referencia", 1)[1].split("\n## ", 1)[0]
+    filas = []
+    for linea in seccion.splitlines():
+        if not linea.startswith("| ") or linea.startswith("| Norma") or set(linea.strip()) <= set("|-: "):
+            continue
+        celdas = [c.strip() for c in linea.strip().strip("|").split("|")]
+        filas.append((re.sub(r"\]\([^)]*\)", "]", celdas[0]), celdas[-1]))
+    return filas
+
+
+def _calificador_dentro(calificador: str, alcance: str) -> bool:
+    articulos = re.findall(r"art\. (\d+)", calificador)
+    anexos = re.findall(r"anexo ([IVX]+)\b", calificador)
+    if not (articulos or anexos):
+        return False
+    return (all(re.search(rf"(?<![\d.]){a}(?!\d)", alcance) for a in articulos)
+            and all(re.search(rf"anexo {x}\b", alcance) for x in anexos)
+            and all(p in alcance for p in re.findall(r"\(([^)]*)\)", calificador)))
+
+
+def _norma_verificada(cita: str, numero: str) -> bool:
+    """La norma `numero`, en la parte que cita `cita` («Reglamento (CE) 767/2009, art. 13»), figura verificada en la
+    tabla de normativa: la fila entera sin «pendiente» o, si solo está verificada en parte, la parte citada."""
+    calificador = cita.split(",", 1)[1] if "," in cita else ""
+    for norma, verificacion in _tabla_normativa():
+        if not _menciona(norma, numero) or verificacion.startswith("pendiente"):
+            continue
+        alcance_fila = norma.split(numero, 1)[1]
+        if re.search(r"anexo [IVX]+|art\. \d+", alcance_fila):       # fila de una parte (p. ej. «767/2009, anexo III»)
+            alcance = alcance_fila
+        elif "pendiente" in verificacion:                             # «verificada ... solo ...; resto pendiente»
+            alcance = verificacion.split("solo", 1)[1].split(";")[0] if "solo" in verificacion else ""
+        else:
+            return True                                               # verificada entera
+        if _calificador_dentro(calificador, alcance):
+            return True
+    return False
+
+
+def _normas_citadas(item: dict) -> list[tuple[str, str]]:
+    citas = item["norma"] if "norma" in item else [item.get("fuente", "")]
+    return [(cita, numero) for cita in citas for numero in re.findall(_NUMERO_NORMA, cita)]
+
+
+def test_solo_validadas_excluye_las_preguntas_con_normas_sin_verificar():
+    # Una pregunta sin estado "pendiente_validacion" cuenta en solo_validadas: su respuesta no puede depender de una
+    # norma, o de la parte de una norma, que docs/REGULACION_UE.md marca pendiente de verificar.
+    problemas, pendientes_por_norma = [], []
+    for item in _banco(DOMINIO) + _banco(CLASIFICACION):
+        sin_verificar = [cita for cita, numero in _normas_citadas(item) if not _norma_verificada(cita, numero)]
+        if item.get("estado") == PENDIENTE_VALIDACION:
+            if sin_verificar:
+                pendientes_por_norma.append(item["id"])
+        elif sin_verificar:
+            problemas.append(f"{item['id']}: {sin_verificar}")
+    assert problemas == []
+    assert {"reg-05", "clas-04", "clas-05", "clas-06", "clas-07"} <= set(pendientes_por_norma)
+    # el comprobador distingue la parte verificada de una norma verificada solo en parte
+    assert _norma_verificada("Reglamento (CE) 767/2009, art. 13", "767/2009")
+    assert _norma_verificada("Reglamento (CE) 767/2009, anexo III", "767/2009")
+    assert not _norma_verificada("Reglamento (CE) 767/2009", "767/2009")
+    assert not _norma_verificada("Reglamento (CE) 767/2009, art. 7", "767/2009")
+    assert _norma_verificada("Reglamento (CE) 1831/2003, anexo I (categoría de aditivos nutricionales)", "1831/2003")
+    assert not _norma_verificada("Reglamento (CE) 1831/2003, anexo I (categoría de aditivos zootécnicos)", "1831/2003")
+    assert not _norma_verificada("Reglamento (UE) 528/2012", "528/2012")
+    casos = _banco(CLASIFICACION)
+    assert all(c.get("pendiente") for c in casos if c.get("estado") == PENDIENTE_VALIDACION)
+
+
+def test_llm_evaluar_no_sobrescribe_el_detalle_de_otra_ejecucion(tmp_path, monkeypatch):
+    from nutria.config import Config
+    from nutria.llm import router
+    banco = tmp_path / "banco.jsonl"
+    banco.write_text(json.dumps({"id": "q1", "pregunta": "¿2+2?", "respuesta_esperada": "4", "tipo": "numerica",
+                                 "area": "estadistica"}) + "\n", "utf-8")
+    monkeypatch.setattr(router, "ask", lambda *a, **k: [{"modelo": "local", "texto": "4"}])
+    monkeypatch.setattr(router, "utc_now", lambda: "2026-11-06T10:00:00+00:00")   # las dos terminan en el mismo segundo
+    cfg = Config(root=tmp_path, cache_dir=tmp_path / "cache")
+    primero = router.evaluate(cfg, banco)["detalle"]
+    segundo = router.evaluate(cfg, banco)["detalle"]
+    assert primero != segundo and Path(primero).is_file() and Path(segundo).is_file()
+    assert Path(segundo).name.endswith("-2.jsonl")
+    assert len(list((tmp_path / "research" / "evals").glob("*.jsonl"))) == 2

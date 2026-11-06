@@ -60,16 +60,23 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
    síntesis, el informe y la decisión propuesta, y solo leen la evidencia de los especialistas, la crítica y la
    verificación. Con `--agente evaluador-<n>` (o `NUTRIA_AGENT=evaluador-<n>`), `oportunidad ver` no muestra
    puntuaciones, decisiones ni el motivo del último cambio de estado, y la CLI rechaza `puntuar ranking`,
-   `procedencia` y `decision listar`. `puntuar registrar` exige `--agente evaluador-<n>` igual al campo `evaluador`
-   del JSON: nadie registra ni sustituye las puntuaciones de otro. En los workflows, las puntuaciones se registran
-   en diferido, solo con el sello del informe válido y tras `sha256sum -c` del fichero emitido; un registro
-   prematuro se detecta en la procedencia.
+   `procedencia` y `decision listar`. Un evaluador tampoco lee ficheros que puedan revelarlos: `research/nutria.sqlite`
+   (ni con `grep -r` sobre `research/`), `research/procedencia.jsonl` (guarda en claro las decisiones y los motivos),
+   los `*_puntuacion_*.json` de otros evaluadores, los informes ni los rankings. El hook solo le bloquea las órdenes
+   que nombran `nutria.sqlite`, y Read, Grep y Glob no tienen hook: esa ceguera depende de que cumpla esta regla.
+   `puntuar registrar` exige `--agente evaluador-<n>` igual al campo `evaluador` del JSON: nadie registra ni sustituye
+   las puntuaciones de otro. En `evaluar-oportunidad-auto`, las puntuaciones se registran en diferido, solo con el
+   sello del informe válido y tras `sha256sum -c` del fichero emitido, y un registro prematuro se detecta en la
+   procedencia; en la fase `oportunidades` de `mision-1-auto`, cada evaluador registra las suyas al terminar.
 10. **Trazabilidad**: toda alta, descarte, cambio de estado o compuerta queda en el registro con su motivo. Las
     hipótesis descartadas no se borran: se marcan `refutada` o `descartada` con el motivo. Los fallos de agentes se
     cuentan e informan; nunca se descartan en silencio. La procedencia es una cadena de hashes:
     `nutria procedencia verificar` sale con 1 si no es íntegra (líneas corruptas, eventos alterados o quitados de en
-    medio, o lo confirmado en git reescrito o borrado; no detecta el truncado de lo que aún no se ha confirmado). Las
-    decisiones, el historial de puntuaciones y la autoría son solo de inserción.
+    medio, o lo confirmado en git reescrito o borrado mientras la versión anterior siga en el historial o en el
+    reflog de la rama; no detecta el truncado de lo que aún no se ha confirmado, ni la historia reescrita si además se
+    borra el reflog). Ningún agente reescribe la historia de git (`commit --amend`, `reset`, `rebase`, `branch -D`)
+    ni toca `.git` (reflog y referencias): el hook solo reconoce algunas formas de hacerlo, así que depende de esta
+    regla. Las decisiones, el historial de puntuaciones y la autoría son solo de inserción.
 11. **Confidencialidad y PI**: Claude Code funciona con las condiciones de la cuenta de Anthropic del usuario. La
     política de datos del registro de modelos (`nutria llm modelos`) se aplica a los proveedores adicionales que
     consulta `nutria llm preguntar`, cuya sensibilidad por defecto es `confidencial` (solo modelos locales o con
@@ -101,6 +108,10 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
     `nutria informe revisar` (ligada a la huella del contenido: escribir un nombre a mano no basta) y la revisión
     del crítico enlazada en `revision_critica`. La tabla la rellena `verificador-citas`, que además puede comparar
     la cita textual de las afirmaciones `[PUB]` del registro con el resumen de la fuente (`nutria afirmacion comprobar`).
+    Ningún agente lee la clave de los sellos ni escribe ficheros `*.verificacion.json`: el hook solo bloquea las
+    órdenes que nombran la clave o su directorio, no todas las formas de leerla, y un sello no autentica frente a un
+    proceso del mismo usuario. La clave es de cada máquina: en otra, los sellos existentes no validan hasta volver a
+    sellar con red.
 
 ## Equipo (lo usa la sesión principal)
 
@@ -130,8 +141,12 @@ y las rutas de ficheros; no le pases tus conclusiones si su tarea es evaluarlas.
 Atribuye siempre la acción: `nutria --agente <nombre> ...`. Dentro de un subagente, cada orden nutria lleva
 `--agente` con su propio rol o una variante (`extractor-datos-A`), escrito literalmente, y nutria se ejecuta
 directamente, no desde Python, `xargs` ni `eval`; no se menciona `NUTRIA_AGENT`, y git solo sirve para leer, añadir y
-confirmar. El hook de Bash bloquea lo demás, y también los nombres de otros roles y de `evaluador-<n>` salvo a los
-evaluadores (que usan siempre `--agente evaluador-<n>`). Las listas siguientes abrevian las órdenes sin `--agente`.
+confirmar. El hook de Bash bloquea las órdenes nutria sin `--agente` literal, el nombre exacto de otro rol del
+proyecto y `evaluador-<n>` salvo a los evaluadores (que usan siempre `--agente evaluador-<n>`), pero no cualquier otro
+nombre (`persona`, `director`): la procedencia lo registra tal cual, aunque la CLI solo acepta la propuesta de una
+compuerta, salvo `bloqueada`, de su rol propietario exacto. Usa siempre tu rol. Las identidades son declaradas: en la
+doble extracción, la independencia de las copias A y B depende de que las hagan extractores distintos que no vean la
+otra. Las listas siguientes abrevian las órdenes sin `--agente`.
 
 Añade `--json` si vas a procesar la salida. Los errores salen siempre en texto por stderr y, con `--json`, además como
 un único objeto JSON por stdout (`{"error", "codigo", "tipo"}` y, en los de red, `"motivo"`). Códigos de salida: 0
@@ -181,8 +196,9 @@ fuente; tabla completa en `nutria --help`.
 - Estadística: `nutria meta analizar datos.csv [--medida MD|SMD|ROM|RR|OR|RD] [--metodo REML|DL|PM|FE] [--ajuste hksj|hksj-mod|ninguno]`
   (hksj-mod por defecto: HKSJ modificado max(1, q), igual al estándar si q ≥ 1)
   `[--rho-intrasujeto R] [--agregar-estudio --rho 0.5] [--moderador X ...] [--referencia COL=CAT] [--subgrupo Y] [--exploratorio]`
-  (la meta-regresión es de casos completos y avisa de las filas que excluye; con filas sin doble extracción
-  verificada, `meta` se niega salvo con `--exploratorio`) ·
+  (la meta-regresión es de casos completos y avisa de las filas que excluye; con las filas que el CSV de
+  `extraccion exportar` marca sin doble extracción verificada, `meta` se niega salvo con `--exploratorio`; un CSV
+  preparado a mano o sin esas columnas no se comprueba: analiza siempre el que exporta `extraccion exportar`) ·
   `nutria meta stpierre CSV --respuesta Y --dosis X --estudio S [--covariable ...] [--pendiente-aleatoria | --sin-pendiente-aleatoria] [--ponderar-sem COL]`
   (por defecto elige la pendiente aleatoria con la razón de verosimilitudes REML si es estimable) ·
   `nutria meta validar-predictivo CSV --respuesta Y --predictores X1 X2 --estudio S` ·
@@ -192,8 +208,10 @@ fuente; tabla completa en `nutria --help`.
 - Economía: `nutria econ ganadero modelo.toml [--exigir-fuentes] [--valor-central moda|mediana]` ·
   `nutria econ desarrollador proyecto.toml --ganadero ganadero.toml [--umbral-perdida EUR] [--exigir-fuentes]` ·
   `nutria econ coherencia ganadero.toml desarrollador.toml [--tolerancia T]` (T ≤ 0,05; la diferencia se da en % del
-  valor del ganadero). Con `--exigir-fuentes`, cada entrada lleva `fuente` etiquetada, y una `[DER]` nombra una orden
-  `nutria` que existe o un script que existe en el proyecto
+  valor del ganadero). El modelo de la empresa declara su propio precio, dosis y días: deben coincidir con los del
+  ganadero, y solo `econ coherencia` o `econ desarrollador --ganadero` lo comprueban (sin `--ganadero`, solo avisa).
+  Con `--exigir-fuentes`, cada entrada lleva `fuente` etiquetada, y una `[DER]` nombra una orden `nutria` que existe o
+  un script que existe en el proyecto
 - Informes: `nutria informe nuevo O-xxxx` · `nutria informe comprobar <md> --online --sellar` · `nutria informe sello <md>` ·
   `nutria informe revisar <md> --firma-humana NOMBRE --estado revisado|final` (solo personas)
 - Segunda opinión: `nutria llm modelos --json` · `nutria llm preguntar --rol critico --archivo <f>` (sensibilidad

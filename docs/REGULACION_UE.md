@@ -113,7 +113,9 @@ El resultado del triage lo registra el agente con
   si la clasificación cambia, una compuerta `regulatoria` superada se reabre.
 
 Casos de clasificación con su respuesta esperada, uno por rama del árbol y con las normas de este documento que lo
-sustentan: `evals/clasificacion_regulatoria.jsonl` (sirven para medir modelos con `nutria llm evaluar`). La
+sustentan: `evals/clasificacion_regulatoria.jsonl` (sirven para medir modelos con `nutria llm evaluar`). Los casos que
+dependen de una norma, o de la parte de una norma, que la tabla de normativa marca pendiente de verificar llevan el
+estado `pendiente_validacion` y no cuentan en `solo_validadas` hasta que una persona verifique esa norma. La
 clasificación real la hacen los agentes con este árbol y todavía no se ha probado en uso.
 
 ## Categorías y grupos funcionales de aditivos (anexo I del Reglamento (CE) 1831/2003)

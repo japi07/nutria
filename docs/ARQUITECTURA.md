@@ -139,8 +139,9 @@ solo se llama desde `_run_git`. `nutria procedencia verificar` (`verify_chain`) 
 alterados, la cadena rota, eventos sin cadena añadidos después y, si el fichero está en git, la reescritura o el
 borrado de eventos confirmados (lo compara, por identificador de objeto, con las versiones del historial de HEAD y
 de las puntas anteriores de la rama en su reflog). Límites: una cadena de hashes no autentica (quien escriba el
-fichero puede recalcular la cola o truncar lo no confirmado), la referencia es el repositorio local y dos ramas que
-añadan eventos la rompen al fusionarse.
+fichero puede recalcular la cola o truncar lo no confirmado), la referencia es el repositorio local (reescribir la
+historia y borrar después el reflog de la rama la elude, y el hook de Bash solo reconoce algunas formas de borrarlo:
+ver la tabla de hooks) y dos ramas que añadan eventos la rompen al fusionarse.
 
 Eventos de la red y la caché: `http` (clave de la caché, SHA-256 y cabeceras), `http_cache` (fecha y antigüedad de
 la copia servida), `http_cache_descartada`, `http_error` (motivo), `http_sonda`, `doctor` (con
@@ -191,27 +192,33 @@ si se cumplen todas estas condiciones:
 `nutria verificar <informe.md> --sellar` aplica a los informes los mismos criterios. Sin red, la verificación de un
 informe que cite algún DOI o PMID queda incompleta y el sello no es válido. La firma HMAC es una barrera contra sellos
 falsificados o desactualizados, no una protección criptográfica frente a quien tenga acceso a la clave (cualquier
-proceso del mismo usuario).
+proceso del mismo usuario; el hook de Bash solo bloquea las órdenes que nombran la clave o su directorio, no las que
+recorren todo el directorio personal, y con Bash se puede escribir un fichero de sello). La clave es de cada
+máquina: en otra máquina o en otro clon, ningún sello existente valida hasta volver a sellar con red.
 
 ## Hooks de Claude Code (`.claude/settings.json`)
 
 | Evento | Herramientas | Script | Qué hace |
 |---|---|---|---|
-| PreToolUse | Bash | `scripts/hooks/guard_bash.sh` | Barrera de texto con listas no exhaustivas. Bloquea la firma (`--firma-humana` y sus prefijos desde `--fir`, también construida por partes); tocar las variables de Claude Code o `NUTRIA_AGENT`, vaciar el entorno, cambiar de usuario, desvincular procesos o darles una terminal propia; escribir, borrar o restaurar el registro y la procedencia por fuera de la CLI (también con comodines y con borrados literales como `unlink` o `find -delete`), borrar `research/`, git que descarta cambios sin confirmar o borra el reflog; la clave de los sellos (`clave_sello`, su variable de entorno, `~/.config/nutria`) y el módulo de sellos. Dentro de un subagente: cada orden nutria con `--agente` literal y ejecutada directamente, sin el nombre de otro rol ni `evaluador-<n>` (salvo en `evaluador-independiente`, que no lee el registro ni importa nutria), sin `NUTRIA_AGENT` ni `set -a`, git solo para leer, añadir y confirmar |
+| PreToolUse | Bash | `scripts/hooks/guard_bash.sh` | Barrera de texto con listas no exhaustivas. Bloquea la firma (`--firma-humana` y sus prefijos desde `--fir`, también construida por partes); tocar las variables de Claude Code o `NUTRIA_AGENT`, vaciar el entorno, cambiar de usuario, desvincular procesos o darles una terminal propia; escribir, borrar o restaurar el registro y la procedencia por fuera de la CLI (también con comodines y con borrados literales como `unlink` o `find -delete`), borrar `research/`, git que descarta cambios sin confirmar; algunas formas de borrar el reflog (`git reflog expire\|delete`, `update-ref`, `gc.reflogExpire` y borrar o reescribir `.git`, `.git/logs` o `.git/refs` con la ruta escrita en la orden; no `cd .git && rm -rf logs`, `find .git/logs -delete` ni `git branch -D`); las órdenes que nombran la clave de los sellos o su directorio (`clave_sello`, su variable de entorno, `~/.config/nutria`; no las que recorren todo el directorio personal) y el módulo de sellos. Dentro de un subagente: cada orden nutria con `--agente` literal y ejecutada directamente, sin el nombre exacto de otro rol ni `evaluador-<n>` (otros nombres pasan; `evaluador-independiente` se identifica siempre como evaluador y no importa nutria ni nombra `nutria.sqlite` en la orden, pero puede leer `research/` con `grep -r`, `cat` o Read), sin `NUTRIA_AGENT` ni `set -a`, git solo para leer, añadir y confirmar |
 | PreToolUse | Write, Edit, MultiEdit | `scripts/hooks/guard_write.sh` | Bloquea la escritura directa de sellos (`*.verificacion.json`), de la clave y `~/.config/nutria`, de `procedencia.jsonl`, de los ficheros `*.sqlite` del registro y de `.git/`, sin distinguir mayúsculas: los sellos solo los genera `nutria informe comprobar ... --online --sellar` |
-| PostToolUse | Write, Edit, MultiEdit | `scripts/hooks/run_hook.sh` → `scripts/hooks/check_research_file.py` | Valida lo que se escribe en `research/`: informes (también en subcarpetas y con la extensión en mayúsculas; estado leído del front matter, que si es ilegible bloquea; estructura, referencias, etiquetas, cifras y citas y, si están en revisado o final, revisión humana registrada y sello válido), planes y revisiones (referencias y etiquetas; en borrador, los identificadores y «según R1» solo avisan) y JSON de oportunidades e hipótesis (esquema con las reglas del registro, `db.schema_errors`). Si hay errores, bloquea y explica por qué |
+| PostToolUse | Write, Edit, MultiEdit | `scripts/hooks/run_hook.sh` → `scripts/hooks/check_research_file.py` | Valida lo que se escribe en `research/`: informes (también en subcarpetas y con la extensión en mayúsculas; estado leído del front matter, que si es ilegible bloquea; estructura, referencias, etiquetas, cifras y citas y, si están en revisado o final, revisión humana registrada y sello válido), planes y revisiones (referencias y etiquetas; en borrador, los identificadores y «según R1» solo avisan) y JSON de oportunidades e hipótesis (esquema con las reglas del registro, `db.schema_errors`). Actúa después de escribir: si hay errores, devuelve a Claude Code la decisión «block» con el motivo, pero el fichero queda escrito (lo que garantiza un informe es su sello) |
 | PostToolUse | WebFetch, WebSearch | `scripts/hooks/registrar_web.sh` → `scripts/hooks/registrar_web.py` | Registra cada consulta web en `research/procedencia.jsonl` (fecha, sesión, id de llamada, modo y SHA-256 de la respuesta, nunca su contenido). Por defecto (modo hash) solo el dominio y la huella de la URL o de la consulta; con `NUTRIA_PROCEDENCIA_WEB=claro`, la URL y la consulta en claro, redactadas (credenciales, parámetros sensibles, fragmento y correos); nunca bloquea |
 
 `run_hook.sh` busca primero el intérprete del proyecto (`.venv/bin/python` o `.venv\Scripts\python.exe`) y, si no
 existe o falla, `python3` o `python`. Falla cerrado: si no encuentra Python, si ningún intérprete tiene las
-dependencias de `nutria` o si el intérprete sale con error, bloquea las escrituras en `research/` que debía validar,
-en lugar de desactivarse en silencio.
+dependencias de `nutria` o si el intérprete sale con error, devuelve la decisión «block» por cada escritura en
+`research/` que debía validar, en lugar de desactivarse en silencio (el fichero ya está escrito: un PostToolUse no
+deshace la escritura).
 
 Límites de los hooks: comparan texto en la entrada de cada herramienta, así que son una barrera frente a errores y
 atajos de los agentes, no un control de seguridad frente a una persona; los eluden un programa escrito antes en un
-fichero y los nombres construidos de forma indirecta, y en la sesión principal no comprueban el rol declarado. El
-hook PostToolUse solo ve lo que se escribe con Write, Edit o MultiEdit; para cualquier otro camino, la comprobación es
-`nutria informe sello <informe>`.
+fichero y los nombres construidos de forma indirecta, y en la sesión principal no comprueban el rol declarado. No se
+protegen a sí mismos: `guard_write.sh` deja editar `scripts/hooks/`, `.claude/settings.json` y `src/nutria/` (la CLI,
+instalada en modo editable), y con Bash también se editan. Read, Grep y Glob no tienen hook: la ceguera de los
+evaluadores frente a los ficheros de `research/` (registro, procedencia, puntuaciones de otros) depende de su
+instrucción. El hook PostToolUse solo ve lo que se escribe con Write, Edit o MultiEdit, y no lo deshace; para
+cualquier otro camino, la comprobación es `nutria informe sello <informe>`.
 
 ## Flujo de la evidencia
 
@@ -230,7 +237,7 @@ sequenceDiagram
     C->>N: extraccion comparar A.json B.json --registrar (código 1 si hay discrepancias: CE-xxxx)
     C->>N: extraccion conciliar CE-xxxx --datos conciliacion.json (distinto de A y B)
     S->>N: extraccion exportar --variable V --csv F (con --especie E; solo filas verificadas y con tamaño del efecto)
-    S->>N: meta analizar F (REML + HKSJ modificado por defecto; se niega con filas sin doble extracción)
+    S->>N: meta analizar F (REML + HKSJ modificado por defecto; se niega con las filas que F marca sin doble extracción)
     S->>N: afirmacion agregar [DER] con la orden usada
     V->>N: afirmacion comprobar (cita textual frente al resumen)
     V->>V: rellena la tabla de respaldo del Anexo A

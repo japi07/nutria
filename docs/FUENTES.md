@@ -99,6 +99,11 @@ dirección de STRING configurada), `reactome.org`, `doi.org` y `api.datacite.org
 `eur-lex.europa.eu`, `efsa.onlinelibrary.wiley.com`, `food.ec.europa.eu`, `europepmc.org`, `pubmed.ncbi.nlm.nih.gov`,
 `www.feedipedia.org`, `doi.org`. Comprueba con `nutria doctor`, que lee de esta frase los dominios de WebFetch.
 
+La segunda opinión (`nutria llm preguntar`) y `nutria llm evaluar` necesitan además los dominios de los proveedores
+activos en `config/modelos.toml`: `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com` o
+`api.deepseek.com`, según el caso (un modelo local servido en la misma máquina no necesita ninguno). `nutria doctor`
+no los comprueba.
+
 En Claude Code, los dominios de lectura con WebFetch de esta lista figuran en la lista `allow` de
 `.claude/settings.json`. WebFetch hacia otras fuentes de este documento que no están en esa lista (p. ej. Semantic
 Scholar, Eurostat, KEGG, EURL-FA en joint-research-centre.ec.europa.eu, el BOE o la EMA) no está preautorizado: Claude

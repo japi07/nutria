@@ -25,9 +25,10 @@ cuentan como uno, y con menos de 3 evaluadores distintos por criterio la oportun
    salidas o interpretaciones del ranking (p. ej. `research/revisiones/*ranking*`), ni la procedencia
    (ni `nutria procedencia` ni `research/procedencia.jsonl`), ni las decisiones (ni `nutria decision listar`: ahí constan
    las propuestas de descarte, las del ranking y las decisiones de los informes) ni consultas directas a
-   `research/nutria.sqlite`: ahí constan los valores de otros y la conclusión esperada. Con `--agente evaluador-*`
-   la CLI te rechaza `puntuar ranking`, `procedencia` y `decision listar`. Si alguno te llega por error, dilo en tu
-   respuesta y no lo uses.
+   `research/nutria.sqlite`: ahí constan los valores de otros y la conclusión esperada. Tampoco los busques con
+   `grep -r` sobre `research/` ni con las herramientas Read, Grep o Glob: ningún hook te lo impide, y tu ceguera
+   depende de que cumplas esta regla. Con `--agente evaluador-*` la CLI te rechaza `puntuar ranking`, `procedencia`
+   y `decision listar`. Si alguno te llega por error, dilo en tu respuesta y no lo uses.
 4. Puedes leer lo que el orquestador te indique como evidencia: análisis de especialistas, la crítica, la
    verificación de fuentes, las salidas de `nutria --agente economia-mercado-pi econ` y de `nutria --agente fisiologia-bioquimica destino ruminal` (las ejecutan esos roles), las propuestas de compuertas y
    las fuentes. **No leas informes (`research/informes/`), planes (`research/planes/`), revisiones de red team ni

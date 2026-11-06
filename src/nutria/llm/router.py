@@ -278,6 +278,20 @@ def grade(item: dict, answer: str) -> bool:
 PENDIENTE_VALIDACION = "pendiente_validacion"
 
 
+def _new_detail_file(out_dir: Path, stem: str, text: str) -> Path:
+    """Escribe el detalle de una evaluación en un fichero nuevo: el nombre lleva la fecha al segundo y, si ya existe
+    (dos evaluaciones que terminan en el mismo segundo), un sufijo -2, -3...; nunca sobrescribe uno anterior."""
+    n = 1
+    while True:
+        path = out_dir / (f"{stem}.jsonl" if n == 1 else f"{stem}-{n}.jsonl")
+        try:
+            with open(path, "x", encoding="utf-8") as fh:   # creación exclusiva: falla si otro proceso ya lo creó
+                fh.write(text)
+            return path
+        except FileExistsError:
+            n += 1
+
+
 def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None = None) -> dict:
     items = [json.loads(line) for line in Path(eval_path).read_text("utf-8").splitlines() if line.strip()]
     if getattr(cfg, "offline", False):
@@ -311,8 +325,8 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
                          "modelo": res["modelo"], "correcto": correct, "respuesta": res["texto"][:500]})
     out_dir = cfg.research_dir / "evals"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"evaluacion_{utc_now().replace(':', '').replace('+', '_')}.jsonl"
-    out_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", "utf-8")
+    out_file = _new_detail_file(out_dir, f"evaluacion_{utc_now().replace(':', '').replace('+', '_')}",
+                                "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
     for s in [*scores.values(), *validated.values(), *(a for m in by_area.values() for a in m.values())]:
         s["exactitud"] = s["aciertos"] / s["total"] if s["total"] else None
     # «resultados» mezcla todas las preguntas; para elegir modelo cuenta «solo_validadas»: las preguntas con estado

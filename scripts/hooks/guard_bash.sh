@@ -21,17 +21,20 @@
 #     borrar research/ entera (también con find ... -delete o comodines); importar nutria.db o nutria.provenance; las
 #     órdenes de git que descartan cambios sin confirmar (stash, clean, reset --hard, checkout/restore de "." o con -f,
 #     también con abreviaturas: reset --ha, checkout --forc, switch --disc; checkout-index, read-tree) o que
-#     restauran, borran o mueven el registro (también con los pathspecs :/research o :!x); y lo que borraría el reflog
-#     con el que `nutria procedencia verificar` detecta la historia reescrita (reflog expire|delete, update-ref,
-#     gc.reflogExpire, borrar .git o .git/logs);
+#     restauran, borran o mueven el registro (también con los pathspecs :/research o :!x); y algunas formas de borrar
+#     el reflog con el que `nutria procedencia verificar` detecta la historia reescrita (reflog expire|delete,
+#     update-ref, gc.reflogExpire, borrar o reescribir .git, .git/logs o .git/refs con la ruta escrita en la orden; no
+#     reconoce entrar antes en .git con cd o pushd, find .git/logs -delete ni git branch -D);
 #  4. la clave de los sellos (clave_sello, NUTRIA_CLAVE_SELLO, ~/.config/nutria, también con ./ o // en la ruta, con
 #     comodines en cualquier componente (~/.con*/nut*/*), entrando con cd en .config o recorriéndola con grep -r, find
-#     o tar) y el módulo de sellos (nutria.sello, sello.sign, write_stamp, from nutria import sello);
+#     o tar; no las órdenes que recorren todo el directorio personal, como grep -r o tar sobre ~) y el módulo de sellos
+#     (nutria.sello, sello.sign, write_stamp, from nutria import sello);
 #  5. identidad, dentro de un subagente (campo agent_type que Claude Code añade a la entrada del hook): cada orden nutria
 #     lleva --agente con un nombre literal (no una variable, una sustitución ni un comodín) y se ejecuta directamente
 #     (no desde Python, xargs ni eval); --agente no puede ser el de otro rol del proyecto (.claude/agents/<rol>.md) ni
-#     un evaluador-<n>, salvo para el propio evaluador-independiente, que se identifica siempre con --agente
-#     evaluador-<n>, no importa nutria desde Python y no lee la base de datos del registro; no se menciona
+#     un evaluador-<n> (otros nombres sí), salvo para el propio evaluador-independiente, que se identifica siempre con
+#     --agente evaluador-<n>, no importa nutria desde Python y no nombra la base de datos del registro en la orden
+#     (no se le impide leer research/ con grep -r o cat, ni con Read o Grep, que no tienen hook); no se menciona
 #     NUTRIA_AGENT ni se exportan variables con nombres construidos (set -a, export $V=..., printf -v $V); git, solo
 #     para leer, añadir y confirmar (sin --amend), y git grep sin -O. Cuenta como orden nutria también su ruta en
 #     posición de orden (/usr/local/bin/nutria, .venv/bin/nutria), no el directorio del proyecto como argumento

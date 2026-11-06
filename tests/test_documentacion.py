@@ -691,3 +691,204 @@ def test_instalacion_con_python_311_tiene_sus_propias_versiones_probadas():
         texto = _flat(_section(_read(README), seccion))
         assert "requirements/constraints-py311.txt" in texto and "Python 3.11" in texto, seccion
         assert "Python 3.12 o superior" in texto, seccion
+
+
+# Lo que la documentación dice de los hooks se comprueba contra los hooks: si un hook cambia, se actualiza el documento.
+GUARD_BASH = ROOT / "scripts" / "hooks" / "guard_bash.sh"
+GUARD_WRITE = ROOT / "scripts" / "hooks" / "guard_write.sh"
+
+
+def _hook(script: Path, payload: dict) -> int:
+    import subprocess
+    return subprocess.run(["sh", str(script)], input=json.dumps(payload, ensure_ascii=False), capture_output=True,
+                          text=True, timeout=60).returncode
+
+
+def _hook_bash(orden: str, agente: str | None = None) -> int:
+    payload = {"session_id": "s", "cwd": "/home/u/nutria", "hook_event_name": "PreToolUse", "tool_name": "Bash",
+               "tool_input": {"command": orden, "description": "prueba"}}
+    if agente:
+        payload.update(agent_id="a1", agent_type=agente)
+    return _hook(GUARD_BASH, payload)
+
+
+# (orden, tipo de subagente o None para la sesión principal, código del hook): lo que la documentación dice que el hook
+# bloquea (2) y lo que declara que no reconoce (0).
+HOOK_DOCUMENTADO = [
+    ("rm -rf .git/logs", None, 2),
+    (": > .git/logs/HEAD", None, 2),
+    ("git reflog expire --expire=now --all", None, 2),
+    ("git update-ref -d refs/heads/vieja", None, 2),
+    ("cd .git && rm -rf logs", None, 0),
+    ("cd .git && rm -rf logs", "critico-red-team", 0),
+    ("find .git/logs -delete", None, 0),
+    ("git branch -D vieja", None, 0),
+    ("git commit --amend --no-edit", None, 0),
+    ("git commit --amend --no-edit", "critico-red-team", 2),
+    ("cd .git && printf 'abc\\n' > refs/heads/main", "critico-red-team", 0),
+    ("grep -r x ~/.config", None, 2),
+    ("grep -rl . ~", None, 0),
+    ("tar czf /tmp/h.tgz ~", None, 0),
+    ("cp -r ~ /tmp/copia", None, 0),
+    ("cat research/nutria.sqlite", "evaluador-independiente", 2),
+    ("strings research/*.sqlite", "evaluador-independiente", 2),
+    ("grep -ra JUSTIF research/", "evaluador-independiente", 0),
+    ("cat research/procedencia.jsonl", "evaluador-independiente", 0),
+    ("git log -p -- research/procedencia.jsonl", "evaluador-independiente", 0),
+    ("cat research/oportunidades/O-0001_puntuacion_evaluador-2.json", "evaluador-independiente", 0),
+    ("nutria --agente persona estado", "fisiologia-bioquimica", 0),
+    ("nutria --agente regulacion_seguridad estado", "critico-red-team", 0),
+    ("nutria --agente compuestos-toxicologia estado", "fisiologia-bioquimica", 2),
+    ("nutria --agente evaluador-1 estado", "fisiologia-bioquimica", 2),
+    ("nutria --agente extractor-datos-A extraccion depositar --datos a.json", "extractor-datos", 0),
+    ("nutria --agente extractor-datos-B extraccion depositar --datos b.json", "extractor-datos", 0),
+    ("sed -i 's/exit 2/exit 0/' scripts/hooks/guard_bash.sh", "critico-red-team", 0),
+]
+
+
+@pytest.mark.parametrize(("orden", "agente", "codigo"), HOOK_DOCUMENTADO)
+def test_lo_que_la_documentacion_dice_del_hook_de_bash_es_lo_que_hace(orden, agente, codigo):
+    assert _hook_bash(orden, agente) == codigo
+
+
+def test_la_documentacion_declara_lo_que_el_hook_de_bash_no_reconoce():
+    readme = _flat(_read(README)).replace("**", "")
+    for clave in ("cd .git && rm -rf logs", "find .git/logs -delete", "git branch -D", "mover la referencia de la rama",
+                  "deja la procedencia «íntegra»", "no las que recorren todo el directorio personal",
+                  "un `grep -ra` sobre `research/`", "Read, Grep y Glob", "la ceguera frente a los ficheros depende",
+                  "`regulacion_seguridad`", "puede depositar las dos copias", "no se protegen a sí mismos",
+                  "fabricar un sello válido"):
+        assert clave in readme, clave
+    arquitectura = _flat(_read(ARQUITECTURA))
+    for clave in ("no `cd .git && rm -rf logs`", "no las que recorren todo el directorio personal",
+                  "puede leer `research/`", "No se protegen a sí mismos", "Read, Grep y Glob no tienen hook"):
+        assert clave in arquitectura, clave
+    claude = _flat(_read("CLAUDE.md"))
+    for clave in ("Read, Grep y Glob no tienen hook", "Ningún agente reescribe la historia de git",
+                  "Ningún agente lee la clave de los sellos", "pero no cualquier otro nombre"):
+        assert clave in claude, clave
+    # Garantías que no se cumplían (revisión de la documentación, ronda 1)
+    for doc, frases in ((README, ("lo que borraría el reflog", "salvo con `git branch -D` o `-M`",
+                                  "los hooks bloquean las vías directas por Bash", "no lee `nutria.sqlite`",
+                                  "les bloquea leer `nutria.sqlite`", "y bloquea si hay errores",
+                                  "el hook bloquea las escrituras en `research/`",
+                                  "se construyen con el mismo precio, dosis y días",
+                                  "`meta` se niega con filas sin doble extracción verificada",
+                                  "se han probado con la versión 2.1.318", "da una tabla vacía")),
+                        ("CLAUDE.md", ("El hook de Bash bloquea lo demás",
+                                       "En los workflows, las puntuaciones se registran en diferido",
+                                       "con filas sin doble extracción verificada, `meta` se niega")),
+                        (ARQUITECTURA, ("que no lee el registro ni importa nutria", "Si hay errores, bloquea y explica",
+                                        "bloquea las escrituras en `research/`",
+                                        "se niega con filas sin doble extracción)")),
+                        (PROMPT, ("el análisis se niega con filas sin doble",
+                                  "con el mismo precio, la misma dosis y los mismos días que el modelo"))):
+        texto = _flat(_read(doc))
+        for frase in frases:
+            assert frase not in texto, (doc, frase)
+
+
+@pytest.mark.parametrize("ruta", ["scripts/hooks/guard_bash.sh", "scripts/hooks/guard_write.sh",
+                                  ".claude/settings.json", "src/nutria/cli.py"])
+def test_los_hooks_no_se_protegen_a_si_mismos(ruta):
+    assert _hook(GUARD_WRITE, {"tool_name": "Write", "tool_input": {"file_path": ruta, "content": "x"}}) == 0
+    sello = {"tool_name": "Write", "tool_input": {"file_path": "research/informes/O-0001.verificacion.json"}}
+    assert _hook(GUARD_WRITE, sello) == 2
+
+
+def test_el_hook_posterior_no_deshace_la_escritura_y_la_documentacion_lo_dice():
+    assert "Actúa después de escribir" in _flat(_read("scripts/hooks/check_research_file.py"))
+    assert "PostToolUse" in json.loads(_read(".claude/settings.json"))["hooks"]
+    assert "No deshace la escritura" in _flat(_read(README)) and "el fichero queda escrito" in _flat(_read(ARQUITECTURA))
+
+
+def test_meta_solo_comprueba_la_doble_extraccion_con_las_columnas_de_exportar(project, capsys):
+    import csv
+    from nutria.cli import main
+    origen = ROOT / "ejemplos" / "validacion_bcg.csv"
+    assert main(["meta", "analizar", str(origen), "--metodo", "REML"]) == 0        # CSV a mano: sin comprobación
+    salida = capsys.readouterr().out
+    assert "EXPLORATORIO" not in salida and "doble extracción" not in salida
+    with open(origen, encoding="utf-8") as fh:
+        filas = list(csv.DictReader(fh))
+    marcado = project / "bcg_sin_doble.csv"
+    with open(marcado, "w", encoding="utf-8", newline="") as fh:
+        escritor = csv.DictWriter(fh, fieldnames=[*filas[0], "doble_extraccion_verificada"])
+        escritor.writeheader()
+        escritor.writerows({**f, "doble_extraccion_verificada": "no"} for f in filas)
+    assert main(["meta", "analizar", str(marcado), "--metodo", "REML"]) == 2       # columnas de exportar: se niega
+    assert main(["meta", "analizar", str(marcado), "--metodo", "REML", "--exploratorio"]) == 0
+    assert "EXPLORATORIO" in capsys.readouterr().out
+    for doc in (README, "CLAUDE.md", PROMPT):
+        assert "preparado a mano" in _flat(_read(doc)), doc
+
+
+def test_econ_desarrollador_sin_ganadero_solo_avisa(project, capsys):
+    from nutria.cli import main
+    empresa = str(ROOT / "ejemplos" / "econ_desarrollador_ILUSTRATIVO.toml")
+    assert main(["econ", "desarrollador", empresa, "--sim", "200"]) == 0
+    assert "AVISO: no se ha comprobado la coherencia con el modelo del ganadero" in capsys.readouterr().out
+    texto = _flat(_section(_read(README), "Lo que garantiza el código"))
+    assert "el modelo de la empresa declara su propio precio, dosis y días" in texto
+    assert "sin `--ganadero` termina con 0 y solo avisa" in texto
+
+
+def test_un_sello_no_valida_con_la_clave_de_otra_maquina(tmp_path, monkeypatch):
+    from nutria import sello
+    monkeypatch.setenv("NUTRIA_CLAVE_SELLO", str(tmp_path / "clave_de_esta_maquina"))
+    datos = {"sha256": "0" * 64, "verificacion_completa": True}
+    datos["firma"] = sello.sign(datos)
+    assert sello.verify(datos)
+    monkeypatch.setenv("NUTRIA_CLAVE_SELLO", str(tmp_path / "clave_de_otra_maquina"))
+    assert not sello.verify(datos)                                  # otra máquina, sin clave
+    sello.sign({"otro": "informe"})                                 # la otra máquina crea la suya al sellar
+    assert not sello.verify(datos)
+    assert "los sellos solo valen en la máquina que los firmó" in _flat(_read(README)).replace("**", "")
+
+
+def test_registro_diferido_de_puntuaciones_solo_en_la_evaluacion_en_profundidad():
+    mision = _read(".claude/workflows/mision-1-auto.js")
+    evaluar = _read(".claude/workflows/evaluar-oportunidad-auto.js")
+    assert "puntuar registrar --datos <fichero>" in mision            # cada evaluador registra al terminar
+    assert "registrar_puntuaciones" in evaluar and "sha256sum -c" in evaluar
+    claude = _flat(_read("CLAUDE.md"))
+    assert "En `evaluar-oportunidad-auto`, las puntuaciones se registran en diferido" in claude
+    assert "en la fase `oportunidades` de `mision-1-auto`, cada evaluador registra las suyas al terminar" in claude
+
+
+def test_pruebas_en_vivo_no_cubren_doiorg_y_el_readme_lo_dice():
+    vivo = _read("tests/test_vivo.py")
+    assert "doiorg" not in vivo and "datacite" not in vivo.lower()   # si se añaden, actualiza el README
+    texto = _flat(_section(_read(README), "Primera comprobación real")).replace("**", "")
+    assert "No cubren doi.org ni DataCite" in texto
+
+
+def test_ranking_de_una_oportunidad_sin_puntuar_la_muestra_incompleta(project, capsys):
+    from nutria.cli import main
+    assert main(["--agente", "director-cientifico", "oportunidad", "nueva", "--datos",
+                 str(ROOT / "ejemplos" / "oportunidad_ejemplo.json")]) == 0
+    capsys.readouterr()
+    assert main(["puntuar", "ranking", "--sim", "200"]) == 0
+    assert "O-0001     INCOMPLETA" in capsys.readouterr().out
+    assert "la muestra como INCOMPLETA" in _flat(_read(README))
+
+
+def test_nutria_toml_del_repositorio_es_la_plantilla_de_init():
+    from nutria.config import DEFAULT_CONFIG_TEXT
+    assert _read("nutria.toml") == DEFAULT_CONFIG_TEXT
+    for clave in ("string_url", "antiguedad_maxima_offline_dias"):
+        assert clave in _read("nutria.toml") and clave in _read(README), clave
+
+
+def test_dominios_de_los_proveedores_de_modelos_documentados():
+    import tomllib
+    from urllib.parse import urlparse
+    modelos = tomllib.loads(_read("src/nutria/data/modelos.toml"))["modelo"]
+    dominios = {urlparse(m["base_url"]).hostname for m in modelos if m.get("base_url")}
+    dominios = {d for d in dominios if d not in ("localhost", "127.0.0.1")}
+    dominios |= set(re.findall(r'"https://([a-z0-9.-]+)', _read("src/nutria/llm/router.py")))
+    assert {"api.anthropic.com", "generativelanguage.googleapis.com", "api.openai.com"} <= dominios
+    for doc in (README, FUENTES):
+        texto = _read(doc)
+        for dominio in sorted(dominios):
+            assert f"`{dominio}`" in texto, (doc, dominio)

@@ -23,9 +23,10 @@ La corrección tiene dos partes:
 2. **Organización convertida en código**: subagentes con contextos separados, procedimientos (skills), workflows con
    el control de flujo fijo (las respuestas de cada agente cambian entre ejecuciones), herramientas que verifican
    referencias y registran la procedencia, metaanálisis validado, priorización con compuertas y Monte Carlo, y un
-   hook que bloquea informes con errores de forma y, en revisado o final, sin revisión humana registrada ni sello
-   válido (verificación en línea completa). Con esa organización todavía no se ha ejecutado ninguna misión: ver la
-   última sección.
+   hook que, después de cada escritura, devuelve al agente los errores de forma de un informe y, en revisado o final,
+   la falta de revisión humana registrada o de sello válido (verificación en línea completa); no deshace la
+   escritura: lo que garantiza un informe es su sello. Con esa organización todavía no se ha ejecutado ninguna
+   misión: ver la última sección.
 
 ## Qué se conserva
 
@@ -64,9 +65,10 @@ verificación de respaldo por un agente que lee la fuente (tabla del Anexo A); s
 que caduca al editar el informe y que solo es válido con verificación en línea completa.
 **Implementación**: `nutria verificar`, `nutria fuente agregar` (solo registra lo verificado),
 `nutria informe comprobar --online --sellar`, `nutria informe revisar` (revisión humana registrada),
-`nutria afirmacion comprobar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`, que bloquea
-informes con `[PUB]` sin referencia, referencias sin identificador, citas fuera del formato `[Rn]` o marcados como
-revisados o finales sin revisión humana registrada ni sello válido. La correspondencia entre identificador y cita es
+`nutria afirmacion comprobar`, agente `verificador-citas` y hook `scripts/hooks/check_research_file.py`, que después
+de cada escritura devuelve al agente («block») los informes con `[PUB]` sin referencia, referencias sin
+identificador, citas fuera del formato `[Rn]` o marcados como revisados o finales sin revisión humana registrada ni
+sello válido (el fichero queda escrito; la garantía es el sello). La correspondencia entre identificador y cita es
 una heurística que falla en cerrado (la cita debe traer el título completo del registro).
 
 ### C3. Encuadre "farmacológico" sin frontera regulatoria, y regulación al final

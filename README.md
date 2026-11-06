@@ -68,8 +68,10 @@ nutria doctor
 - **Crea el entorno exactamente en `.venv`, dentro del proyecto.** El hook PostToolUse se ejecuta con
   `scripts/hooks/run_hook.sh`, que busca primero el intérprete de `.venv` (`.venv/bin/python`; en Windows,
   `.venv\Scripts\python.exe`) y, si no existe o no tiene las dependencias, `python3` o `python` del PATH. Si ninguno
-  tiene las dependencias de `nutria`, el hook bloquea las escrituras en `research/` que debía validar (falla cerrado,
-  no se desactiva en silencio). Comprueba el del proyecto con `.venv/bin/python -c "import nutria, jsonschema"`.
+  tiene las dependencias de `nutria`, el hook devuelve a Claude Code un bloqueo («block») por cada escritura en
+  `research/` que debía validar (falla cerrado, no se desactiva en silencio), aunque el fichero ya está escrito: un
+  hook PostToolUse actúa después de escribir. Comprueba el del proyecto con
+  `.venv/bin/python -c "import nutria, jsonschema"`.
 - **Activa el entorno antes de abrir Claude Code** (`source .venv/bin/activate` y después `claude`): los agentes
   ejecutan `nutria` desde la terminal de la sesión y tienen que encontrarlo en el PATH.
 - `requirements/constraints.txt` fija las versiones con las que pasa la suite en Python 3.12 y 3.13 (2026-11-05 y
@@ -90,7 +92,9 @@ nutria doctor
   `www.ebi.ac.uk`, `api.openalex.org`, `api.crossref.org`, `rest.uniprot.org`, `version-12-0.string-db.org` (STRING
   en su dirección versionada, configurable en `nutria.toml`, sección `[fuentes]`, `string_url`), `reactome.org`,
   `doi.org` y `api.datacite.org` (verificación de DOI), `eur-lex.europa.eu` (`nutria normativa`) y, si se usa,
-  `api.lens.org`. Detalle en `docs/FUENTES.md`.
+  `api.lens.org`. La segunda opinión y `nutria llm evaluar` necesitan además los dominios de los proveedores que
+  actives en `config/modelos.toml`: `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com` o
+  `api.deepseek.com` (un modelo local, ninguno); `nutria doctor` no los comprueba. Detalle en `docs/FUENTES.md`.
 - `nutria doctor` comprueba las fuentes esenciales (PubMed, Europe PMC y Crossref, sin las que no hay búsqueda ni
   verificación) y las demás, Lens si hay token, los dominios de WebFetch que declara `docs/FUENTES.md` y si están
   preautorizados en `.claude/settings.json`, el intérprete del hook, `Rscript` y la versión de cada base (una versión
@@ -108,9 +112,10 @@ herramientas que ejecutan desde la terminal, y un modelo local solo puede dar la
 ### Requisitos
 
 - Python 3.11 o superior (probado con 3.11, 3.12 y 3.13) y git.
-- Claude Code reciente con la herramienta Workflow: los workflows de `.claude/workflows/` se han probado con la
-  versión 2.1.318 (binario nativo; compruébalo con `claude --version`); el paquete npm `@anthropic-ai/claude-code`
-  2.1.42 no la incluye. Sin ella siguen funcionando las skills paso a paso (`/mision-1`, `/oportunidad`...).
+- Claude Code reciente con la herramienta Workflow, que está en la versión 2.1.318 (binario nativo; compruébalo con
+  `claude --version`) y no en el paquete npm `@anthropic-ai/claude-code` 2.1.42. Los workflows de `.claude/workflows/`
+  solo se han probado con agentes simulados, no con Claude Code (ver [Uso con Claude Code](#uso-con-claude-code)).
+  Sin la herramienta siguen funcionando las skills paso a paso (`/mision-1`, `/oportunidad`...).
 - Los hooks se ejecutan con `sh`: en Linux y macOS no hace falta nada más; en Windows, usa Claude Code desde Git Bash
   o desde WSL.
 - Node.js 22 solo para ejecutar `tests/test_orquestacion.py`; R, opcional (ver [Instalación](#instalación)).
@@ -148,7 +153,11 @@ NUTRIA_PRUEBAS_EN_VIVO=1 python -m pytest -m vivo tests/test_vivo.py
 
 Las pruebas en vivo consultan PubMed, Europe PMC, OpenAlex (necesita `OPENALEX_API_KEY`), Crossref, ChEMBL, PubChem,
 UniProt, STRING, Reactome, Lens (necesita `LENS_API_TOKEN`) y EUR-Lex. Si alguna falla, no confíes en ese cliente
-hasta entender por qué.
+hasta entender por qué. **No cubren doi.org ni DataCite** (`src/nutria/sources/doiorg.py`), la vía por la que un DOI
+que no está en Crossref, OpenAlex ni PubMed se da por existente o por inexistente: `nutria doctor` solo comprueba que
+esos dominios responden. Hasta que tengan su prueba en vivo, comprueba a mano con `nutria --json verificar --doi`
+algún DOI que conozcas registrado en DataCite (p. ej. el de un conjunto de datos) y uno inventado, y revisa que el
+primero quede verificado y el segundo, no.
 
 ### Firma humana: desde tu terminal, fuera de Claude Code
 
@@ -168,7 +177,9 @@ Si empezaste a trabajar en Claude Code en la nube (claude.ai/code), puedes segui
 `claude --teleport`, ejecutado desde tu copia local del repositorio y con la misma cuenta (las opciones exactas
 dependen de tu versión: `claude --help`). Lo que la sesión dejó en `research/` (registro, procedencia, informes...)
 solo llega si se confirmó con git en su rama; las claves, el entorno virtual y la clave de los sellos son de cada
-máquina, así que en la tuya instala el entorno, exporta las claves y ejecuta `nutria doctor` antes de seguir.
+máquina, así que en la tuya instala el entorno, exporta las claves y ejecuta `nutria doctor` antes de seguir. Los
+sellos de los informes firmados en la nube no validan en tu ordenador: vuelve a sellarlos con red (ver «Qué se
+versiona» en [Primera misión en tu ordenador](#primera-misión-en-tu-ordenador)).
 
 ### Modelos locales para la segunda opinión
 
@@ -219,8 +230,12 @@ siguen usando Claude: el modelo local solo da esa segunda opinión, que es una o
 8. **Qué se versiona**: confirma con git `research/` entera (el registro `nutria.sqlite`, `procedencia.jsonl`, los
    JSON de alta, las revisiones, los planes, los informes con sus sellos y los datos) cuando no haya ninguna orden
    `nutria` en marcha; los ficheros `-wal` y `-shm` del registro, `.cache/` y `.venv/` no se versionan (`.gitignore`).
-   La clave de los sellos vive fuera del repositorio (`~/.config/nutria/`) y no se copia. Conviene añadir
-   `research/procedencia.jsonl -text` a `.gitattributes` para que git no cambie sus finales de línea.
+   La clave de los sellos vive fuera del repositorio (`~/.config/nutria/`) y no se copia, así que **los sellos solo
+   valen en la máquina que los firmó**: en otra máquina, o en el clon de otra persona, ningún sello existente valida
+   (`nutria informe sello` dice que no es válido, y un informe en revisado o final no pasa esa comprobación ni el
+   hook) hasta volver a sellarlo allí con `nutria informe comprobar <informe> --online --sellar`, que necesita red; la
+   revisión humana registrada con `nutria informe revisar` sigue valiendo mientras el informe no cambie. Conviene
+   añadir `research/procedencia.jsonl -text` a `.gitattributes` para que git no cambie sus finales de línea.
 
 Cada fase consume muchos tokens (ver [Workflows y número de agentes](#workflows-y-número-de-agentes)): si dudas,
 empieza por las skills paso a paso.
@@ -300,10 +315,12 @@ nutria --json llm evaluar evals/clasificacion_regulatoria.jsonl --modelo claude-
 
 La salida da la exactitud por modelo en todas las preguntas (`resultados`), solo en las validadas (`solo_validadas`)
 y por área (`por_area`: fisiología, nutrición, destino digestivo, regulación, estadística), y guarda cada respuesta en
-`research/evals/`. Elige por `solo_validadas`: las preguntas con estado `pendiente_validacion` (respuestas de libro de
-texto sin fuente registrada) se corrigen aparte hasta que una persona experta las valide. `evals/dominio_semilla.jsonl`
-tiene 37 preguntas (8 de fisiología y 8 de nutrición) y `evals/clasificacion_regulatoria.jsonl`, 10 casos de
-clasificación con la ruta o la compuerta esperada y las normas de `docs/REGULACION_UE.md` que la sustentan. La
+`research/evals/` (un fichero nuevo por ejecución, sin sobrescribir los anteriores). Elige por `solo_validadas`: las
+preguntas con estado `pendiente_validacion` se corrigen aparte hasta que una persona experta las valide; son las
+respuestas de libro de texto sin fuente registrada y las que dependen de una norma, o de la parte de una norma, que
+`docs/REGULACION_UE.md` marca pendiente de verificar. `evals/dominio_semilla.jsonl` tiene 37 preguntas (8 de
+fisiología y 8 de nutrición; 13 pendientes) y `evals/clasificacion_regulatoria.jsonl`, 10 casos de clasificación con
+la ruta o la compuerta esperada y las normas de `docs/REGULACION_UE.md` que la sustentan (4 pendientes). La
 corrección es léxica: reconoce negaciones («no es X», «no X sino Y»), contradicciones y alternativas excluidas, pero
 no entiende la frase. La versión exacta del modelo de cada subagente no se registra automáticamente: anótala en el
 Anexo C de cada informe.
@@ -338,8 +355,9 @@ nutria potencia medias --delta 1.5 --de 3 --m 10 --icc 0.1
 ```
 
 Ejemplos que necesitan datos registrados antes: `oportunidad nueva` registra O-0001 a partir del ejemplo de formato,
-`informe nuevo` necesita esa oportunidad, y `puntuar ranking` da una tabla vacía hasta que haya puntuaciones de al
-menos tres evaluadores (la [demostración sin red](#demostración-sin-red) lo recorre entero):
+`informe nuevo` necesita esa oportunidad, y `puntuar ranking` la muestra como INCOMPLETA (criterios sin puntuar) hasta
+que tenga puntuaciones, e INSUFICIENTE mientras no haya tres evaluadores distintos por criterio (la
+[demostración sin red](#demostración-sin-red) lo recorre entero):
 
 ```bash
 nutria --agente director-cientifico oportunidad nueva --datos ejemplos/oportunidad_ejemplo.json
@@ -392,7 +410,8 @@ nutria --agente extractor-datos-conciliador extraccion conciliar CE-0001 --datos
 nutria --agente estadistico extraccion exportar --variable "producción de leche" --especie "vacuno lechero" --csv research/datos/colina/leche.csv
 ```
 
-Reglas de la doble extracción: las identidades se comparan sin mayúsculas, tildes ni signos; una copia depositada es
+Reglas de la doble extracción: las identidades son declaradas (un mismo agente puede usar varias; ver
+[Limitaciones](#limitaciones)) y se comparan sin mayúsculas, tildes ni signos; una copia depositada es
 definitiva; quien participó en una comparación con discrepancias (copias, comparación o conciliación) no vuelve a
 extraer esa fuente; `comparar` sin `--registrar` se niega (nunca muestra discrepancias sin registrarlas, tampoco
 fuera de un proyecto); las copias idénticas y las extracciones simples previas dejan un aviso registrado; la
@@ -469,8 +488,13 @@ evaluador-<n>` igual al campo `evaluador` del JSON, y nadie registra ni sustituy
 identificador se normaliza (NFKC, guiones tipográficos, caracteres de formato invisibles, espacios y mayúsculas), así
 que sus variantes no cuentan como evaluadores distintos. Un valor entre dos anclas de la rúbrica exige
 `justificacion_entre_anclas`. Dentro de un subagente, el hook exige `--agente` en cada orden nutria (en
-`evaluador-independiente`, un `--agente` de evaluador) y, a los evaluadores, les bloquea leer `nutria.sqlite`
-(también con comodines) o importar nutria. Es una barrera frente a descuidos, no un control de seguridad.
+`evaluador-independiente`, un `--agente` de evaluador) y, a los evaluadores, les bloquea las órdenes que nombran
+`nutria.sqlite` (también con comodines que la cubran) o importan nutria. Es una barrera frente a descuidos, no un
+control de seguridad, y **la ceguera frente a los ficheros depende de la instrucción al agente**: el hook no ve un
+`grep -ra` sobre `research/` (que lee el contenido de `nutria.sqlite`, justificaciones incluidas), `cat` o
+`git log -p` de `research/procedencia.jsonl` (texto de las decisiones y motivos de los cambios de estado), los JSON de
+puntuación de otros evaluadores (`research/oportunidades/*_puntuacion_*.json`) ni los informes y rankings, y las
+herramientas Read, Grep y Glob de Claude Code no tienen hook.
 
 ## Garantías y limitaciones
 
@@ -567,9 +591,15 @@ que sus variantes no cuentan como evaluadores distintos. Un valor entre dos ancl
   correlación intrasujeto), los moderadores categóricos, St-Pierre con elección de la pendiente aleatoria por razón
   de verosimilitudes y ponderación opcional por 1/SEM², la validación dejando un estudio fuera, la potencia por
   corrales y en diseños cruzados y la plantilla de `exportar-r`. La meta-regresión es de casos completos (avisa de
-  las filas que excluye) y `meta` se niega con filas sin doble extracción verificada salvo con `--exploratorio`.
-- **Economía**: las ventas de la empresa se construyen con el mismo precio, dosis y días que el modelo del ganadero,
-  y `econ coherencia` o `econ desarrollador --ganadero` lo comprueban. Con `--exigir-fuentes`, cada entrada lleva su
+  las filas que excluye). `meta` se niega, salvo con `--exploratorio`, con las filas que el CSV de
+  `extraccion exportar` marca sin doble extracción verificada (columnas `doble_extraccion_verificada` y
+  `estado_verificacion`, que añade `--incluir-sin-conciliar`); **un CSV preparado a mano o sin esas columnas se
+  analiza sin esa comprobación y sin aviso**, así que para un análisis que cuente usa siempre el CSV que exporta
+  `extraccion exportar`.
+- **Economía**: el modelo de la empresa declara su propio precio, dosis y días por ciclo; `econ coherencia` y
+  `econ desarrollador --ganadero` comprueban que coinciden con los del modelo del ganadero (código 1 si no), y
+  `econ desarrollador` sin `--ganadero` termina con 0 y solo avisa: la coherencia no se impone al puntuar. Con
+  `--exigir-fuentes`, cada entrada lleva su
   fuente etiquetada: una `[PUB]` cita una fuente o afirmación registrada y verificada, y una `[DER]` nombra una orden
   `nutria` que existe o un script que existe en el proyecto o junto al modelo. El Monte Carlo de la empresa declara
   `version_muestreo` (2) en la salida y en la procedencia: con la misma semilla, otra versión del muestreo da otras
@@ -602,13 +632,18 @@ que sus variantes no cuentan como evaluadores distintos. Un valor entre dos ancl
   redirecciones sobre `nutria.sqlite` o `procedencia.jsonl`, también con comodines que puedan cubrirlos; borrar
   `research/` entera; importar `nutria.db` o `nutria.provenance`; las órdenes de git que descartan cambios sin
   confirmar (`stash`, `clean`, `reset --hard`, `checkout`/`restore` de «.» o con `-f`, también abreviadas) o que
-  restauran, borran o mueven el registro; y lo que borraría el reflog con el que se comprueba la procedencia
-  (`reflog expire|delete`, `update-ref`, borrar o vaciar `.git/logs`); (4) la clave de los sellos (también con
-  comodines o recorriendo `~/.config`) y el módulo de sellos; (5) dentro de un subagente: cada orden nutria lleva
-  `--agente` con un nombre literal y se ejecuta directamente (no desde Python, `xargs` ni `eval`); no se admite el
-  nombre de otro rol del proyecto ni `evaluador-<n>`, salvo en `evaluador-independiente`, que se identifica siempre
-  como evaluador, no importa nutria y no lee `nutria.sqlite`; no se menciona `NUTRIA_AGENT` ni se usa `set -a`; git
-  solo para leer, añadir y confirmar (sin `--amend`) y `git grep` sin `-O`; un comentario no aporta el `--agente`, y
+  restauran, borran o mueven el registro; y algunas formas de borrar el reflog con el que se comprueba la
+  procedencia: `git reflog expire|delete`, `git update-ref`, `gc.reflogExpire` y borrar, vaciar o reescribir `.git`,
+  `.git/logs` o `.git/refs` con esa ruta escrita en la orden (no si se entra antes en `.git` con `cd` o `pushd`, ni
+  con `find .git... -delete` ni con `git branch -D`: ver [Limitaciones](#limitaciones)); (4) las órdenes que nombran
+  la clave de los sellos o su directorio (`clave_sello`, su variable de entorno, `~/.config/nutria`, también con
+  comodines, entrando con `cd` en `.config` o recorriendo `.config` con grep, find o tar) y el módulo de sellos, pero
+  no las que recorren todo el directorio personal (`grep -r` o `tar` sobre `~`); (5) dentro de un subagente: cada
+  orden nutria lleva `--agente` con un nombre literal y se ejecuta directamente (no desde Python, `xargs` ni `eval`);
+  no se admite el nombre exacto de otro rol del proyecto ni `evaluador-<n>` (cualquier otro nombre, como `persona` o
+  `regulacion_seguridad`, pasa), salvo en `evaluador-independiente`, que se identifica siempre como evaluador, no
+  importa nutria y no nombra `nutria.sqlite` en la orden; no se menciona `NUTRIA_AGENT` ni se usa `set -a`; git solo
+  para leer, añadir y confirmar (sin `--amend`) y `git grep` sin `-O`; un comentario no aporta el `--agente`, y
   nutria cuenta también por su ruta (`.venv/bin/nutria`). Las órdenes de solo lectura (`grep`, `cat`, `head`,
   `tail`, `wc`, `ls`...) solo se comprueban frente a la clave y, en un evaluador, frente al registro. Falsos positivos
   conocidos, con su alternativa: «--firma» dentro de un texto (escribe «la firma de la persona»); `pytest -k
@@ -618,22 +653,26 @@ que sus variantes no cuentan como evaluadores distintos. Un valor entre dos ancl
 - **PreToolUse de escritura** (`scripts/hooks/guard_write.sh`): bloquea con Write, Edit o MultiEdit los sellos
   (`*.verificacion.json`), la clave y `~/.config/nutria`, `procedencia.jsonl`, los ficheros `*.sqlite` del registro y
   `.git/`, sin distinguir mayúsculas.
-- **PostToolUse** (`scripts/hooks/run_hook.sh` → `scripts/hooks/check_research_file.py`): valida lo que se escribe en
-  `research/` con Write, Edit o MultiEdit (informes, también en subcarpetas y con la extensión en mayúsculas; planes;
-  revisiones; JSON de oportunidades e hipótesis con las reglas del registro) y bloquea si hay errores. En un borrador
+- **PostToolUse** (`scripts/hooks/run_hook.sh` → `scripts/hooks/check_research_file.py`): después de cada escritura
+  en `research/` con Write, Edit o MultiEdit, valida el fichero (informes, también en subcarpetas y con la extensión
+  en mayúsculas; planes; revisiones; JSON de oportunidades e hipótesis con las reglas del registro) y, si hay
+  errores, devuelve a Claude Code la decisión «block» con el motivo, que el agente ve y debe corregir. **No deshace la
+  escritura**: un hook PostToolUse actúa con el fichero ya escrito, así que un fichero con errores queda en disco hasta
+  que se corrija; lo que garantiza un informe es su sello (`nutria informe sello`). En un borrador
   solo comprueba la forma: etiquetas, `[Rn]` por `[PUB]`, cifras, citas y referencias por frase y en las tablas, la
   bibliografía sin duplicados ni identificadores de artículo fuera de ella y un Anexo A coherente (en
   `research/planes` y `research/revisiones`, las tablas de veredictos no cuentan como tablas de respaldo, y los
   identificadores y «según R1» de un borrador solo avisan). Que los identificadores existan y correspondan a la cita
   se comprueba en línea al sellar; en revisado o final se exigen la revisión humana registrada y el sello válido. El
-  estado se lee del front matter (si es ilegible, bloquea). Si un intérprete falla, `run_hook.sh` prueba el
-  siguiente, y si ninguno funciona, bloquea.
+  estado se lee del front matter (si es ilegible, devuelve «block»). Si un intérprete falla, `run_hook.sh` prueba el
+  siguiente, y si ninguno funciona, devuelve también «block».
 - **PostToolUse de WebFetch y WebSearch** (`scripts/hooks/registrar_web.sh`): registra cada consulta web en la
   procedencia (fecha, sesión, id de llamada, modo y SHA-256 de la respuesta, nunca su contenido). Por defecto guarda
   solo el dominio y la huella de la URL o de la consulta; con `NUTRIA_PROCEDENCIA_WEB=claro`, la URL y la consulta en
   claro, siempre redactadas (credenciales, parámetros sensibles, fragmento y correos). Nunca bloquea.
-- Son barreras frente a errores y atajos de los agentes, no un control de seguridad: comparan texto, y el PostToolUse
-  no ve lo que se escribe por otras vías, como Bash (compruébalo con `nutria informe sello <informe>`).
+- Son barreras frente a errores y atajos de los agentes, no un control de seguridad: comparan texto, el PostToolUse
+  no deshace lo escrito ni ve lo que se escribe por otras vías, como Bash (compruébalo con
+  `nutria informe sello <informe>`), y los hooks no se protegen a sí mismos (ver [Limitaciones](#limitaciones)).
 
 ### Limitaciones
 
@@ -655,7 +694,9 @@ que sus variantes no cuentan como evaluadores distintos. Un valor entre dos ancl
 - **Clientes de APIs sin probar contra los servicios reales**: se escribieron según la documentación de cada servicio
   y todos tienen pruebas con respuestas simuladas, porque el entorno donde se construyeron bloqueaba esos dominios.
   Las pruebas en vivo (`NUTRIA_PRUEBAS_EN_VIVO=1 python -m pytest -m vivo tests/test_vivo.py`, que incluyen Lens y
-  EUR-Lex) son la primera comprobación real: ejecútalas, con `nutria doctor`, antes de confiar en ellos. No hay cliente
+  EUR-Lex) son la primera comprobación real: ejecútalas, con `nutria doctor`, antes de confiar en ellos. No cubren el
+  cliente de doi.org y DataCite (`src/nutria/sources/doiorg.py`), que decide si un DOI ausente de Crossref, OpenAlex y
+  PubMed existe o se declara inexistente: `nutria doctor` solo comprueba que esos dominios responden. No hay cliente
   para el Registro de aditivos de la UE, el Catálogo y el Registro de materias primas, OpenFoodTox ni EURL-FA.
 - **Lo que el sistema no hace**: no tiene módulos de racionamiento (NASEM, INRAE, FEDNA): no predice la ingestión ni
   evalúa raciones, y las ingestiones son entradas declaradas con fuente o `[SUP]`. Tampoco tiene simulación
@@ -677,20 +718,47 @@ que sus variantes no cuentan como evaluadores distintos. Un valor entre dos ancl
   Claude Code que deje el proceso huérfano, con el entorno vacío y con una terminal propia, si el hook no la reconoce
   (sus listas no son exhaustivas y no ve nombres construidos ni la opción leída de un fichero); en Windows basta
   vaciar el entorno, y en macOS `ps` no da el entorno inicial de los antecesores. También pueden falsificarla una
-  copia modificada de nutria, quien escriba en la base de datos o una persona malintencionada. En la sesión principal,
-  `--agente` es declarado y el hook no comprueba el rol. Una persona sin terminal de control (ssh sin `-t`, cron, CI,
-  un servicio) no puede firmar.
-- **Sello**: cualquier proceso del usuario puede leer la clave HMAC; los hooks bloquean las vías directas por Bash,
-  no un programa escrito en un fichero. `nutria informe sello` detecta cambios accidentales, no una falsificación
-  deliberada del mismo usuario.
+  copia modificada de nutria, quien escriba en la base de datos o una persona malintencionada. Una persona sin
+  terminal de control (ssh sin `-t`, cron, CI, un servicio) no puede firmar.
+- **Identidades declaradas**: `--agente` y `NUTRIA_AGENT` son declaraciones. En la sesión principal el hook no
+  comprueba el rol; en un subagente solo rechaza el nombre exacto de otro rol y `evaluador-<n>`, y cualquier otro
+  nombre (`persona`, `director`, `regulacion_seguridad`) queda tal cual en la procedencia (la CLI solo acepta la
+  propuesta de una compuerta, salvo `bloqueada`, del nombre exacto de su rol propietario). En la doble extracción, un
+  mismo agente puede depositar las dos copias y comparar con
+  nombres distintos (`extractor-datos-A`, `extractor-datos-B`, `extractor-datos-conciliador`), y nada le impide leer
+  la otra copia antes de depositar la suya: la independencia de las copias depende de que las hagan agentes
+  distintos que no vean la otra.
+- **Ceguera de los evaluadores**: la CLI oculta a un `--agente evaluador-<n>` (o `NUTRIA_AGENT=evaluador-<n>`) las
+  puntuaciones ajenas, las decisiones y el motivo de los cambios de estado, y el hook les bloquea las órdenes que
+  nombran `nutria.sqlite`. Pero un evaluador puede leer los ficheros de `research/`: un `grep -ra` sobre `research/`
+  lee el contenido de `nutria.sqlite` (justificaciones incluidas), `research/procedencia.jsonl` guarda en claro el
+  texto de las decisiones y los motivos de los cambios de estado (también en `git log -p`), y están los JSON de
+  puntuación de otros evaluadores (`research/oportunidades/*_puntuacion_*.json`), los informes y los rankings; las
+  herramientas Read, Grep y Glob de Claude Code no tienen hook. Que no los lea depende de que siga su instrucción.
+- **Sello**: cualquier proceso del usuario puede leer la clave HMAC. El hook bloquea las órdenes de Bash que nombran
+  la clave o su directorio, pero no las que recorren todo el directorio personal (`grep -r`, `tar`, `cp -r` o
+  `rsync` sobre `~`), ni un programa escrito en un fichero, ni una ruta construida, y con Bash se puede escribir un
+  fichero de sello (con Write o Edit, no). Un agente que lea la clave puede fabricar un sello válido:
+  `nutria informe sello` detecta cambios accidentales, no una falsificación deliberada del mismo usuario. La clave es
+  de cada máquina: en otra, ningún sello existente valida hasta volver a sellar (ver
+  [Primera misión en tu ordenador](#primera-misión-en-tu-ordenador), «Qué se versiona»).
 - **Procedencia**: la cadena detecta corrupción, alteraciones y borrados intermedios, pero no eventos añadidos al
-  final con huellas recalculadas ni el truncado de lo no confirmado. La comparación con git usa el repositorio local:
-  quien además borre el reflog de la rama (el hook lo impide a los agentes, salvo con `git branch -D` o `-M` en la
-  sesión principal) o siga en otra rama la elude, y la rama remota no se compara. Dos ramas que añadan eventos la
-  rompen al fusionarse.
+  final con huellas recalculadas ni el truncado de lo no confirmado. La comparación con git usa el repositorio local
+  (la rama remota no se compara) y la eluden reescribir la historia y borrar después el reflog de la rama, o seguir en
+  otra rama. **El hook no lo impide**: en la sesión principal deja pasar `git commit --amend`, `reset --soft` o
+  `rebase`, y en cualquier contexto, también en un subagente, borrar el reflog entrando antes en `.git`
+  (`cd .git && rm -rf logs`), con `find .git/logs -delete` o con `git branch -D`, y mover la referencia de la rama sin
+  git; solo reconoce `git reflog expire|delete`, `update-ref` y las rutas `.git/logs` o `.git/refs` escritas en la
+  orden. Un agente que quite un evento ya confirmado (p. ej. con un programa escrito en un fichero), reescriba el
+  commit y borre el reflog deja la procedencia «íntegra» para `procedencia verificar`. Dos ramas que añadan eventos
+  la rompen al fusionarse.
 - **Los hooks comparan texto**: los eluden un programa escrito antes en un fichero o un nombre construido de forma
-  indirecta (variables, concatenación, base64). WebSearch y WebFetch envían la consulta al servicio externo: el hook
-  solo decide qué queda registrado, y la huella de una consulta corta se puede confirmar adivinándola.
+  indirecta (variables, concatenación, base64). Tampoco se protegen a sí mismos: `guard_write.sh` deja editar con
+  Write o Edit `scripts/hooks/`, `.claude/settings.json` y `src/nutria/` (la CLI, instalada en modo editable), y con
+  Bash también se editan, así que un agente al que se le permitan ediciones sin preguntar puede desactivar un hook o
+  cambiar nutria; revisa con `git diff` los cambios en esos ficheros antes de confirmarlos. WebSearch y WebFetch
+  envían la consulta al servicio externo: el hook solo decide qué queda registrado, y la huella de una consulta corta
+  se puede confirmar adivinándola.
 - **Evidencia de compuertas**: vale cualquier fichero regular del proyecto (salvo el registro y los JSON de la
   propia oportunidad), y una URL solo se comprueba por su forma. Las puntuaciones registradas antes de esta versión
   no se renormalizan en el registro, aunque el ranking cuenta sus evaluadores normalizados.
