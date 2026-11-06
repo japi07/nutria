@@ -1027,6 +1027,18 @@ def _is_filler(words: list[str], vocab: dict) -> bool:
     return period in vocab["filler_compact"] or (len(compact) > 1 and len(set(compact)) == 1 and compact.isalpha())
 
 
+# Símbolos de elementos e iones con su grafía química ('Na', 'Na+', 'K+', 'Ca2+', 'Cl-', 'Mg'): son datos (minerales,
+# DCAD), no rellenos, aunque 'na' o 'NA' lo sean. Solo con mayúscula inicial y, si la hay, minúscula segunda letra.
+_ELEMENT_SYMBOLS = frozenset("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se "
+                             "Br Kr Rb Sr Y Zr Nb Mo Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Hg Pb Bi".split())
+_ION_RE = re.compile(r"([A-Z][a-z]?)(?:\d?[+−-])?")
+
+
+def _is_element_symbol(text: str) -> bool:
+    m = _ION_RE.fullmatch(text.strip())
+    return bool(m) and m.group(1) in _ELEMENT_SYMBOLS
+
+
 def text_problem(value: Any, mode: str = "informado") -> str | None:
     """Problema de un texto para la palabra clave "x-texto" de los esquemas, o None si vale.
 
@@ -1052,7 +1064,7 @@ def text_problem(value: Any, mode: str = "informado") -> str | None:
     if mixed:
         return f"mezcla alfabetos distintos en una palabra ({mixed[0]!r}): escríbela con un solo alfabeto"
     vocab = _vocabulary()
-    if _is_filler(words, vocab):
+    if _is_filler(words, vocab) and not _is_element_symbol(text):
         return "es un valor de relleno, no un dato"
     if mode in ("especifico", "especie"):
         readings = [words]
@@ -1215,6 +1227,13 @@ COMPOSITION_UNIT_RE = re.compile(r"\b(?:ms|mo|pb|pv|peso|materia|ingesta|dieta|r
                                  r"|fatty acids?)\b")
 
 
+# Recuentos medios por evento ('servicios por concepción', 'inseminaciones por gestación', 'services per conception'):
+# una media continua por animal, no una incidencia, aunque la unidad sea 'n' o 'número'.
+COUNT_PER_EVENT_RE = re.compile(
+    r"\b(?:servicios?|inseminaciones?|ia|services?|inseminations?|ai)\s+(?:por|per|/)\s*"
+    r"(?:concepcion|gestacion|prenez|parto|conception|pregnancy|calving)\b")
+
+
 def incidence_like(outcome: Any, unit: Any) -> bool:
     """Variable de incidencia o de un trastorno expresada como proporción de animales o recuento (no como velocidad
     por tiempo ni como porcentaje de composición): por la unidad ('% de vacas', 'casos/100 vacas'), por el nombre de
@@ -1227,6 +1246,8 @@ def incidence_like(outcome: Any, unit: Any) -> bool:
             or COMPOSITION_UNIT_RE.search(unit_text)):
         return False
     outcome_text, outcome_fold = plain_text(outcome), _fold(str(outcome or ""))
+    if COUNT_PER_EVENT_RE.search(outcome_fold):
+        return False
     return bool(INCIDENCE_OUTCOME_RE.search(outcome_text) or ANIMAL_PROPORTION_RE.search(outcome_fold)
                 or ANIMAL_START_RE.search(outcome_fold)
                 or ((THRESHOLD_RE.search(outcome_fold)

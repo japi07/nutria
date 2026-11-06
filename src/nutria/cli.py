@@ -1302,6 +1302,16 @@ def _moderadores_ausentes(row: dict) -> list[str]:
     return [name for name, col in NUMERIC_MODERATORS.items() if row.get(col) is None]
 
 
+def _faltan_datos_del_efecto(row: dict) -> list[str]:
+    """Columnas del CSV de análisis que le faltan a una fila para un tamaño del efecto: los eventos y los n en una
+    incidencia con eventos; las medias y los n en una variable continua."""
+    if row.get("ev_trt") is not None or row.get("ev_ctrl") is not None:
+        need = (("ev_trt", "ev_trt"), ("ev_ctrl", "ev_ctrl"), ("n_trt", "n_trt"), ("n_ctrl", "n_ctrl"))
+    else:
+        need = (("media_trt", "mean_trt"), ("media_ctrl", "mean_ctrl"), ("n_trt", "n_trt"), ("n_ctrl", "n_ctrl"))
+    return [name for name, col in need if row.get(col) is None]
+
+
 def _estado_efectivo(row: dict, verificadas: set[int], comparaciones: set[str]) -> str:
     """Estado de doble extracción que respalda el registro: un 'doble_concordante' o 'resuelta' que no salió de una
     comparación registrada (o cuyos valores ya no son los de su comparación) no se presenta como tal."""
@@ -1467,6 +1477,22 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
             raise SystemExit("Ninguna extracción con doble extracción verificada (comparación registrada con "
                              f"`extraccion comparar A B --registrar` o conciliación registrada) con esos filtros "
                              f"(excluidas: {excluded}). Solo para una exploración, usa --incluir-sin-conciliar.")
+    sin_efecto: dict[str, dict] = {}
+    if args.formato == "analisis":
+        # Una fila sin los datos de un tamaño del efecto (p. ej. conciliada hacia un dato que el estudio no publica:
+        # media_control null) no se puede analizar: meta analizar se detenía en ella. Se excluye y se avisa.
+        kept = []
+        for r in rows:
+            faltan = _faltan_datos_del_efecto(r)
+            if faltan:
+                sin_efecto[f"E{r['id']}"] = {"estudio": r["source_id"], "faltan": faltan}
+            else:
+                kept.append(r)
+        rows = kept
+        if not rows:
+            raise SystemExit("Ninguna extracción con esos filtros tiene los datos de un tamaño del efecto (medias y n, "
+                             "o eventos y n): " + "; ".join(f"{k} {v['estudio']} sin {', '.join(v['faltan'])}"
+                                                           for k, v in sin_efecto.items()))
     sin_casos: dict[str, dict] = {}
     if args.casos_completos:
         desconocidos = [m for m in args.casos_completos if m not in NUMERIC_MODERATORS]
@@ -1531,6 +1557,11 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
     if sin_casos:
         avisos.append(f"Excluidos por --casos-completos ({len(sin_casos)}): "
                       + "; ".join(f"{k} {v['estudio']} sin {', '.join(v['faltan'])}" for k, v in sin_casos.items()))
+    if sin_efecto:
+        avisos.append(f"AVISO: excluidas {len(sin_efecto)} fila(s) sin los datos de un tamaño del efecto (el estudio no "
+                      "los publica o se conciliaron hacia un dato no publicado); decláralas en el informe como estudios "
+                      "sin datos utilizables, no las omitas: "
+                      + "; ".join(f"{k} {v['estudio']} sin {', '.join(v['faltan'])}" for k, v in sin_efecto.items()))
     avisos_inc, incidencia = _avisos_incidencia(rows)
     avisos += avisos_inc
     if excluded:
@@ -1561,7 +1592,8 @@ def _exportar_extracciones(args, rows: list[dict], verificadas: set[int], fuera_
     _emit(args, {"filas": len(rows), "csv": args.csv, "formato": args.formato, "excluidas": excluded,
                  "especies": {v["valor"]: v["n"] for v in especies.values()},
                  "moderadores_no_informados": {k: sorted(v) for k, v in ausentes.items()},
-                 "excluidas_por_casos_completos": sin_casos, "fuera_de_filtro": [f"E{r['id']}" for r in fuera_de_filtro],
+                 "excluidas_por_casos_completos": sin_casos, "excluidas_sin_datos_del_efecto": sin_efecto,
+                 "fuera_de_filtro": [f"E{r['id']}" for r in fuera_de_filtro],
                  "incidencia": incidencia, "avisos": avisos},
           f"Exportadas {len(rows)} filas a {args.csv} (formato {args.formato})" + "".join(f"\n{a}" for a in avisos))
     return 0

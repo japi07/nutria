@@ -484,7 +484,13 @@ def test_conciliacion_hacia_un_dato_que_la_fuente_no_publica(project, capsys):
     fila = next(r for r in db.list_extractions(_conn()) if r["comparison_id"] == "CE-0003")
     assert fila["mean_ctrl"] is None and fila["not_reported"] == ["media_control"]
     assert fila["id"] in db.verified_extraction_ids(_conn())
-    out = _export_json(capsys, "--variable", LECHE, "--csv", str(project / "nulos.csv"))
+    # Las tres filas están verificadas, pero sin las medias no dan un tamaño del efecto: la exportación de análisis no
+    # las pasa a meta analizar (que se detenía en ellas) y lo dice; el volcado del registro sí las incluye (fase de
+    # coordinación, revisión final de P7).
+    with pytest.raises(SystemExit, match="tamaño del efecto") as exc:
+        main(["extraccion", "exportar", "--variable", LECHE, "--csv", str(project / "nulos.csv")])
+    assert exc.value.code == 2 and "E1" in str(exc.value) and "sin media_trt, media_ctrl" in str(exc.value)
+    out = _export_json(capsys, "--variable", LECHE, "--formato", "registro", "--csv", str(project / "nulos.csv"))
     assert out["filas"] == 3 and out["excluidas"] == {}
     # un opcional que la fuente no publica se omite ('fuente' con null)
     opcional = dict(leche, fuente=_source(4), p_valor=0.03)

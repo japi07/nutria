@@ -804,3 +804,61 @@ def test_coord3_version_del_muestreo_en_la_salida_y_en_la_procedencia(project, c
     assert evento["inputs"]["version_muestreo"] == 2 and evento["outputs"]["resumen"]["version_muestreo"] == 2
     code, out, _ = _run(capsys, ["econ", "desarrollador", str(desarrollador), "--sim", "300"])
     assert "versión del muestreo 2" in out
+
+
+# ============================================================================ fase de coordinación (3): P7
+def test_coord3_exportacion_de_analisis_excluye_y_avisa_las_filas_sin_tamano_del_efecto(project, capsys):
+    """Revisión final de P7: una fila verificada sin medias (el estudio no publica la del control) pasaba al CSV de
+    análisis sin aviso y meta analizar se detenía en ella. Ahora se excluye con un aviso que la lista; el volcado del
+    registro la conserva."""
+    import csv
+
+    from nutria import db
+    from nutria.config import load_config
+    conn = db.connect(load_config().db_path)
+    try:
+        for doi in ("10.1000/completo", "10.1000/sin-media"):
+            db.upsert_source(conn, {"doi": doi, "title": f"Ensayo {doi}", "year": 2020, "verified": True,
+                                    "retracted": False, "verified_via": "prueba"})
+    finally:
+        conn.close()
+    base = json.loads((ROOT / "ejemplos" / "extraccion_ejemplo.json").read_text("utf-8"))[0]
+    sin_media = dict(base, fuente="doi:10.1000/sin-media", media_control=None,
+                     no_consta=sorted(set(base.get("no_consta") or []) | {"media_control"}))
+    recs = [dict(base, fuente="doi:10.1000/completo"), sin_media]
+    for copia, indent in (("A", None), ("B", 1)):
+        (project / f"e_{copia}.json").write_text(json.dumps(recs, ensure_ascii=False, indent=indent), "utf-8")
+        code, _, err = _run(capsys, ["--agente", f"extractor-datos-{copia}", "extraccion", "depositar", "--datos",
+                                     str(project / f"e_{copia}.json")])
+        assert code == 0, err
+    code, _, err = _run(capsys, ["--agente", "extractor-datos-C", "extraccion", "comparar", str(project / "e_A.json"),
+                                 str(project / "e_B.json"), "--registrar"])
+    assert code == 0, err
+    code, out, err = _run(capsys, ["--json", "--agente", "estadistico", "extraccion", "exportar", "--variable",
+                                   base["variable"], "--csv", str(project / "l.csv")])
+    res = json.loads(out)
+    assert code == 0 and res["filas"] == 1, err
+    assert [v["estudio"] for v in res["excluidas_sin_datos_del_efecto"].values()] == ["doi:10.1000/sin-media"]
+    assert any("sin los datos de un tamaño del efecto" in a and "sin media_ctrl" in a for a in res["avisos"])
+    with open(project / "l.csv", encoding="utf-8") as fh:
+        assert [f["estudio"] for f in csv.DictReader(fh)] == ["doi:10.1000/completo"]
+    code, out, _ = _run(capsys, ["--json", "--agente", "estadistico", "extraccion", "exportar", "--variable",
+                                 base["variable"], "--formato", "registro", "--csv", str(project / "r.csv")])
+    assert code == 0 and json.loads(out)["filas"] == 2
+
+
+@pytest.mark.parametrize("variable, unidad, valida", [
+    # revisión final de P7: falsos positivos de las validaciones nuevas
+    ("Na", "mmol/L", True), ("Na+", "mmol/L", True), ("K+", "mmol/L", True), ("Ca2+", "mmol/L", True),
+    ("Cl-", "mEq/L", True),
+    ("servicios por concepción", "n", True), ("services per conception", "número", True),
+    # siguen siendo relleno o incidencia
+    ("NA", "mmol/L", False), ("na", "mmol/L", False), ("N/A", "mmol/L", False),
+    ("tasa de concepción", "%", False),
+])
+def test_coord3_validacion_de_extracciones_sin_falsos_positivos(variable, unidad, valida):
+    from nutria import db
+    registro = dict(json.loads((ROOT / "ejemplos" / "extraccion_ejemplo.json").read_text("utf-8"))[0],
+                    variable=variable, unidad=unidad)
+    problemas = db.schema_errors("extraccion", registro) + db.extraction_problems(registro)
+    assert (not problemas) is valida, problemas
