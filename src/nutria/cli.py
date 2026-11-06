@@ -2682,7 +2682,7 @@ def _econ_source_problems(cfg, sources: list[tuple[str, str]], modelo: Path | No
         return problems
     if not cfg.db_path.is_file():
         return problems + ["hay fuentes [PUB] y no existe el registro del proyecto para comprobarlas (`nutria init`)"]
-    conn = registry.connect(cfg.db_path)
+    conn = _conn(cfg)   # main() la cierra al terminar
     claims = {c["id"]: c for c in registry.list_claims(conn)}
     # Una fuente registrada por su PMID puede citarse por su DOI (y al revés): se resuelve por cualquiera de los dos.
     aliases: dict[str, str] = {}

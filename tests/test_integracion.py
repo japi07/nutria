@@ -436,7 +436,7 @@ def _hook_bash(command: str, agent_type: str | None = None, cwd: str = "/home/u/
                "tool_input": {"command": command, "description": "orden de prueba"}}
     if agent_type:
         payload.update(agent_id="a1", agent_type=agent_type)
-    return subprocess.run(["sh", str(HOOKS / "guard_bash.sh")], input=json.dumps(payload), capture_output=True,
+    return subprocess.run(["sh", str(HOOKS / "guard_bash.sh")], input=json.dumps(payload, ensure_ascii=False), capture_output=True,
                           text=True, timeout=60)
 
 
@@ -1007,3 +1007,22 @@ def test_coord3_json_mal_formado_da_codigo_2_con_el_fichero(project, capsys, ord
     assert code == 2 and f"{roto}: {motivo}" in err, (orden, err)
     code, out, _ = _run(capsys, ["--json", *orden, str(roto)])
     assert code == 2 and json.loads(out)["codigo"] == 2
+
+
+# ============================================================================ fase de coordinación (3): hook y Unicode
+@pytest.mark.parametrize("command, ensure_ascii, esperado", [
+    # revisión final de P1: con un codificador que escapa lo no ASCII (ｅ), «ｅvaluador-1» pasaba por un nombre
+    # ASCII en un subagente y la CLI (NFKC) lo leía como evaluador-1
+    ("nutria --agente ｅvaluador-1 puntuar ranking", True, 2),
+    ("nutria --agente ｅvaluador-1 puntuar ranking", False, 2),
+    # Claude Code envía UTF-8 sin escapar: un texto con tildes sigue pasando
+    ("git commit -m 'Revisión de la sección'", False, 0),
+    ("nutria --agente critico-red-team estado", True, 0),
+])
+def test_coord3_hook_rechaza_escapes_unicode_en_subagentes(command, ensure_ascii, esperado):
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "agent_type": "critico-red-team"},
+                         ensure_ascii=ensure_ascii)
+    for shell in ("sh", "bash"):
+        res = subprocess.run([shell, str(HOOKS / "guard_bash.sh")], input=payload, capture_output=True, text=True,
+                             timeout=60)
+        assert res.returncode == esperado, (shell, command, ensure_ascii, res.stderr)

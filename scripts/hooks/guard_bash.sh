@@ -461,6 +461,12 @@ if [ -n "$tipo" ]; then
     exit 0
   fi
   agentes="$(dirname "$0")/../../.claude/agents"
+  # Un carácter no ASCII escrito como escape de JSON (ｅ) no lo ve el hook como tal: «ｅvaluador-1» pasaría por
+  # un nombre ASCII y la CLI (NFKC) lo leería como evaluador-1. Claude Code envía UTF-8 sin escapar, así que solo un
+  # codificador distinto lo produce: falla en cerrado (revisión final de P1).
+  if contiene "$base" '\\u(00[89A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3})'; then
+    bloquea "dentro de un subagente, la orden no lleva caracteres no ASCII escritos como escapes de JSON (\\uXXXX): escribe los nombres y las opciones con caracteres ASCII."
+  fi
   # La identidad va en --agente: NUTRIA_AGENT no se usa, ni se exportan variables con nombres construidos (así no se
   # fija NUTRIA_AGENT sin escribirlo: set -a; read ...; export $V=...; printf -v $V ...).
   if en_alguna_variante 'NUTRIA_AGENT'; then
