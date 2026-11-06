@@ -397,7 +397,10 @@ const leerRegistro = async (id, etiqueta, fase) => {
   // no la declara un agente.
   const decisiones = Array.isArray(o.decisiones) ? o.decisiones.filter(esObjeto) : []
   return { ok: true, estado: o.status || null, titulo: typeof o.title === 'string' ? o.title : null, efectivas: ef, bloqueadas,
-    ruta: typeof o.regulatory_route === 'string' ? o.regulatory_route : null, seleccion_firmada: seleccionFirmada(decisiones) }
+    ruta: typeof o.regulatory_route === 'string' ? o.regulatory_route : null,
+    // la clasificación del triage registrada (oportunidad clasificar); la ruta preliminar del alta no lo es
+    clasificada: typeof o.classified_at === 'string' && o.classified_at.trim() !== '',
+    seleccion_firmada: seleccionFirmada(decisiones) }
 }
 // La selección está firmada si la ÚLTIMA decisión firmada por una persona sobre la selección es exactamente la frase
 // canónica que pide este workflow («seleccionada M1», sin distinguir mayúsculas, espacios ni un punto final). Cualquier
@@ -791,9 +794,11 @@ if (FASE === 'oportunidades') {
       }
       if (ESTADOS_DETENIDOS.includes(o.registro.estado)) return { ...o, sin_puntuar: `la oportunidad está en estado "${o.registro.estado}"` }
       // La clasificación del triage regulatorio la registra regulacion-seguridad con oportunidad clasificar: si el registro
-      // sigue sin ruta (o «indeterminada»), se avisa; la compuerta regulatoria no se resuelve sin ella.
-      const clasificacion = o.registro.ruta && o.registro.ruta !== 'indeterminada' ? null
-        : `${o.id}: la ruta regulatoria del registro sigue "${o.registro.ruta || 'sin ruta'}": regulacion-seguridad no registró la clasificación (oportunidad clasificar)`
+      // no la tiene (ruta sin clasificar o solo la preliminar del alta), se avisa; la compuerta regulatoria no pasa a
+      // superada sin ella (el registro lo rechaza).
+      const clasificacion = o.registro.clasificada && o.registro.ruta && o.registro.ruta !== 'indeterminada' ? null
+        : `${o.id}: la ruta regulatoria del registro sigue "${o.registro.ruta || 'sin ruta'}"` +
+          `${o.registro.ruta && o.registro.ruta !== 'indeterminada' ? ' (preliminar del alta)' : ''}: regulacion-seguridad no registró la clasificación (oportunidad clasificar)`
       if (clasificacion) log(clasificacion)
       return parallel(EVALUADORES.map((ev) => () => puntuar(ev, o.id, promptEvaluador(ev, o)))).then((p) => ({ ...o, puntuaciones: p, aviso_clasificacion: clasificacion }))
     },

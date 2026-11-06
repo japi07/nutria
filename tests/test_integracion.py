@@ -1043,3 +1043,26 @@ def test_coord3_hook_rechaza_escapes_unicode_en_subagentes(command, ensure_ascii
         res = subprocess.run([shell, str(HOOKS / "guard_bash.sh")], input=payload, capture_output=True, text=True,
                              timeout=60)
         assert res.returncode == esperado, (shell, command, ensure_ascii, res.stderr)
+
+
+# ============================================================================ fase de coordinación (3): P7 → P1
+def test_coord3_regulatoria_superada_exige_la_clasificacion_registrada_no_la_ruta_preliminar(project, capsys):
+    """Petición de P7 a P1, revisada: la ruta preliminar que trae el JSON de la oportunidad (la escribe quien la
+    genera) no es la clasificación del triage. Sin `oportunidad clasificar` registrada, la compuerta regulatoria no se
+    propone 'superada' aunque la ruta preliminar no sea 'indeterminada' (la versión anterior lo permitía)."""
+    datos = json.loads((ROOT / "ejemplos" / "oportunidad_ejemplo.json").read_text("utf-8"))
+    datos["ruta_regulatoria_preliminar"] = "materia_prima"
+    (project / "o.json").write_text(json.dumps(datos, ensure_ascii=False), "utf-8")
+    code, out, err = _run(capsys, ["--json", "--agente", "director-cientifico", "oportunidad", "nueva", "--datos",
+                                   str(project / "o.json")])
+    assert code == 0, err
+    oid = json.loads(out)["ids"][0]
+    propuesta = ["--agente", "regulacion-seguridad", "puntuar", "compuerta", oid, "regulatoria", "superada",
+                 "--motivo", "propuesta del triage"]
+    code, _, err = _run(capsys, propuesta)
+    assert code == 3 and f"oportunidad clasificar {oid}" in err, err
+    code, _, err = _run(capsys, ["--agente", "regulacion-seguridad", "oportunidad", "clasificar", oid, "--ruta",
+                                 "materia_prima", "--motivo", "triage: materia prima del catálogo"])
+    assert code == 0, err
+    code, _, err = _run(capsys, propuesta)
+    assert code == 0, err

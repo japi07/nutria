@@ -2371,10 +2371,15 @@ def set_gate(conn: sqlite3.Connection, opp_id: str, gate: str, status: str, rati
             and not signed:
         raise RegistryError(f"{opp_id} tiene la ruta '{opp['regulatory_route']}': la compuerta regulatoria solo "
                             "puede cambiarse con --firma-humana (y conviene corregir antes la ruta)")
-    if gate == "regulatoria" and status == "superada" and opp.get("regulatory_route") in (None, "", "indeterminada"):
-        # petición de P7: la compuerta regulatoria no se da por superada sin la clasificación del triage
-        raise RegistryError(f"{opp_id} no tiene clasificación regulatoria (ruta '{opp.get('regulatory_route') or 'sin ruta'}'): "
-                            f"la compuerta regulatoria no se propone ni se firma 'superada' sin ella. "
+    if gate == "regulatoria" and status == "superada" and (
+            opp.get("regulatory_route") in (None, "", "indeterminada") or not opp.get("classified_at")):
+        # Petición de P7: la compuerta regulatoria no se da por superada sin la clasificación del triage registrada
+        # (`oportunidad clasificar`). La ruta preliminar del JSON de alta la escribe quien genera la oportunidad: no
+        # es el triage, aunque no sea 'indeterminada'.
+        route = opp.get("regulatory_route") or "sin ruta"
+        what = ("no tiene clasificación regulatoria" if route in ("sin ruta", "indeterminada") else
+                f"no tiene la clasificación del triage registrada (la ruta '{route}' es la preliminar del alta)")
+        raise RegistryError(f"{opp_id} {what}: la compuerta regulatoria no se propone ni se firma 'superada' sin ella. "
                             f"{CLASSIFICATION_OWNER} la registra antes con nutria --agente {CLASSIFICATION_OWNER} "
                             f"oportunidad clasificar {opp_id} --ruta <ruta> --motivo \"...\"")
     if not signed and status != "bloqueada":

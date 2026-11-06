@@ -2635,3 +2635,42 @@ def test_coord_economia_alineada_con_la_skill_en_mision_y_oportunidad():
         assert "econ ganadero" in texto and "--exigir-fuentes" in texto and "por tonelada de pienso" in texto
         assert "econ desarrollador" in texto and "--ganadero" in texto and "P(pérdida > umbral)" in texto
         assert "econ coherencia" in texto
+
+
+# ============================================================================ fase de coordinación (3): P7 → P1/P8
+@requires_node
+def test_coord3_mision1_avisa_si_solo_hay_la_ruta_preliminar_del_alta(project, capsys):
+    # La ruta preliminar que trae el JSON del alta no es la clasificación del triage: el registro no deja pasar la
+    # compuerta regulatoria a superada sin `oportunidad clasificar` (classified_at), y el workflow lo avisa igual que
+    # con la ruta «indeterminada». Con la clasificación registrada, no hay aviso.
+    paso0 = _regla_paso0(project, capsys)
+    _registrar_titulos(project, capsys, "Oportunidad A", "Oportunidad B")
+    code, out = _cli(capsys, "--agente", "regulacion-seguridad", "oportunidad", "clasificar", "O-0002", "--ruta",
+                     "materia_prima", "--motivo", "triage: materia prima")
+    assert code == 0, out
+    preliminar = _ver(capsys, "O-0001")
+    datos = json.loads(preliminar["salida"])
+    assert not datos.get("classified_at")
+    datos["regulatory_route"] = "materia_prima"          # ruta preliminar del alta, sin clasificación del triage
+    preliminar["salida"] = json.dumps(datos, ensure_ascii=False)
+    clasificada = _ver(capsys, "O-0002")
+    assert json.loads(clasificada["salida"]).get("classified_at")
+    problemas = [{"id": "P1", "titulo": "Lipidosis hepática en el periodo de transición", "especie": "vacuno lechero",
+                  "etapa": "transición", "mecanismos": ["movilización lipídica"], "soluciones_actuales": "S"}]
+    reglas = [
+        paso0,
+        {"label": "M1b:gen:P1", "respuesta": {"oportunidades": [_opp("Oportunidad A"), _opp("Oportunidad B")]}},
+        {"labelPrefix": "M1b:novedad-literatura", "respuesta": {"veredicto": "nueva", "literatura": "l"}},
+        {"labelPrefix": "M1b:novedad-mercado", "respuesta": {"veredicto": "nueva", "productos": "x", "patentes": "p"}},
+        {"label": "registro:1", "respuesta": {"id": "O-0001"}},
+        {"label": "registro:2", "respuesta": {"id": "O-0002"}},
+        {"label": "compuertas-registro:M1c:O-0001", "respuesta": preliminar},
+        {"label": "compuertas-registro:M1c:O-0002", "respuesta": clasificada},
+        {"label": "ranking", "respuesta": {"top": [{"id": "O-0001", "titulo": "A", "motivo": "m"}],
+                                           "archivo": "research/revisiones/M1_ranking_2026-11-04.md", "resumen": "r"}},
+    ]
+    out = run_workflow("mision-1-auto", {"fase": "oportunidades", "problemas": problemas, "n_oportunidades": 2,
+                                         "fecha": "2026-11-04"}, reglas)
+    avisos = {o["id"]: o["aviso_clasificacion"] for o in out["resultado"]["oportunidades"]}
+    assert "preliminar del alta" in avisos["O-0001"] and "no registró la clasificación" in avisos["O-0001"]
+    assert avisos["O-0002"] is None
