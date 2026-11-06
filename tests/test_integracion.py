@@ -489,6 +489,40 @@ def test_coord_hook_sigue_exigiendo_agente_a_nutria_ejecutable(command):
     assert _hook_bash(command.replace("critico-red-team", "evaluador-2"), "evaluador-independiente").returncode == 2
 
 
+@pytest.mark.parametrize("command", [
+    # el directorio del proyecto se llama nutria: como argumento de otra orden no es una orden nutria (la primera
+    # versión de la coordinación bloqueaba «cd /home/user/nutria && nutria --agente ... estado» en todo subagente)
+    "cd /home/user/nutria && python3 -m pytest -q",
+    "cd /home/user/nutria && nutria --agente critico-red-team estado",
+    "python3 scripts/contar.py /home/user/nutria",
+    "ls ~/nutria/research && cd ../nutria && pwd",
+    "find /home/user/nutria -name '*.md' | head",
+    "echo 'Revisión de nutria' >> notas.md",
+    "git grep -n nutria -- docs",
+    "/usr/local/bin/nutria --agente critico-red-team estado",
+])
+def test_coord3_hook_la_ruta_del_proyecto_no_es_una_orden_nutria(command):
+    assert _hook_bash(command, "critico-red-team").returncode == 0, command
+
+
+@pytest.mark.parametrize("command, agente", [
+    # nutria por su ruta en posición de orden o seguida de una orden de nutria
+    ("timeout 10 /usr/bin/nutria estado", "critico-red-team"),
+    ("env -u FOO /usr/bin/nutria --json estado", "critico-red-team"),
+    ("X=1 .venv/bin/nutria", "critico-red-team"),
+    # git grep -O ejecuta una orden con los ficheros encontrados, pegada a la opción y fuera de la vista del hook
+    ("git grep -Onutria foo", "critico-red-team"),
+    ("git grep -O'nutria puntuar ranking #' foo", "evaluador-independiente"),
+    ("git grep --open-files-in-pager='sh -c nutria' foo", "critico-red-team"),
+    # lo que la shell toma por comentario pero ejecuta otro intérprete (campo privado #x de node en un documento en
+    # línea) no esconde una orden nutria sin --agente
+    ("node <<EOF\nclass A { #x = require('child_process').execSync('nutria puntuar ranking').toString(); }\nEOF",
+     "evaluador-independiente"),
+])
+def test_coord3_hook_sigue_viendo_nutria_por_ruta_git_grep_y_comentarios_ajenos(command, agente):
+    assert _hook_bash(command, agente).returncode == 2, command
+
+
 def test_coord_hook_el_comentario_no_hace_pasar_por_evaluador():
     # Reproducción de la revisión final de P1 (r3b_comentario_e2e.py): el evaluador sin --agente real
     res = _hook_bash("python3 -m nutria --json oportunidad ver O-0001 # --agente evaluador-2", "evaluador-independiente")

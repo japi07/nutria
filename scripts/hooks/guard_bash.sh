@@ -111,9 +111,15 @@ posicion='(^|[;&|(){}!`]|\$\(|(then|do|else|elif|exec|time|command|nohup|nice|xa
 multiplexor_ingles='(^|[^[:alnum:]_.-])screen[[:space:]]([^;&|]*[[:space:]])?-[[:alnum:]]*[dDm]|(^|[^[:alnum:]_.-])expect[[:space:]]+(-[bcdDfinN]?([[:space:]]|$)|[^[:space:];&|]+\.exp([[:space:]]|$))|\|[[:space:]]*expect([[:space:]]|$)|(^|[^[:alnum:]_.-])expect[[:space:]]*<'
 # Mención de nutria como orden o módulo (no como parte de una ruta: src/nutria/, research/nutria.sqlite).
 menciona_nutria='(^|[^[:alnum:]_./-])nutria([^[:alnum:]_./-]|$)|-m[[:space:]]*nutria|(from|import)[[:space:]]+nutria'
-# Para la identidad (sección 5) cuenta también nutria por su ruta (/usr/local/bin/nutria, ./nutria, .venv/bin/nutria):
-# una palabra que termina en /nutria.
-menciona_nutria_ruta="${menciona_nutria}|(^|[[:space:]=])[^[:space:];&|()]*/nutria([[:space:];&|)]|\$)"
+# Para la identidad (sección 5) cuenta también nutria por su ruta (/usr/local/bin/nutria, ./nutria, .venv/bin/nutria)
+# cuando se ejecuta: en posición de orden (al principio de la orden simple, tras asignaciones VAR=valor, envoltorios
+# como env, exec, command, time, xargs o timeout y sus opciones) o seguida de una orden o una opción global de nutria.
+# No cuenta como argumento de otra orden: el directorio del proyecto también se llama nutria (cd /home/user/nutria,
+# ls ~/nutria, python3 x.py /home/user/nutria).
+subordenes_nutria='afirmacion|autoria|buscar|cache|decision|destino|diana|doctor|dosis|econ|estado|extraccion|fuente|hipotesis|informe|init|llm|meta|molecula|normativa|oportunidad|patentes|potencia|procedencia|proteina|puntuar|red|rutas|verificar|-h|--help|--agente|--json|--offline|--antiguedad-maxima|--version'
+envoltorios='[{!]|if|then|do|else|elif|while|until|time|exec|command|builtin|nice|nohup|env|xargs|parallel|eval|timeout|stdbuf|ionice|chrt|taskset|strace|ltrace|watch|flock|sudo|doas'
+nutria_por_ruta="^[[:space:]]*(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|${envoltorios}|-[^[:space:]]*)[[:space:]]+)*[^[:space:]]*/nutria([[:space:]]|\$)|(^|[[:space:]=])[^[:space:]]*/nutria[[:space:]]+(${subordenes_nutria})([[:space:]=]|\$)"
+menciona_nutria_ruta="${menciona_nutria}|${nutria_por_ruta}"
 # La orden sin los comentarios de la shell (un # al principio de una palabra, fuera de comillas, hasta el final de la
 # línea, que aquí es ;), con los escapes de JSON deshechos (\" es ", \\ es \). Un comentario no se ejecuta: no
 # puede aportar el --agente de una orden (nutria ... # --agente evaluador-2).
@@ -146,11 +152,12 @@ awk_sin_comentarios='{
   print out
 }'
 # 1 si todas las órdenes simples de la línea (separadas por ; & | ( ) o acentos graves fuera de comillas) son de una
-# lista cerrada que no ejecuta nada (grep, head, tail, wc, cut, uniq, ls, cat, cd, pwd; git status, log, diff, show,
-# blame, grep, ls-files, add y commit sin opciones globales) y no hay sustituciones ($( y acentos graves, también entre
-# comillas dobles) ni asignaciones delante de la orden. Así, nutria como texto (grep -rn nutria docs/, git commit -m
-# '... nutria ...') no se toma por una orden sin --agente; cualquier otra orden en la línea (| sh, xargs...) anula la
-# excepción.
+# lista cerrada que no ejecuta nada (grep, head, tail, wc, cut, uniq, ls, cat, cd, pwd, echo, printf, mkdir, stat,
+# file, basename, dirname, realpath, sha256sum, md5sum, true, false; git status, log, diff, show, blame, grep sin -O ni
+# --open-files-in-pager, ls-files, add y commit sin opciones globales) y no hay sustituciones ($( y acentos graves,
+# también entre comillas dobles) ni asignaciones delante de la orden. Así, nutria como texto (grep -rn nutria docs/,
+# git commit -m '... nutria ...') no se toma por una orden sin --agente; cualquier otra orden en la línea (| sh,
+# xargs...) anula la excepción. git grep -O<orden> ejecuta una orden con los ficheros encontrados: no es segura.
 awk_solo_seguras='{
   s = $0; n = length(s)
   if (index(s, "$(") || index(s, "`") || index(s, "<(") || index(s, ">(")) { print 0; exit }
@@ -172,7 +179,10 @@ awk_solo_seguras='{
         m = split(seg, w, /[[:space:]]+/)
         for (k = 1; k <= 2; k++) gsub(/[\047"\\]/, "", w[k])
         if (w[1] ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { print 0; exit }
-        if (w[1] ~ /^(grep|egrep|fgrep|head|tail|wc|cut|uniq|ls|cat|cd|pwd)$/) { seg = ""; continue }
+        if (w[1] ~ /^(grep|egrep|fgrep|head|tail|wc|cut|uniq|ls|cat|cd|pwd|echo|printf|mkdir|stat|file|basename|dirname|realpath|sha256sum|md5sum|true|false)$/) { seg = ""; continue }
+        if (w[1] == "git" && w[2] == "grep") {
+          for (k = 3; k <= m; k++) { x = w[k]; gsub(/[\047"\\]/, "", x); if (x ~ /^-[A-Za-z]*O/ || x ~ /^--op/) { print 0; exit } }
+        }
         if (w[1] == "git" && w[2] ~ /^(status|log|diff|show|blame|grep|ls-files|add|commit)$/) { seg = ""; continue }
         print 0; exit
       }
@@ -470,6 +480,11 @@ if [ -n "$tipo" ]; then
   if por_segmento "$minusculas" "${git_orden}commit([[:space:]].*)?[[:space:]]--(am|ame|amen|amend|fi|fix|fixu|fixup|sq|squ|squa|squas|squash)([=[:space:]]|$)"; then
     bloquea "dentro de un subagente no se reescriben commits (git commit --amend, --fixup, --squash): lo hace una persona."
   fi
+  # git grep -O<orden> (--open-files-in-pager) ejecuta una orden con los ficheros encontrados, pegada a la opción
+  # (-Onutria) y fuera de la vista de las demás comprobaciones.
+  if por_segmento "$plano" "${git_orden}grep([[:space:]].*)?[[:space:]](-[[:alpha:]]*O|--op)"; then
+    bloquea "dentro de un subagente, git grep no abre los resultados con otra orden (-O, --open-files-in-pager): usa git grep sin -O o la herramienta Grep."
+  fi
   # nutria se ejecuta directamente, no a través de un intérprete o de otra orden que construya sus argumentos: así el
   # rol declarado está a la vista (python -c "subprocess.run([... '--agente', R ...])", xargs ... {}, eval).
   if contiene "$plano" "$menciona_nutria" \
@@ -485,7 +500,13 @@ if [ -n "$tipo" ]; then
   if [ "$ident_exenta" = 1 ]; then
     exit 0
   fi
-  if printf '%s\n' "$ident_sin_comillas" | tr ';&|()`' '\n\n\n\n\n\n' | grep -E -e "$menciona_nutria_ruta" | grep -Evq -e '--agente(=|[[:space:]])'; then
+  # Se comprueba con y sin los comentarios: sin ellos, un comentario no aporta el --agente; con ellos, el texto que la
+  # shell toma por comentario pero que otro intérprete ejecuta (un documento en línea para node con un campo #x = ...)
+  # no esconde una orden nutria.
+  sin_agente() {
+    printf '%s\n' "$1" | tr ';&|()`' '\n\n\n\n\n\n' | grep -E -e "$menciona_nutria_ruta" | grep -Evq -e '--agente(=|[[:space:]])'
+  }
+  if sin_agente "$ident_sin_comillas" || sin_agente "$sin_comillas"; then
     if [ "$tipo" = "evaluador-independiente" ]; then
       bloquea "un evaluador independiente se identifica en cada orden nutria: nutria --agente evaluador-<n> ... (regla 9; así la CLI le oculta las puntuaciones ajenas)."
     fi
