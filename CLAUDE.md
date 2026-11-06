@@ -74,9 +74,9 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
     `nutria procedencia verificar` sale con 1 si no es íntegra (líneas corruptas, eventos alterados o quitados de en
     medio, o lo confirmado en git reescrito o borrado mientras la versión anterior siga en el historial o en el
     reflog de la rama; no detecta el truncado de lo que aún no se ha confirmado, ni la historia reescrita si además se
-    borra el reflog). Ningún agente reescribe la historia de git (`commit --amend`, `reset`, `rebase`, `branch -D`)
-    ni toca `.git` (reflog y referencias): el hook solo reconoce algunas formas de hacerlo, así que depende de esta
-    regla. Las decisiones, el historial de puntuaciones y la autoría son solo de inserción.
+    borra el reflog). Ningún agente reescribe la historia de git (`commit --amend`, `reset` a un commit anterior,
+    `rebase`, `branch -D`) ni toca `.git` (reflog y referencias): el hook solo reconoce algunas formas de hacerlo, así
+    que depende de esta regla. Las decisiones, el historial de puntuaciones y la autoría son solo de inserción.
 11. **Confidencialidad y PI**: Claude Code funciona con las condiciones de la cuenta de Anthropic del usuario. La
     política de datos del registro de modelos (`nutria llm modelos`) se aplica a los proveedores adicionales que
     consulta `nutria llm preguntar`, cuya sensibilidad por defecto es `confidencial` (solo modelos locales o con

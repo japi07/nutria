@@ -635,18 +635,19 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   restauran, borran o mueven el registro; y algunas formas de borrar el reflog con el que se comprueba la
   procedencia: `git reflog expire|delete`, `git update-ref`, `gc.reflogExpire` y borrar, vaciar o reescribir `.git`,
   `.git/logs` o `.git/refs` con esa ruta escrita en la orden (no si se entra antes en `.git` con `cd` o `pushd`, ni
-  con `find .git... -delete` ni con `git branch -D`: ver [Limitaciones](#limitaciones)); (4) las órdenes que nombran
+  con `find .git... -delete`, ni con `git branch -D` en la sesión principal: ver [Limitaciones](#limitaciones)); (4)
+  las órdenes que nombran
   la clave de los sellos o su directorio (`clave_sello`, su variable de entorno, `~/.config/nutria`, también con
   comodines, entrando con `cd` en `.config` o recorriendo `.config` con grep, find o tar) y el módulo de sellos, pero
   no las que recorren todo el directorio personal (`grep -r` o `tar` sobre `~`); (5) dentro de un subagente: cada
   orden nutria lleva `--agente` con un nombre literal y se ejecuta directamente (no desde Python, `xargs` ni `eval`);
-  no se admite el nombre exacto de otro rol del proyecto ni `evaluador-<n>` (cualquier otro nombre, como `persona` o
-  `regulacion_seguridad`, pasa), salvo en `evaluador-independiente`, que se identifica siempre como evaluador, no
-  importa nutria y no nombra `nutria.sqlite` en la orden; no se menciona `NUTRIA_AGENT` ni se usa `set -a`; git solo
+  no se admite el nombre exacto de otro rol del proyecto ni `evaluador-<n>`, salvo en `evaluador-independiente`, que
+  se identifica siempre como evaluador, no importa nutria y no nombra `nutria.sqlite` en la orden (cualquier otro
+  nombre, como `persona` o `regulacion_seguridad`, pasa); no se menciona `NUTRIA_AGENT` ni se usa `set -a`; git solo
   para leer, añadir y confirmar (sin `--amend`) y `git grep` sin `-O`; un comentario no aporta el `--agente`, y
   nutria cuenta también por su ruta (`.venv/bin/nutria`). Las órdenes de solo lectura (`grep`, `cat`, `head`,
-  `tail`, `wc`, `ls`...) solo se comprueban frente a la clave y, en un evaluador, frente al registro. Falsos positivos
-  conocidos, con su alternativa: «--firma» dentro de un texto (escribe «la firma de la persona»); `pytest -k
+  `tail`, `wc`, `ls`...) solo se comprueban frente a la clave y, en un evaluador, frente a `nutria.sqlite`. Falsos
+  positivos conocidos, con su alternativa: «--firma» dentro de un texto (escribe «la firma de la persona»); `pytest -k
   firma_humana` (usa `-k "firma and humana"`); un intérprete con un comodín que cubre el registro
   (`python3 x.py research/*`: nombra los ficheros); `sudo`, `nohup`, `git stash` y similares (que los ejecute la
   persona); un mensaje de commit en un heredoc que cita órdenes bloqueadas (`git commit -F` con un fichero).
@@ -658,9 +659,9 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   en mayúsculas; planes; revisiones; JSON de oportunidades e hipótesis con las reglas del registro) y, si hay
   errores, devuelve a Claude Code la decisión «block» con el motivo, que el agente ve y debe corregir. **No deshace la
   escritura**: un hook PostToolUse actúa con el fichero ya escrito, así que un fichero con errores queda en disco hasta
-  que se corrija; lo que garantiza un informe es su sello (`nutria informe sello`). En un borrador
-  solo comprueba la forma: etiquetas, `[Rn]` por `[PUB]`, cifras, citas y referencias por frase y en las tablas, la
-  bibliografía sin duplicados ni identificadores de artículo fuera de ella y un Anexo A coherente (en
+  que se corrija; lo que garantiza un informe es su sello (`nutria informe sello`). En un borrador solo comprueba la
+  forma: etiquetas, `[Rn]` por `[PUB]`, cifras, citas y referencias por frase y en las tablas, la bibliografía sin
+  duplicados ni identificadores de artículo fuera de ella y un Anexo A coherente (en
   `research/planes` y `research/revisiones`, las tablas de veredictos no cuentan como tablas de respaldo, y los
   identificadores y «según R1» de un borrador solo avisan). Que los identificadores existan y correspondan a la cita
   se comprueba en línea al sellar; en revisado o final se exigen la revisión humana registrada y el sello válido. El
@@ -724,12 +725,11 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   comprueba el rol; en un subagente solo rechaza el nombre exacto de otro rol y `evaluador-<n>`, y cualquier otro
   nombre (`persona`, `director`, `regulacion_seguridad`) queda tal cual en la procedencia (la CLI solo acepta la
   propuesta de una compuerta, salvo `bloqueada`, del nombre exacto de su rol propietario). En la doble extracción, un
-  mismo agente puede depositar las dos copias y comparar con
-  nombres distintos (`extractor-datos-A`, `extractor-datos-B`, `extractor-datos-conciliador`), y nada le impide leer
-  la otra copia antes de depositar la suya: la independencia de las copias depende de que las hagan agentes
-  distintos que no vean la otra.
+  mismo agente puede depositar las dos copias y comparar con nombres distintos (`extractor-datos-A`,
+  `extractor-datos-B`, `extractor-datos-conciliador`), y nada le impide leer la otra copia antes de depositar la suya:
+  la independencia de las copias depende de que las hagan agentes distintos que no vean la otra.
 - **Ceguera de los evaluadores**: la CLI oculta a un `--agente evaluador-<n>` (o `NUTRIA_AGENT=evaluador-<n>`) las
-  puntuaciones ajenas, las decisiones y el motivo de los cambios de estado, y el hook les bloquea las órdenes que
+  puntuaciones ajenas, las decisiones y el motivo de los cambios de estado, y el hook le bloquea las órdenes que
   nombran `nutria.sqlite`. Pero un evaluador puede leer los ficheros de `research/`: un `grep -ra` sobre `research/`
   lee el contenido de `nutria.sqlite` (justificaciones incluidas), `research/procedencia.jsonl` guarda en claro el
   texto de las decisiones y los motivos de los cambios de estado (también en `git log -p`), y están los JSON de
@@ -745,13 +745,13 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
 - **Procedencia**: la cadena detecta corrupción, alteraciones y borrados intermedios, pero no eventos añadidos al
   final con huellas recalculadas ni el truncado de lo no confirmado. La comparación con git usa el repositorio local
   (la rama remota no se compara) y la eluden reescribir la historia y borrar después el reflog de la rama, o seguir en
-  otra rama. **El hook no lo impide**: en la sesión principal deja pasar `git commit --amend`, `reset --soft` o
-  `rebase`, y en cualquier contexto, también en un subagente, borrar el reflog entrando antes en `.git`
-  (`cd .git && rm -rf logs`), con `find .git/logs -delete` o con `git branch -D`, y mover la referencia de la rama sin
-  git; solo reconoce `git reflog expire|delete`, `update-ref` y las rutas `.git/logs` o `.git/refs` escritas en la
-  orden. Un agente que quite un evento ya confirmado (p. ej. con un programa escrito en un fichero), reescriba el
-  commit y borre el reflog deja la procedencia «íntegra» para `procedencia verificar`. Dos ramas que añadan eventos
-  la rompen al fusionarse.
+  otra rama. **El hook no lo impide**: en la sesión principal deja pasar `git commit --amend`, `reset --soft`,
+  `rebase` y `git branch -D`, y en cualquier contexto, también en un subagente, borrar el reflog entrando antes en
+  `.git` (`cd .git && rm -rf logs`) o con `find .git/logs -delete`, y mover la referencia de la rama sin git; solo
+  reconoce `git reflog expire|delete`, `update-ref` y las rutas `.git/logs` o `.git/refs` escritas en la orden. Un
+  agente que quite un evento ya confirmado (p. ej. con un programa escrito en un fichero), reescriba el commit y
+  borre el reflog deja la procedencia «íntegra» para `procedencia verificar`. Dos ramas que añadan eventos la rompen
+  al fusionarse.
 - **Los hooks comparan texto**: los eluden un programa escrito antes en un fichero o un nombre construido de forma
   indirecta (variables, concatenación, base64). Tampoco se protegen a sí mismos: `guard_write.sh` deja editar con
   Write o Edit `scripts/hooks/`, `.claude/settings.json` y `src/nutria/` (la CLI, instalada en modo editable), y con
