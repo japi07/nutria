@@ -636,11 +636,11 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   procedencia: `git reflog expire|delete`, `git update-ref`, `gc.reflogExpire` y borrar, vaciar o reescribir `.git`,
   `.git/logs` o `.git/refs` con esa ruta escrita en la orden (no si se entra antes en `.git` con `cd` o `pushd`, ni
   con `find .git... -delete`, ni con `git branch -D` en la sesión principal: ver [Limitaciones](#limitaciones)); (4)
-  las órdenes que nombran
-  la clave de los sellos o su directorio (`clave_sello`, su variable de entorno, `~/.config/nutria`, también con
-  comodines, entrando con `cd` en `.config` o recorriendo `.config` con grep, find o tar) y el módulo de sellos, pero
-  no las que recorren todo el directorio personal (`grep -r` o `tar` sobre `~`); (5) dentro de un subagente: cada
-  orden nutria lleva `--agente` con un nombre literal y se ejecuta directamente (no desde Python, `xargs` ni `eval`);
+  las órdenes que nombran la clave de los sellos o su directorio (`clave_sello`, su variable de entorno,
+  `~/.config/nutria`, también con comodines, entrando con `cd` en `.config` o recorriendo `.config` con grep, find o
+  tar) y el módulo de sellos, pero no las que recorren todo el directorio personal (`grep -r` o `tar` sobre `~`); (5)
+  dentro de un subagente: cada orden nutria lleva `--agente` con un nombre literal y se ejecuta directamente (no desde
+  Python, `xargs` ni `eval`);
   no se admite el nombre exacto de otro rol del proyecto ni `evaluador-<n>`, salvo en `evaluador-independiente`, que
   se identifica siempre como evaluador, no importa nutria y no nombra `nutria.sqlite` en la orden (cualquier otro
   nombre, como `persona` o `regulacion_seguridad`, pasa); no se menciona `NUTRIA_AGENT` ni se usa `set -a`; git solo

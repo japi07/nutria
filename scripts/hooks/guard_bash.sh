@@ -24,7 +24,7 @@
 #     restauran, borran o mueven el registro (también con los pathspecs :/research o :!x); y algunas formas de borrar
 #     el reflog con el que `nutria procedencia verificar` detecta la historia reescrita (reflog expire|delete,
 #     update-ref, gc.reflogExpire, borrar o reescribir .git, .git/logs o .git/refs con la ruta escrita en la orden; no
-#     reconoce entrar antes en .git con cd o pushd, find .git/logs -delete ni git branch -D);
+#     reconoce entrar antes en .git con cd o pushd, find .git/logs -delete ni, en la sesión principal, git branch -D);
 #  4. la clave de los sellos (clave_sello, NUTRIA_CLAVE_SELLO, ~/.config/nutria, también con ./ o // en la ruta, con
 #     comodines en cualquier componente (~/.con*/nut*/*), entrando con cd en .config o recorriéndola con grep -r, find
 #     o tar; no las órdenes que recorren todo el directorio personal, como grep -r o tar sobre ~) y el módulo de sellos
