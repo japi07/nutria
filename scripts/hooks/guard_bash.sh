@@ -18,13 +18,16 @@
 #  3. escribir el registro por fuera de la CLI: sqlite3, .connect(, copias, borrados o redirecciones sobre
 #     nutria.sqlite o procedencia.jsonl (sin distinguir mayúsculas), también con comodines que puedan cubrirlos
 #     (rm research/*.jsonl, truncate research/proc*, find research -name '*.sqlite' -delete, git restore '*.sqlite');
-#     borrar research/ entera (también con find ... -delete o comodines); importar nutria.db o nutria.provenance; las
+#     borrar o mover research/ entera (también sola tras la orden, mv research x, con find ... -delete o comodines);
+#     importar nutria.db o nutria.provenance; las
 #     órdenes de git que descartan cambios sin confirmar (stash, clean, reset --hard, checkout/restore de "." o con -f,
 #     también con abreviaturas: reset --ha, checkout --forc, switch --disc; checkout-index, read-tree) o que
 #     restauran, borran o mueven el registro (también con los pathspecs :/research o :!x); y algunas formas de borrar
 #     el reflog con el que `nutria procedencia verificar` detecta la historia reescrita (reflog expire|delete,
-#     update-ref, gc.reflogExpire, borrar o reescribir .git, .git/logs o .git/refs con la ruta escrita en la orden; no
-#     reconoce entrar antes en .git con cd o pushd, find .git/logs -delete ni, en la sesión principal, git branch -D);
+#     update-ref, gc.reflogExpire, borrar, mover o reescribir .git, .git/logs o .git/refs con la ruta escrita en la
+#     orden, también sola tras la orden (rm .git/logs/HEAD), con // o /./ o con comodines o llaves que la cubran
+#     (.git/log*, .git/{logs,x}, .*); no reconoce entrar antes en .git con cd o pushd, find .git/logs -delete, una
+#     ruta construida con variables ni, en la sesión principal, git branch -D);
 #  4. la clave de los sellos (clave_sello, NUTRIA_CLAVE_SELLO, ~/.config/nutria, también con ./ o // en la ruta, con
 #     comodines en cualquier componente (~/.con*/nut*/*), entrando con cd en .config o recorriéndola con grep -r, find
 #     o tar; no las órdenes que recorren todo el directorio personal, como grep -r o tar sobre ~) y el módulo de sellos
@@ -284,6 +287,7 @@ fi
 # 3. Registro (base de datos y procedencia): solo a través de la CLI. `python -m nutria` es la CLI y `python -m pytest`
 #    ejecuta las pruebas, no un acceso directo: se descartan antes de buscar los verbos que escriben.
 mensaje_registro="el registro (research/nutria.sqlite) y la procedencia (research/procedencia.jsonl) solo cambian a través de la CLI nutria (las reglas de firma, compuertas, puntuaciones y la cadena de hashes están en ella); tampoco se borran o sobrescriben con comodines que puedan cubrirlos ni borrando research/ entera. Para leer la procedencia, usa nutria procedencia o un cat/tail simple; si de verdad hace falta tocarlos, que lo haga una persona."
+mensaje_reflog="no se borra ni se reescribe el reflog de git (ni .git) desde Bash: \`nutria procedencia verificar\` lo usa para detectar la historia reescrita tras quitar eventos ya confirmados. Si hace falta, que lo haga una persona."
 if [ "$solo_lectura" = 0 ]; then
   sin_cli=$(printf '%s' "$minusculas" | sed -E 's/python[0-9.]*([[:space:]]+-[a-z]+)*[[:space:]]+-m[[:space:]]*(nutria|pytest)/\2/g')
   # También los borrados y editores que no tienen variante con comodines en la lista de 3b (unlink, ex, vim -es, php,
@@ -302,7 +306,10 @@ if [ "$solo_lectura" = 0 ]; then
       bloquea "$mensaje_registro"
     fi
   fi
-  if por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|rsync|unlink|rmdir)${fin}.*[[:space:]=](\./)?research/?(\*|\.)?([[:space:]]|$)"; then
+  # research/ entera y, en 3c, .git: la ruta escrita como argumento, también sola tras la orden (rm research,
+  # mv .git/logs x), con barras repetidas o «./» intermedios (.git//logs, .git/./logs).
+  rutas=$(printf '%s' "$minusculas" | sed -E -e 's#/+#/#g' -e ':a' -e 's#/\./#/#g' -e 'ta')
+  if por_segmento "$rutas" "${ini}(rm|mv|shred|truncate|rsync|unlink|rmdir)[[:space:]](.*[[:space:]=])?(\./)?research/?(\*|\.)?([[:space:]]|$)"; then
     bloquea "$mensaje_registro"
   fi
 
@@ -327,6 +334,20 @@ if [ "$solo_lectura" = 0 ]; then
     case "$p" in *\[*) ;; *\]) p=${p%\]} ;; esac
     while [ "${p%/}" != "$p" ]; do p=${p%/}; done
     [ -n "$p" ] || return 0
+    # .git, o sus logs, refs o packed-refs, cubiertos por el patrón (.git/log*, .git/{logs,x}, .gi?/logs, .git/*,
+    # .*): un componente que cubre .git (que empieza por punto o por una lista entre llaves: * y ? no cubren el
+    # punto inicial) seguido de nada o de un componente que cubre logs, refs o packed-refs.
+    resto=$p
+    while [ -n "$resto" ]; do
+      case "$resto" in */*) comp=${resto%%/*}; resto=${resto#*/} ;; *) comp=$resto; resto='' ;; esac
+      case "$comp" in
+        .*|\{*)
+          if cubre "$comp" .git; then
+            siguiente=${resto%%/*}
+            if [ -z "$siguiente" ] || cubre "$siguiente" logs refs packed-refs; then bloquea "$mensaje_reflog"; fi
+          fi ;;
+      esac
+    done
     case "$p" in */*) dir=${p%/*}; nombre=${p##*/} ;; *) dir=''; nombre=$p ;; esac
     case "$dir" in "~") dir=$HOME ;; "~/"*) dir="$HOME/${dir#\~/}" ;; esac
     if [ -n "$dir" ] && [ "$dir" != "." ]; then
@@ -344,7 +365,9 @@ if [ "$solo_lectura" = 0 ]; then
   revisa_segmento() {  # $1: orden simple
     es_git=0
     es_find=0
-    palabras=$(printf '%s' "$1" | tr '()<>=,' '      ')
+    # Las comas de una lista entre llaves ({logs,x}) no separan palabras, como las de una lista de Python.
+    palabras=$(printf '%s' "$1" | sed -E -e ':a' -e 's/(\{[^{}[:space:]]*),([^{}[:space:]]*\})/\1@COMA@\2/' -e 'ta' \
+      | tr '()<>=,' '      ')
     if printf '%s' "$1" | grep -Eiq -e "$git_destruye"; then
       es_git=1
     elif ! printf '%s' "$1" | grep -Eiq -e "$destruye"; then
@@ -354,6 +377,7 @@ if [ "$solo_lectura" = 0 ]; then
     printf '%s' "$1" | grep -Eiq -e "${ini}find${fin}" && es_find=1
     n_patrones=0
     for palabra in $palabras; do
+      case "$palabra" in *@COMA@*) palabra=$(printf '%s' "$palabra" | sed 's/@COMA@/,/g') ;; esac
       es_comodin "$palabra" || continue
       n_patrones=$((n_patrones + 1))
       [ "$n_patrones" -le 50 ] || bloquea "demasiados patrones con comodines en una orden que borra o mueve ficheros: nombra los ficheros explícitamente."
@@ -423,10 +447,11 @@ if [ "$solo_lectura" = 0 ]; then
   fi
   if por_segmento "$minusculas" "${git_orden}(reflog[[:space:]]+(expire|delete)|update-ref)([[:space:]]|$)" \
     || contiene "$minusculas" 'gc\.reflogexpire|core\.logallrefupdates' \
-    || por_segmento "$minusculas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)" \
+    || por_segmento "$rutas" "${ini}(rm|mv|shred|truncate|unlink|rsync|rmdir)[[:space:]](.*[[:space:]=])?([^[:space:]]*/)?\.git(/(logs|refs|packed-refs)[^[:space:]]*)?/?([[:space:]]|$)" \
     || contiene "$minusculas" "${ini}(cp|dd|ln|install|tee|sed|awk|perl|python[0-9.]*|node|ruby|ex|vi|vim|nvim|ed|php|gio|sponge|chmod|touch)${fin}.*[[:space:]=]([^[:space:]]*/)?\.git/[^[:space:]]" \
+    || por_segmento "$rutas" "${ini}(tee|sponge)[[:space:]](.*[[:space:]=])?([^[:space:]]*/)?\.git/[^[:space:]]" \
     || contiene "$minusculas" '>+[[:space:]]*([^[:space:];&|]*/)?\.git/'; then
-    bloquea "no se borra ni se reescribe el reflog de git (ni .git) desde Bash: \`nutria procedencia verificar\` lo usa para detectar la historia reescrita tras quitar eventos ya confirmados. Si hace falta, que lo haga una persona."
+    bloquea "$mensaje_reflog"
   fi
 fi
 

@@ -632,14 +632,17 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   desvincular procesos (`setsid`, `nohup`, `disown`, `crontab` salvo `-l`) o darles una terminal propia (`tmux`,
   `screen -dm`, `script`, `expect`, `unbuffer`, `socat`, `ssh -t`, `pty`...); (3) escribir el registro por fuera de
   la CLI: `sqlite3`, `.connect(`, copias, borrados (también `unlink`, `find -delete`, `ex`, `vim -es`...) y
-  redirecciones sobre `nutria.sqlite` o `procedencia.jsonl`, también con comodines que puedan cubrirlos; borrar
-  `research/` entera; importar `nutria.db` o `nutria.provenance`; las órdenes de git que descartan cambios sin
-  confirmar (`stash`, `clean`, `reset --hard`, `checkout`/`restore` de «.» o con `-f`, también abreviadas) o que
-  restauran, borran o mueven el registro; y algunas formas de borrar el reflog con el que se comprueba la
-  procedencia: `git reflog expire|delete`, `git update-ref`, `gc.reflogExpire` y borrar, vaciar o reescribir `.git`,
-  `.git/logs` o `.git/refs` con esa ruta escrita en la orden (no si se entra antes en `.git` con `cd` o `pushd`, ni
-  con `find .git... -delete`, ni con `git branch -D` en la sesión principal: ver [Limitaciones](#limitaciones)); (4)
-  las órdenes que nombran la clave de los sellos o su directorio (`clave_sello`, su variable de entorno,
+  redirecciones sobre `nutria.sqlite` o `procedencia.jsonl`, también con comodines que puedan cubrirlos; borrar o
+  mover `research/` entera (también `mv research /tmp/r`); importar `nutria.db` o `nutria.provenance`; las órdenes de
+  git que descartan cambios sin confirmar (`stash`, `clean`, `reset --hard`, `checkout`/`restore` de «.» o con `-f`,
+  también abreviadas) o que restauran, borran o mueven el registro; y algunas formas de borrar el reflog con el que se
+  comprueba la procedencia: `git reflog expire|delete`, `git update-ref`, `gc.reflogExpire` y borrar, mover, vaciar o
+  reescribir `.git`, `.git/logs` o `.git/refs` con esa ruta escrita en la orden (también sola tras la orden,
+  `rm .git/logs/HEAD` o `mv .git/logs x`, con barras repetidas o «./» intermedios, o con comodines o llaves que la
+  cubran: `.git/log*`, `.git/{logs,x}`, `.*`; no si se entra antes en `.git` con `cd` o `pushd`, ni con
+  `find .git... -delete`, una ruta construida con variables o `git branch -D` en la sesión principal: ver
+  [Limitaciones](#limitaciones)); (4) las órdenes que nombran la clave de los sellos o su directorio (`clave_sello`,
+  su variable de entorno,
   `~/.config/nutria`, también con comodines, entrando con `cd` en `.config` o recorriendo `.config` con grep, find o
   tar) y el módulo de sellos, pero no las que recorren todo el directorio personal (`grep -r` o `tar` sobre `~`); (5)
   dentro de un subagente: cada orden nutria lleva `--agente` con un nombre literal y se ejecuta directamente (no desde
@@ -753,9 +756,10 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   (la rama remota no se compara) y la eluden reescribir la historia y borrar después el reflog de la rama, o seguir en
   otra rama. **El hook no lo impide**: en la sesión principal deja pasar `git commit --amend`, `reset --soft`,
   `rebase` y `git branch -D`, y en cualquier contexto, también en un subagente, borrar el reflog entrando antes en
-  `.git` (`cd .git && rm -rf logs`) o con `find .git/logs -delete`, y mover la referencia de la rama sin git; solo
-  reconoce `git reflog expire|delete`, `update-ref`, `gc.reflogExpire` y las rutas `.git`, `.git/logs` o `.git/refs`
-  escritas en la orden. Un
+  `.git` (`cd .git && rm -rf logs`) o con `find .git/logs -delete`, con una ruta construida con variables y mover
+  la referencia de la rama sin git (entrando antes en `.git` o desde un programa); solo reconoce
+  `git reflog expire|delete`, `update-ref`,
+  `gc.reflogExpire` y las rutas `.git`, `.git/logs` o `.git/refs` escritas en la orden (también con comodines). Un
   agente que quite un evento ya confirmado (p. ej. con un programa escrito en un fichero), reescriba el commit y
   borre el reflog deja la procedencia «íntegra» para `procedencia verificar`. Dos ramas que añadan eventos la rompen
   al fusionarse.

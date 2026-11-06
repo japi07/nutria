@@ -716,6 +716,16 @@ def _hook_bash(orden: str, agente: str | None = None) -> int:
 # bloquea (2) y lo que declara que no reconoce (0).
 HOOK_DOCUMENTADO = [
     ("rm -rf .git/logs", None, 2),
+    ("rm .git/logs/HEAD", None, 2),                       # revisión, ronda 2: una sola ruta, sin opciones
+    ("unlink .git/logs/HEAD", "evaluador-independiente", 2),
+    ("mv .git/logs /tmp/logs.bak", "critico-red-team", 2),
+    ("rm .git/refs/heads/main", None, 2),
+    ("rm -rf .git//logs", "critico-red-team", 2),
+    ("rm -rf .git/log*", None, 2),
+    ("rm -rf .git/{logs,x}", None, 2),
+    ("mv research /tmp/r", None, 2),
+    ("mv research /tmp/r", "critico-red-team", 2),
+    ("rm -f .git/index.lock", None, 0),
     (": > .git/logs/HEAD", None, 2),
     ("git reflog expire --expire=now --all", None, 2),
     ("git update-ref -d refs/heads/vieja", None, 2),

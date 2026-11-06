@@ -630,6 +630,28 @@ BLOQUEADAS = [
     "rm -rf .git/logs",
     "rm -rf .git",
     "rm -rf /home/u/nutria/.git/logs/refs/heads/main",
+    # revisión de la documentación (ronda 2): una sola ruta sin opciones, barras repetidas, «./», comodines y llaves
+    "rm .git/logs/HEAD",
+    "unlink .git/logs/refs/heads/main",
+    "shred .git/logs/HEAD",
+    "mv .git/logs /tmp/logs.bak",
+    "rm .git/refs/heads/main",
+    "mv .git/refs/heads/main /tmp/m",
+    "rmdir .git/logs",
+    "rm -rf .git//logs",
+    "rm -rf .git/./logs",
+    "rm -rf .git/log*",
+    "rm -rf .git/{logs,x}",
+    "rm -rf {.git,x}/logs",
+    "rm -rf .gi?/logs",
+    "rm .git/refs/heads/*",
+    "rm -rf .*",
+    "echo | tee .git/logs/HEAD",
+    "mv research /tmp/r",
+    "mv research/ /tmp/r",
+    "mv ./research /tmp/r",
+    "mv research//. /tmp/r",
+    "rmdir research",
     # falsos positivos aceptados (hay alternativa): el texto '--firma' dentro de un motivo y leer la procedencia con
     # Python (usa `nutria procedencia --json` o un cat/tail simple)
     "nutria --agente director-cientifico decision registrar --decision d --motivo 'falta --firma de la persona'",
@@ -735,6 +757,18 @@ PERMITIDAS = [
     "ls -la ~/.config/",
     "cat ~/.config/git/config",
     "ls ~/.*rc",
+    # revisión de la documentación (ronda 2): lo que no es el reflog, .git ni research/ entera
+    "rm -f .git/index.lock",
+    "rm .git/*.lock",
+    "rm -f .gitkeep",
+    "cp .gitignore /tmp/x",
+    "rm -f .*.swp",
+    "rm -rf .venv .cache/nutria",
+    "rm -f {a,b}.tmp",
+    "mv research_notas.md research/revisiones/notas.md",
+    "mv notas.md research/revisiones/",
+    "rm -rf research/datos/tmp",
+    "cat .git/logs/HEAD | tail -3",
 ]
 
 
