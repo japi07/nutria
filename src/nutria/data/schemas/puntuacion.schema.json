@@ -17,7 +17,7 @@
           "valor": {"type": "number", "minimum": 0, "maximum": 1},
           "min": {"type": "number", "minimum": 0, "maximum": 1},
           "max": {"type": "number", "minimum": 0, "maximum": 1},
-          "justificacion": {"type": "string", "minLength": 10},
+          "justificacion": {"type": "string", "minLength": 10}, "justificacion_entre_anclas": {"type": "string", "minLength": 10, "description": "Obligatoria si el valor no es un ancla de la rúbrica: por qué está entre dos anclas (scoring.engine.validate_anchors)."},
           "evidencia": {"type": "array", "items": {"type": "string"}}
         }
       }

@@ -167,7 +167,25 @@
         },
         "comentario": {
           "type": "string"
+        },
+        "dosis": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Dosis prevista del candidato en la base de unidad_dosis; con la fracción de escape y la digestibilidad intestinal, el esqueleto del informe calcula la dosis absorbible."
+        },
+        "unidad_dosis": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unidad de la dosis con su base explícita (regla 3 de CLAUDE.md): g/animal/d, mg/kg de MS o g/t de pienso."
         }
+      },
+      "dependentRequired": {
+        "dosis": [
+          "unidad_dosis"
+        ]
       }
     },
     "alegacion_prevista": {

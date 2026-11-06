@@ -904,3 +904,37 @@ def test_coord3_meta_se_niega_con_filas_sin_doble_extraccion_salvo_exploratorio(
     # sin esas columnas (CSV preparado a mano) no se juzga
     (project / "h.csv").write_text("estudio,yi,vi\nA,0.4,0.04\nB,0.1,0.05\nC,0.3,0.03\n", "utf-8")
     assert _run(capsys, ["meta", "analizar", str(project / "h.csv")])[0] == 0
+
+
+# ============================================================================ fase de coordinación (3): P2/P6 → P7
+def test_coord3_dosis_del_destino_digestivo_con_su_base_en_el_esquema(project, capsys):
+    """Petición de P2 a P7: el esquema de oportunidad declara destino_digestivo.dosis y unidad_dosis, que render.py
+    ya usa para la dosis absorbible del esqueleto; una dosis sin su base (regla 3) se rechaza con código 2."""
+    base = json.loads((ROOT / "ejemplos" / "oportunidad_ejemplo.json").read_text("utf-8"))
+    sin_base = dict(base, destino_digestivo={"fraccion_escape_ruminal": 0.4, "digestibilidad_intestinal": 0.8,
+                                             "fuente_o_calculo": "[SUP] prueba", "dosis": 50})
+    (project / "o1.json").write_text(json.dumps(sin_base, ensure_ascii=False), "utf-8")
+    code, _, err = _run(capsys, ["--agente", "director-cientifico", "oportunidad", "nueva", "--datos",
+                                 str(project / "o1.json")])
+    assert code == 2 and "unidad_dosis" in err
+    con_base = dict(sin_base, destino_digestivo={**sin_base["destino_digestivo"], "unidad_dosis": "g/animal/d"})
+    (project / "o2.json").write_text(json.dumps(con_base, ensure_ascii=False), "utf-8")
+    code, out, err = _run(capsys, ["--json", "--agente", "director-cientifico", "oportunidad", "nueva", "--datos",
+                                   str(project / "o2.json")])
+    assert code == 0, err
+    oid = json.loads(out)["ids"][0]
+    code, _, err = _run(capsys, ["--agente", "director-cientifico", "informe", "nuevo", oid])
+    assert code == 0, err
+    texto = (project / "research" / "informes" / f"{oid}.md").read_text("utf-8")
+    assert "Dosis absorbible a la dosis prevista (50 g/animal/d): 16 g/animal/d [DER]" in texto
+
+
+def test_coord3_justificacion_entre_anclas_declarada_en_el_esquema_de_puntuacion():
+    """Petición de P6 a P7: el esquema de puntuación declara justificacion_entre_anclas (la vía de un valor entre
+    anclas de validate_anchors), con la misma longitud mínima que la justificación."""
+    from nutria import db
+    ejemplo = json.loads((ROOT / "ejemplos" / "puntuacion_ejemplo.json").read_text("utf-8"))
+    ejemplo["puntuaciones"][0]["justificacion_entre_anclas"] = "entre 0,5 y 0,75 porque el ensayo es único"
+    assert db.schema_errors("puntuacion", ejemplo) == []
+    ejemplo["puntuaciones"][0]["justificacion_entre_anclas"] = "corta"
+    assert any("justificacion_entre_anclas" in e for e in db.schema_errors("puntuacion", ejemplo))
