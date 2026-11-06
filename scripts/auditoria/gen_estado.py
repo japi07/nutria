@@ -87,6 +87,9 @@ def evaluate_round(resultados: list[dict]) -> tuple[dict, list[str]]:
 
 def clean(text: str) -> str:
     text = TMP_PATH.sub("(directorio temporal de la reauditoría)", text)
+    tmp = r"\(directorio temporal de la reauditoría\)"
+    text = re.sub(rf"{tmp}(?:(?:, | y ){tmp})+", "(directorio temporal de la reauditoría)", text)
+    text = re.sub(rf"\({tmp}\)", "(directorio temporal de la reauditoría)", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -104,6 +107,12 @@ def summary(text: str, n: int) -> str:
             break
     if not out:
         out = t[: n - 1] + "…" if len(t) > n else t
+    elif len(out) < n * 0.3 and len(t) > len(out):
+        # Solo cabía una frase muy corta (p. ej. «Refutado por el escéptico.») y la siguiente es larga: se añade su
+        # comienzo, cortado en una palabra, para que la celda diga algo del motivo.
+        rest = t[len(out):].strip()
+        corte = (out + " " + rest)[: n - 1]
+        out = corte[: corte.rfind(" ")].rstrip(" ,;:") + "…" if " " in corte[len(out):] else corte + "…"
     elif out.endswith(":"):
         rest = t[len(out):].strip()
         extra = (out + " " + rest)[:n].rstrip()
@@ -156,10 +165,10 @@ def main() -> None:
     w("")
     w("> **Cómo leerlo.** La auditoría de línea base (commit `236a161`) confirmó 151 defectos en 11 dimensiones "
       "(`docs/auditoria/AUDITORIA_LINEA_BASE.md`, `docs/auditoria/hallazgos_linea_base.json`). Tras cada tanda de "
-      "correcciones, una reauditoría revisa cada defecto contra el código de ese momento: en cada bloque, un agente "
-      "verificador lo clasifica (corregido, mitigado, pendiente o no aplica) leyendo el código y ejecutando pruebas, y un "
-      "agente escéptico intenta refutar cada «corregido» o «mitigado». Solo cuenta como corregido lo que el escéptico "
-      "confirma. Verificadores y escépticos son modelos de lenguaje: pueden equivocarse, y otra ejecución puede dar "
+      "correcciones, una reauditoría revisa cada defecto contra el código de ese momento: un agente verificador por "
+      "dimensión (por bloque de dimensiones en la ronda 1) lo clasifica (corregido, mitigado, pendiente o no aplica) "
+      "leyendo el código y ejecutando pruebas, y agentes escépticos (hasta 8 afirmaciones cada uno desde la ronda 2) "
+      "intentan refutar cada «corregido» o «mitigado». Solo cuenta como corregido lo que el escéptico confirma. Verificadores y escépticos son modelos de lenguaje: pueden equivocarse, y otra ejecución puede dar "
       "resultados distintos. Ninguna persona ha revisado todavía esta clasificación.")
     w("")
     w("## Resumen")
@@ -227,18 +236,29 @@ def main() -> None:
         "con pruebas que simulan las respuestas de los agentes (`tests/test_orquestacion.py`); su comportamiento con "
         "modelos reales, su coste en tokens y su tiempo no se han medido. No se ha ejecutado ninguna misión.",
         "- **Clientes de API sin probar contra los servicios reales.** La red del entorno donde se construyó bloquea las "
-        "fuentes científicas; las pruebas en vivo existen (`tests/test_vivo.py`) y se activan con "
-        "`NUTRIA_PRUEBAS_EN_VIVO=1`.",
+        "fuentes científicas; las pruebas en vivo existen (`tests/test_vivo.py`, que no cubren doi.org ni DataCite) y "
+        "se activan con `NUTRIA_PRUEBAS_EN_VIVO=1`.",
+        "- **Los workflows no ejecutan órdenes.** Comprueban la salida que copia un agente, así que sus garantías "
+        "(compuertas leídas del registro, sello válido antes de registrar puntuaciones) dependen de que la copie "
+        "literalmente: una falsificación deliberada no se detecta.",
         "- **Normativa pendiente de verificación humana.** Lo marcado «pendiente» en `docs/REGULACION_UE.md` debe "
         "comprobarlo una persona en EUR-Lex (texto consolidado, CELEX y fecha) y registrarlo con "
         "`nutria verificar manual <URL> --firma-humana NOMBRE`.",
-        "- **La firma humana es una atestación, no una autenticación.** La CLI la rechaza dentro de Claude Code y con "
-        "`--agente`, y los hooks bloquean sus abreviaturas, pero nada identifica criptográficamente a la persona.",
+        "- **La firma humana es una atestación, no una autenticación.** La CLI y el registro la rechazan con `--agente` "
+        "o `NUTRIA_AGENT`, dentro de Claude Code y sin terminal de control, y ningún analizador admite abreviaturas, "
+        "pero nada identifica criptográficamente a la persona: un programa del mismo usuario desvinculado de Claude Code "
+        "y con una terminal propia puede pasar la comprobación.",
+        "- **Las identidades son declaradas.** `--agente` es una declaración: el hook la ata al tipo de subagente, pero "
+        "en la sesión principal no puede contrastarla, y la independencia de la doble extracción depende de que las "
+        "copias A y B las hagan extractores distintos.",
         "- **La ceguera de los evaluadores y los sellos son barreras, no controles de seguridad.** La CLI oculta "
-        "puntuaciones, ranking y procedencia a `--agente evaluador-*` y el sello va firmado con HMAC, pero un proceso "
-        "con los permisos del usuario podría leer la base de datos o la clave.",
-        "- **Los hooks frenan errores y atajos de los agentes, no a un atacante.** Comparan texto de órdenes y rutas; "
-        "el hook de verificación actúa después de escribir y no ve lo escrito con Bash.",
+        "puntuaciones, decisiones, ranking, procedencia y el motivo del último cambio de estado a un evaluador "
+        "(`--agente evaluador-*` o `NUTRIA_AGENT`), y el sello va firmado con HMAC, pero Read, Grep y Glob no tienen "
+        "hook y un proceso con los permisos del usuario podría leer la base de datos o la clave. La clave es de cada "
+        "máquina: en otra, los sellos existentes no validan hasta volver a sellar con red.",
+        "- **Los hooks frenan errores y atajos de los agentes, no a un atacante.** Comparan texto de órdenes y rutas, "
+        "no reconocen todas las formas de borrar o reescribir el registro y el reflog, no se protegen a sí mismos, y el "
+        "hook de verificación actúa después de escribir y no ve lo escrito con Bash.",
         "- **Sin modelos de racionamiento ni simulación metabólica.** La modelización propia se limita al destino "
         "ruminal (Ørskov y McDonald) y a la conversión de dosis; los requerimientos se calculan con software oficial o "
         "validado (p. ej. NASEM 2021).",
@@ -256,7 +276,7 @@ def main() -> None:
       "Para una ronda nueva, lanza desde Claude Code el workflow `scripts/auditoria/reauditoria.js` (herramienta "
       "Workflow con `scriptPath`; argumentos: `archivo` = `docs/auditoria/hallazgos_linea_base.json`, "
       "`previo` = `docs/auditoria/reauditoria.json`, `raiz` = la raíz del repositorio e `ids` = los identificadores por "
-      "dimensión), guarda su resultado como `docs/auditoria/reauditoria_ronda<N>.json` y regenera este documento con "
+      "dimensión; opcionales: `unidad` = `dimension` o `bloque` y `max_por_esceptico`), guarda su resultado como `docs/auditoria/reauditoria_ronda<N>.json` y regenera este documento con "
       "`python scripts/auditoria/gen_estado.py --hallazgos docs/auditoria/hallazgos_linea_base.json` seguido de un "
       "`--ronda <fichero> <commit> <fecha>` por ronda, en orden.")
     w("")
