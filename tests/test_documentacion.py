@@ -354,7 +354,7 @@ def test_prompt_maestro_roles_independencia_y_firma_humana():
     texto = _read(PROMPT)
     seccion = _flat(_section(texto, "10. Arquitectura"))
     for clave in ("Evaluador independiente", "nunca puntúa", "INSUFICIENTE", "--firma-humana NOMBRE",
-                  "un hook la bloquea a los agentes", "`confidencial`"):
+                  "la CLI y el registro la rechazan en contexto de agente", "`confidencial`"):
         assert clave in seccion, clave
     assert "ESTADO_Y_LIMITACIONES.md" in texto.split("---")[0]
 
