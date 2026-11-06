@@ -11,6 +11,11 @@ CELEX, y ninguna registra todavía la fecha de la versión consolidada consultad
 llevan al acto original publicado en el Diario Oficial, no a la versión consolidada. Antes de una decisión, consulta
 el texto consolidado vigente en EUR-Lex y anota su fecha.
 
+Esa comprobación por búsqueda web no dejó traza en el registro de nutria ni en la procedencia, así que no es
+reproducible. La vía reproducible tiene dos pasos: `nutria normativa eurlex <CELEX>` (p. ej. 32003R1831) da el
+título, la vigencia y la última versión consolidada de la norma, con caché y procedencia; y la lectura del texto la
+registra una persona con la verificación manual firmada de su URL (abajo).
+
 En un informe, una norma citada solo con URL cuenta como verificada únicamente si una persona la registró con
 `nutria verificar manual <URL> --firma-humana NOMBRE`; los agentes no pueden hacerlo.
 
@@ -75,7 +80,41 @@ flowchart TD
 La compuerta la **propone** el agente, sin `--firma-humana`:
 `nutria --agente regulacion-seguridad puntuar compuerta <ID> regulatoria <estado> --motivo "..."`. Una propuesta
 `bloqueada` actúa de inmediato; `superada` solo cuenta cuando la firma una persona, y salir de `bloqueada` también
-exige firma humana.
+exige firma humana. Antes, el resultado del triage se registra con `oportunidad clasificar` (sección siguiente): sin
+esa clasificación, la compuerta `regulatoria` no se propone ni se firma `superada`.
+
+## Registro de la clasificación
+
+El resultado del triage lo registra el agente con
+`nutria --agente regulacion-seguridad oportunidad clasificar <ID> --ruta R [--grupo-funcional G] [--situacion S] --motivo "..."`.
+
+- **Rutas** que acepta el registro: `pienso_dietetico`, `materia_prima`, `pienso_complementario`,
+  `pienso_compuesto`, `premezcla`, `aditivo_tecnologico`, `aditivo_sensorial`, `aditivo_nutricional`,
+  `aditivo_zootecnico`, `aditivo_coccidiostatico_histomonostato`, `fuera_de_alcance_medicamento`,
+  `fuera_de_alcance_biocida` e `indeterminada`.
+- **Grupo funcional** (`categoria.grupo`, con los nombres abreviados de la tabla de categorías), obligatorio con
+  las rutas `aditivo_*` y de su misma categoría: `tecnologico.conservantes`, `tecnologico.antioxidantes`,
+  `tecnologico.emulgentes`, `tecnologico.estabilizantes`, `tecnologico.espesantes`, `tecnologico.gelificantes`,
+  `tecnologico.aglutinantes`, `tecnologico.control_radionucleidos`, `tecnologico.antiaglomerantes`,
+  `tecnologico.reguladores_acidez`, `tecnologico.aditivos_ensilado`, `tecnologico.desnaturalizantes`,
+  `tecnologico.reduccion_micotoxinas`, `tecnologico.potenciadores_condiciones_higienicas`,
+  `tecnologico.otros_tecnologicos`, `sensorial.colorantes`, `sensorial.aromatizantes`, `nutricional.vitaminas`,
+  `nutricional.oligoelementos`, `nutricional.aminoacidos`, `nutricional.urea`, `zootecnico.digestibilidad`,
+  `zootecnico.estabilizadores_flora_intestinal`, `zootecnico.medio_ambiente`, `zootecnico.otros_zootecnicos`,
+  `zootecnico.estabilizadores_condiciones_fisiologicas` y `coccidiostatico_histomonostato`. Son abreviaturas: el
+  nombre exacto de cada grupo está en el anexo I del Reglamento (CE) 1831/2003 (pendiente de comprobar en el texto
+  consolidado, como indica la tabla de categorías).
+- **Situación**: `autorizado` (figura en el Registro de aditivos de la UE para esa especie y condiciones),
+  `catalogado` (Catálogo de materias primas), `registrado` (Registro de materias primas), `nuevo` (requiere
+  autorización o notificación) o `desconocido` (sin comprobar).
+- Sin firma, solo `regulacion-seguridad` clasifica dentro del alcance; cualquiera puede proponer una ruta
+  `fuera_de_alcance_*`, que bloquea automáticamente la compuerta `regulatoria`, y salir de ella exige firma humana,
+  que comprueba también el registro. La ruta preliminar del alta de la oportunidad no cuenta como clasificación, y
+  si la clasificación cambia, una compuerta `regulatoria` superada se reabre.
+
+Casos de clasificación con su respuesta esperada, uno por rama del árbol y con las normas de este documento que lo
+sustentan: `evals/clasificacion_regulatoria.jsonl` (sirven para medir modelos con `nutria llm evaluar`). La
+clasificación real la hacen los agentes con este árbol y todavía no se ha probado en uso.
 
 ## Categorías y grupos funcionales de aditivos (anexo I del Reglamento (CE) 1831/2003)
 
@@ -132,6 +171,10 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
   zootécnicos (base legal pendiente de verificar).
 - Una alegación permitida por el art. 13.2 no saca al producto de la definición de medicamento por función
   (pregunta 2 del árbol).
+- Pendiente de comprobar en el texto consolidado, porque no se encontró al revisar este documento: el procedimiento
+  del art. 10 del Reglamento (CE) 767/2009 para modificar la lista de usos previstos de los piensos para fines de
+  nutrición específicos (la auditoría externa cita el Reglamento (UE) 2024/2899), el código de buenas prácticas de
+  etiquetado de la UE y la base de las alegaciones de finalidad nutricional específica.
 
 ## Vía de autorización de un aditivo nuevo
 
@@ -146,6 +189,9 @@ pregunta 2 del árbol va antes que la elección del grupo funcional.
 - Plazo y coste: estímalos con fuentes o como `[SUP]` en `nutria econ desarrollador`.
 
 ## Normativa de referencia
+
+Para cada norma de la tabla, `nutria normativa eurlex <CELEX>` comprueba en EUR-Lex el título, la vigencia y la última
+versión consolidada (con caché y procedencia; no sustituye la lectura del texto).
 
 | Norma | Ámbito | Cuándo aplica | Verificación |
 |---|---|---|---|
