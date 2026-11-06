@@ -10,11 +10,14 @@ disable-model-invocation: true
 1. **Doble extracción previa**: solo entran extracciones con la doble extracción registrada (`doble_concordante` o
    `resuelta`): depósito de las dos copias, `extraccion comparar <A> <B> --registrar` y, si hubo discrepancias,
    `extraccion conciliar` (skill `extraccion-datos`). Un CSV exportado con `--incluir-sin-conciliar` (columna
-   `doble_extraccion_verificada` = `no`) es solo exploratorio: decláralo.
+   `doble_extraccion_verificada` = `no`) es solo exploratorio: `meta` se niega a analizarlo sin `--exploratorio`, y
+   con esa opción el resultado lo declara (`AVISO: análisis EXPLORATORIO`); no sirve para concluir ni para puntuar.
 2. **Exporta** en formato de análisis: `nutria --agente estadistico extraccion exportar --variable "<variable>" --especie "<especie>" [--etapa "<etapa>"] [--casos-completos <moderador>] --csv research/datos/<ID>/<variable>.csv`
    (columnas `estudio, comparacion, media_trt, media_ctrl, disp_trt, disp_ctrl, tipo_disp, n_trt, n_ctrl, variable,
    unidad, especie, diseno, unidad_experimental, dosis, ...` y la dieta basal numérica). Separa o excluye especies
-   distintas, unidades incompatibles y diseños no combinables, y documenta por qué.
+   distintas, unidades incompatibles y diseños no combinables, y documenta por qué. Las filas sin los datos de un
+   tamaño del efecto (el estudio no publica la media o los eventos) quedan fuera con un `AVISO` que las lista:
+   decláralas en el informe como estudios sin datos utilizables.
 3. **Diseño y unidad experimental** (columnas `diseno` y `unidad_experimental` del CSV; nutria las lee):
    - Los crossovers y cuadrados latinos (`diseno` = `crossover` o `cuadrado_latino`) se calculan con las fórmulas de
      grupos emparejados (n = animales con ambos tratamientos). Un SEM combinado o un SED de esos diseños se
@@ -56,7 +59,9 @@ disable-model-invocation: true
    - La p usa t con gl = estudios - efectos fijos (conservadora; no es Satterthwaite ni Kenward-Roger): con pocos
      estudios puede no haber gl. Confírmalo en R con lme4/lmerTest antes de concluir.
 7. **Moderadores y subgrupos** solo preespecificados: `--moderador dosis`, `--subgrupo diseno`. Con menos de unos 10
-   estudios por moderador, el resultado es exploratorio.
+   estudios por moderador, el resultado es exploratorio. La meta-regresión es de casos completos: las filas que no
+   informan del moderador quedan fuera de ella (no del metaanálisis principal) con un `AVISO` que las lista; dilo y
+   valora si los estudios que no lo informan difieren de los demás.
 8. **Sensibilidad**: uno-fuera; sin estudios de alto riesgo de sesgo; sin estudios financiados por el fabricante;
    DL frente a REML; `--ajuste hksj-mod` frente a `--ajuste ninguno`; otros valores de `--rho` y de
    `--rho-intrasujeto`.

@@ -2162,6 +2162,23 @@ def _texto_mensajes(mensajes: list[tuple[str, str]]) -> list[str]:
             + [f"Nota: {t}" for nivel, t in mensajes if nivel == "nota"])
 
 
+_SIN_VERIFICAR = ("_sin_comparacion_registrada", "_no_coincide_con_su_comparacion")
+
+
+def _filas_sin_verificar(rows: list[dict]) -> list[str]:
+    """Filas del CSV de análisis sin doble extracción verificada según las columnas que escribe `extraccion exportar`
+    (con --incluir-sin-conciliar): doble_extraccion_verificada = no, o un estado_verificacion sin comparación
+    registrada o que ya no coincide con ella. Un CSV sin esas columnas (preparado a mano) no se juzga aquí."""
+    out = []
+    for i, r in enumerate(rows, 1):
+        verificada = str(r.get("doble_extraccion_verificada") or "").strip().lower()
+        estado = str(r.get("estado_verificacion") or "").strip()
+        if verificada == "no" or estado.endswith(_SIN_VERIFICAR):
+            out.append(f"fila {i} ({r.get('estudio') or r.get('study') or '?'}"
+                       + (f", {estado}" if estado else "") + ")")
+    return out
+
+
 def cmd_meta(args, cfg) -> int:
     from .stats import meta as m
     huella: dict = {}
@@ -2169,13 +2186,30 @@ def cmd_meta(args, cfg) -> int:
     if not rows:
         raise ValueError("El CSV no tiene filas")
     entrada = {"csv": args.csv, "sha256": huella["sha256"], "sep": args.sep, "decimal": args.decimal}
+    # Doble extracción (regla del proyecto, petición de P7): un CSV exportado con --incluir-sin-conciliar trae filas
+    # sin doble extracción verificada; sin --exploratorio, la orden se niega, y con él el resultado lo declara.
+    sin_verificar = _filas_sin_verificar(rows)
+    aviso_exploratorio = None
+    if sin_verificar:
+        if not getattr(args, "exploratorio", False):
+            raise ValueError(f"El CSV trae {len(sin_verificar)} fila(s) sin doble extracción verificada ("
+                             + "; ".join(sin_verificar[:8]) + ("; ..." if len(sin_verificar) > 8 else "")
+                             + "): un metaanálisis usa solo datos con doble extracción verificada (exporta sin "
+                               "--incluir-sin-conciliar). Para una exploración, repite con --exploratorio.")
+        aviso_exploratorio = (f"AVISO: análisis EXPLORATORIO (--exploratorio): {len(sin_verificar)} fila(s) sin doble "
+                              "extracción verificada (" + "; ".join(sin_verificar[:8])
+                              + ("; ..." if len(sin_verificar) > 8 else "")
+                              + "); no sirve para una conclusión ni para puntuar la evidencia")
+        entrada["exploratorio"] = True
+        entrada["filas_sin_doble_extraccion"] = len(sin_verificar)
     if args.accion == "stpierre":
         from .stats.mixed import ALFA_LRT, st_pierre
         modo = "si" if args.pendiente_aleatoria else ("no" if args.sin_pendiente_aleatoria else "auto")
         res = st_pierre(rows, args.respuesta, args.dosis, args.estudio, args.covariable,
                         {"si": True, "no": False, "auto": "auto"}[modo], descomponer=not args.sin_descomponer,
                         sem=args.ponderar_sem)
-        res["avisos"] = [*_avisos_mezcla_stpierre(rows), *res["avisos"]]
+        res["avisos"] = [*([aviso_exploratorio] if aviso_exploratorio else []), *_avisos_mezcla_stpierre(rows),
+                         *res["avisos"]]
         log_event(cfg, "meta_stpierre", inputs={**entrada, "respuesta": args.respuesta, "dosis": args.dosis,
                                                 "estudio": args.estudio, "covariables": args.covariable,
                                                 "pendiente_aleatoria": modo, "descomponer": not args.sin_descomponer,
@@ -2186,6 +2220,8 @@ def cmd_meta(args, cfg) -> int:
     if args.accion == "validar-predictivo":
         from .stats.predictive import loso_cv
         res = loso_cv(rows, args.respuesta, args.predictores, args.estudio)
+        if aviso_exploratorio and isinstance(res, dict):
+            res["avisos"] = [aviso_exploratorio, *(res.get("avisos") or [])]
         log_event(cfg, "meta_validar_predictivo", inputs={**entrada, "respuesta": args.respuesta,
                                                           "predictores": args.predictores, "estudio": args.estudio},
                   outputs=res, actor=args.agente)
@@ -2196,7 +2232,7 @@ def cmd_meta(args, cfg) -> int:
     mensajes: list[tuple[str, str]] = []
     yi, vi, labels, comps = _effects_from_rows(rows, args.medida, rho_intra, mensajes)
     info_disenos, mensajes_disenos = _resumen_disenos(rows, args.medida, labels)
-    mensajes = mensajes_disenos + mensajes
+    mensajes = ([("aviso", aviso_exploratorio[len("AVISO: "):])] if aviso_exploratorio else []) + mensajes_disenos + mensajes
     hay_cruzados = any(es.normalize_design(r.get("diseno")) in es.PAIRED_DESIGNS for r in rows)
     if rho_intra is not None and not hay_cruzados:
         mensajes.append(("nota", "--rho-intrasujeto no se usa: no hay filas de diseño cruzado (crossover o cuadrado "
@@ -2209,14 +2245,27 @@ def cmd_meta(args, cfg) -> int:
         raise ValueError(f"--referencia solo se aplica a moderadores (--moderador): {', '.join(sobrantes)}")
     if args.moderador is not None and not args.moderador:
         raise ValueError("--moderador necesita al menos una columna del CSV")
-    # Los moderadores se codifican antes del análisis: un error de los datos (columna inexistente, celdas
-    # vacías, números mezclados con texto, referencia inexistente) detiene la orden con código 2; solo un
-    # moderador sin contraste estimable (una sola categoría) se informa como meta-regresión no estimable.
+    # Los moderadores se codifican antes del análisis: un error de los datos (columna inexistente, números mezclados
+    # con texto, referencia inexistente) detiene la orden con código 2; solo un moderador sin contraste estimable (una
+    # sola categoría) se informa como meta-regresión no estimable. Las filas que no informan de algún moderador (celda
+    # vacía) quedan fuera de la meta-regresión, que es de casos completos, con un aviso que las lista; el metaanálisis
+    # principal las incluye (petición de P7: antes la orden se detenía).
     codificados = no_estimable = None
+    casos_completos: list[int] | None = None
+    sin_moderador: list[str] = []
     if args.moderador:
-        from .stats.metareg import ModeradorNoEstimable, codificar_moderadores
+        from .stats.metareg import ModeradorNoEstimable, _celda_vacia, codificar_moderadores
+        columnas = set().union(*(r.keys() for r in rows))
+        casos_completos = [i for i, r in enumerate(rows)
+                           if not any(c in columnas and _celda_vacia(r.get(c)) for c in args.moderador)]
+        sin_moderador = [f"fila {i + 1} ({labels[i]}): " + ", ".join(c for c in args.moderador if c in columnas
+                                                                     and _celda_vacia(r.get(c)))
+                         for i, r in enumerate(rows) if i not in set(casos_completos)]
+        if not casos_completos:
+            raise ValueError("Ninguna fila informa de todos los moderadores (" + ", ".join(args.moderador)
+                             + "): no hay casos completos para la meta-regresión")
         try:
-            codificados = codificar_moderadores(rows, args.moderador, referencias)
+            codificados = codificar_moderadores([rows[i] for i in casos_completos], args.moderador, referencias)
         except ModeradorNoEstimable as exc:
             no_estimable = str(exc)
     out: dict = {"medida": args.medida, "k": len(yi), "estudios": labels, **info_disenos,
@@ -2295,11 +2344,21 @@ def cmd_meta(args, cfg) -> int:
         out["meta_regresion"] = {"error": no_estimable}
         text.append(f"Meta-regresión no estimable: {no_estimable}")
     elif codificados is not None:
+        import numpy as np
+
         from .stats.metareg import meta_regression
         mods, names, desc = codificados
+        if sin_moderador:
+            text.append(f"AVISO: meta-regresión de casos completos: se excluyen {len(sin_moderador)} fila(s) que no "
+                        "informan de algún moderador (" + "; ".join(sin_moderador[:10])
+                        + ("; ..." if len(sin_moderador) > 10 else "") + "). El metaanálisis principal las incluye; "
+                        "si los estudios que no informan difieren de los demás, la meta-regresión puede estar sesgada.")
         try:
-            reg = meta_regression(yi, vi, mods, names, method=method_re, ajuste=args.ajuste)
-            out["meta_regresion"] = {**reg.to_dict(), "moderadores": desc}
+            sel = np.asarray(casos_completos, dtype=int)
+            reg = meta_regression(np.asarray(yi, dtype=float)[sel], np.asarray(vi, dtype=float)[sel], mods, names,
+                                  method=method_re, ajuste=args.ajuste)
+            out["meta_regresion"] = {**reg.to_dict(), "moderadores": desc,
+                                     "casos_completos": len(casos_completos), "excluidas_sin_moderador": sin_moderador}
             for col, d in desc.items():
                 if d["tipo"] == "categorico":
                     text.append(f"Moderador categórico {col}: categoría de referencia '{d['referencia']}' "
@@ -2318,7 +2377,9 @@ def cmd_meta(args, cfg) -> int:
                "ic_wald": [res.ci_wald_low, res.ci_wald_high], "avisos": out["avisos"], **info_disenos}
     if reg is not None:
         salidas["meta_regresion"] = {"coeficientes": dict(zip(reg.names, reg.coef)), "p": dict(zip(reg.names, reg.p_values)),
-                                     "tau2": reg.tau2, "prueba": reg.test, "moderadores": codificados[2]}
+                                     "tau2": reg.tau2, "prueba": reg.test, "moderadores": codificados[2],
+                                     "casos_completos": len(casos_completos or []),
+                                     "excluidas_sin_moderador": len(sin_moderador)}
     elif args.moderador:
         salidas["meta_regresion"] = {"error": out.get("meta_regresion", {}).get("error")}
     if args.subgrupo:
@@ -3255,6 +3316,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 "por defecto no pondera")
         if name == "exportar-r":
             x.add_argument("--salida", default="metaanalisis.R")
+        x.add_argument("--exploratorio", action="store_true",
+                       help="admite filas sin doble extracción verificada (columna doble_extraccion_verificada = no, "
+                            "o estado_verificacion sin comparación registrada o que no coincide con ella, de "
+                            "`extraccion exportar --incluir-sin-conciliar`): el resultado se declara exploratorio")
         if name == "validar-predictivo":
             x.add_argument("--respuesta", required=True)
             x.add_argument("--predictores", nargs="+", required=True)

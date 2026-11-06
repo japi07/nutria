@@ -862,3 +862,45 @@ def test_coord3_validacion_de_extracciones_sin_falsos_positivos(variable, unidad
                     variable=variable, unidad=unidad)
     problemas = db.schema_errors("extraccion", registro) + db.extraction_problems(registro)
     assert (not problemas) is valida, problemas
+
+
+# ============================================================================ fase de coordinación (3): P7 → P5
+_META_CSV = ("estudio,yi,vi,forraje_pct_ms,doble_extraccion_verificada,estado_verificacion\n"
+             "A,0.40,0.04,40,si,doble_concordante\nB,0.10,0.05,,si,doble_concordante\n"
+             "C,0.30,0.03,55,si,resuelta\nD,0.55,0.06,48,si,doble_concordante\nE,0.20,0.05,60,si,doble_concordante\n")
+
+
+def test_coord3_meta_regresion_de_casos_completos_con_aviso(project, capsys):
+    """Petición de P7 a P5: si un estudio no informa del moderador, la meta-regresión es de casos completos con un
+    aviso que lista los excluidos (antes la orden se detenía con código 2); el metaanálisis principal los incluye."""
+    (project / "m.csv").write_text(_META_CSV, "utf-8")
+    code, out, err = _run(capsys, ["--json", "meta", "analizar", str(project / "m.csv"), "--moderador", "forraje_pct_ms"])
+    assert code == 0, err
+    res = json.loads(out)
+    assert res["k"] == 5 and res["meta_regresion"]["casos_completos"] == 4
+    assert res["meta_regresion"]["excluidas_sin_moderador"] == ["fila 2 (B): forraje_pct_ms"]
+    assert any("casos completos" in a and "fila 2 (B)" in a for a in res["avisos"])
+    # una columna que mezcla números y texto sigue siendo un error de los datos
+    (project / "x.csv").write_text(_META_CSV.replace(",40,", ",n.d.,"), "utf-8")
+    code, _, err = _run(capsys, ["meta", "analizar", str(project / "x.csv"), "--moderador", "forraje_pct_ms"])
+    assert code == 2 and "mezcla números y texto" in err
+
+
+def test_coord3_meta_se_niega_con_filas_sin_doble_extraccion_salvo_exploratorio(project, capsys):
+    """Petición de P7 a P5: un CSV exportado con --incluir-sin-conciliar (doble_extraccion_verificada = no o un
+    estado sin comparación registrada) no se analiza sin --exploratorio, y con él el resultado se declara exploratorio."""
+    texto = _META_CSV.replace("C,0.30,0.03,55,si,resuelta", "C,0.30,0.03,55,no,doble_concordante_sin_comparacion_registrada")
+    (project / "s.csv").write_text(texto, "utf-8")
+    for orden in (["meta", "analizar"], ["meta", "exportar-r"]):
+        code, _, err = _run(capsys, [*orden, str(project / "s.csv")])
+        assert code == 2 and "sin doble extracción verificada" in err and "fila 3 (C" in err, (orden, err)
+    code, out, err = _run(capsys, ["--json", "meta", "analizar", str(project / "s.csv"), "--exploratorio"])
+    assert code == 0, err
+    assert any("EXPLORATORIO" in a for a in json.loads(out)["avisos"])
+    from nutria import provenance
+    from nutria.config import load_config
+    evento = provenance.read_events(load_config(), action="metaanalisis")[-1]
+    assert evento["inputs"]["exploratorio"] is True and evento["inputs"]["filas_sin_doble_extraccion"] == 1
+    # sin esas columnas (CSV preparado a mano) no se juzga
+    (project / "h.csv").write_text("estudio,yi,vi\nA,0.4,0.04\nB,0.1,0.05\nC,0.3,0.03\n", "utf-8")
+    assert _run(capsys, ["meta", "analizar", str(project / "h.csv")])[0] == 0
