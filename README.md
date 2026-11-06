@@ -79,8 +79,11 @@ nutria doctor
   **No sirve con Python 3.11**: numpy 2.5.3 y scipy 1.18.1 exigen Python 3.12 o superior, y pip termina con
   `ResolutionImpossible`. Con Python 3.11, instala con
   `pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt`, que fija las versiones con las que pasa la
-  suite en Python 3.11 (numpy 2.4.6 y scipy 1.17.1, entre otras). Sin `-c` funcionan otras versiones compatibles, pero
-  no se han probado. Node.js (22, para `tests/test_orquestacion.py`) y R (opcional) no se instalan con pip.
+  suite en Python 3.11 (numpy 2.4.6 y scipy 1.17.1, entre otras). Con Python 3.14, PyPI tiene ruedas de todas las
+  versiones de `constraints.txt`, pero la suite no se ha ejecutado; con 3.15 o posterior, pandas 3.0.5 no tiene rueda
+  y pip intenta compilarlo (lento, y falla sin compilador de C): instala sin `-c`. Sin `-c` funcionan otras versiones
+  compatibles, pero no se han probado. Node.js (22, para `tests/test_orquestacion.py`) y R (opcional) no se instalan
+  con pip.
 - `nutria init` crea `nutria.toml`, la base de datos `research/nutria.sqlite`, la procedencia
   `research/procedencia.jsonl` y las carpetas de `research/`. Si quieres, rellena `email` en `nutria.toml` (lo piden
   NCBI y Crossref para su acceso preferente).
@@ -112,9 +115,11 @@ herramientas que ejecutan desde la terminal, y un modelo local solo puede dar la
 ### Requisitos
 
 - Python 3.11 o superior (probado con 3.11, 3.12 y 3.13) y git.
-- Claude Code reciente con la herramienta Workflow, que está en la versión 2.1.318 (binario nativo; compruébalo con
-  `claude --version`) y no en el paquete npm `@anthropic-ai/claude-code` 2.1.42. Los workflows de `.claude/workflows/`
-  solo se han probado con agentes simulados, no con Claude Code (ver [Uso con Claude Code](#uso-con-claude-code)).
+- Claude Code con la herramienta Workflow: consta en la versión 2.1.318 y no en la 2.1.42, sea cual sea la forma de
+  instalación (el instalador nativo o el paquete npm `@anthropic-ai/claude-code`, que en la 2.1.318 instala el mismo
+  binario nativo); compruébalo con `claude --version`. No se conoce la versión mínima exacta. Los workflows de
+  `.claude/workflows/` solo se han probado con agentes simulados, no con Claude Code (ver
+  [Uso con Claude Code](#uso-con-claude-code)).
   Sin la herramienta siguen funcionando las skills paso a paso (`/mision-1`, `/oportunidad`...).
 - Los hooks se ejecutan con `sh`: en Linux y macOS no hace falta nada más; en Windows, usa Claude Code desde Git Bash
   o desde WSL.
@@ -126,8 +131,9 @@ herramientas que ejecutan desde la terminal, y un modelo local solo puede dar la
 2. Crea y activa el entorno en `.venv`: `python -m venv .venv` y `source .venv/bin/activate` (en Windows con Git
    Bash, `source .venv/Scripts/activate`).
 3. Instala con las versiones probadas: `pip install -e ".[dev,mixto]" -c requirements/constraints.txt` con Python 3.12
-   o superior; con Python 3.11, `pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt` (comprueba la
-   versión con `python --version`).
+   y 3.13 (en 3.14, sin probar; en 3.15 o posterior, sin `-c`, porque pandas 3.0.5 no tiene rueda); con Python 3.11,
+   `pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt` (comprueba la versión con
+   `python --version`).
 4. Inicializa el proyecto con `nutria init` y comprueba el entorno con `nutria doctor` (con red).
 5. Comprueba que la suite pasa en tu máquina: `python -m pytest -q` (sin red; las pruebas en vivo se omiten).
 
@@ -155,9 +161,18 @@ Las pruebas en vivo consultan PubMed, Europe PMC, OpenAlex (necesita `OPENALEX_A
 UniProt, STRING, Reactome, Lens (necesita `LENS_API_TOKEN`) y EUR-Lex. Si alguna falla, no confíes en ese cliente
 hasta entender por qué. **No cubren doi.org ni DataCite** (`src/nutria/sources/doiorg.py`), la vía por la que un DOI
 que no está en Crossref, OpenAlex ni PubMed se da por existente o por inexistente: `nutria doctor` solo comprueba que
-esos dominios responden. Hasta que tengan su prueba en vivo, comprueba a mano con
-`nutria --json verificar --doi <DOI>` algún DOI que conozcas registrado en DataCite (p. ej. el de un conjunto de
-datos) y uno inventado, y revisa que el primero quede verificado y el segundo, no.
+esos dominios responden. Hasta que tengan su prueba en vivo, compruébalos a mano con un DOI que conozcas registrado en
+DataCite (p. ej. el de un conjunto de datos) y con uno inventado. Quita en esa orden la clave de OpenAlex, para que la
+consulta llegue a doi.org y DataCite: si Crossref u OpenAlex tienen el DOI, se verifica con ellos y
+`src/nutria/sources/doiorg.py` no se ejecuta.
+
+```bash
+env -u OPENALEX_API_KEY nutria --json verificar --doi <DOI>
+```
+
+Con el DOI de DataCite, espera `"source": "datacite"` y `"status": "verificada"`, pero `"ok": false` y código 1:
+DataCite no publica retractaciones, así que la retractación queda sin comprobar (salvo que PubMed tenga el DOI) y el
+sello de un informe que cite ese DOI no es válido. Con el inventado, `"status": "no_encontrada"` y código 6.
 
 ### Firma humana: desde tu terminal, fuera de Claude Code
 
@@ -273,8 +288,8 @@ el director científico y orquestador.
 Los workflows (`.claude/workflows/`) **no son órdenes con `/`**: pídeselos a la sesión principal por su nombre y con
 sus argumentos JSON, por ejemplo «ejecuta el workflow `mision-1-auto` con `{"fase": "mapa", "foco": "transición en
 vacuno lechero"}`». La sesión los lanza con la herramienta Workflow; su avance se sigue con `/workflows`. La
-herramienta Workflow está en Claude Code 2.1.318 (binario nativo; compruébalo con `claude --version`) y no en el
-paquete npm `@anthropic-ai/claude-code` 2.1.42. Los workflows se han probado con agentes simulados
+herramienta Workflow consta en Claude Code 2.1.318 y no en la 2.1.42, se instale como se instale (binario nativo o
+paquete npm); compruébalo con `claude --version`. Los workflows se han probado con agentes simulados
 (`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin.
 
 | Workflow | Argumentos |
@@ -690,6 +705,12 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
 - **Agentes, skills y workflows nunca ejecutados de principio a fin.** Los subagentes, las skills y los workflows de
   investigación solo se han revisado leyendo su código y con llamadas a agentes simuladas. Su comportamiento real (si
   siguen las reglas, si los evaluadores se mantienen ciegos, cuánto cuestan) está sin comprobar.
+- **Los workflows no ejecutan órdenes.** Las comprobaciones de los workflows (sello del informe válido,
+  `sha256sum -c` de cada puntuación, registro prematuro detectado en la procedencia, compuertas y selección leídas del
+  registro) se hacen sobre el texto que un agente dice haber obtenido al ejecutar `nutria`, `sha256sum` o
+  `nutria procedencia`: dependen de que lo copie literalmente, y una salida falsificada a propósito no se detecta.
+  Además, la detección de registros prematuros se escapa si entre las dos lecturas de la procedencia se añaden más de
+  20 eventos de puntuación.
 - **Competencia de dominio sin medir.** El razonamiento fisiológico, nutricional y regulatorio lo hacen los modelos de
   los agentes, cuya competencia no se ha medido; los bancos de `evals/` permiten medirla
   ([Modelos de los agentes](#modelos-de-los-agentes)), y la mayoría de sus preguntas de fisiología y nutrición están
@@ -798,7 +819,7 @@ src/nutria/                herramientas (CLI nutria)
 docs/                      método, auditoría, estado y limitaciones, rúbrica, regulación, fuentes, arquitectura
 ejemplos/                  plantillas de entrada y conjunto de validación
 evals/                     bancos de preguntas para evaluar modelos (dominio y clasificación regulatoria)
-requirements/              versiones probadas (constraints.txt, Python 3.12 o superior; constraints-py311.txt)
+requirements/              versiones probadas (constraints.txt, Python 3.12 y 3.13; constraints-py311.txt, 3.11)
 research/                  registro, procedencia y resultados de la investigación (vacío hasta la primera misión)
 tests/                     pruebas (las de tests/test_vivo.py, contra los servicios reales, son opcionales)
 ```

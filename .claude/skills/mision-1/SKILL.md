@@ -19,9 +19,9 @@ mismas fases, una por invocación y con un punto de control humano entre ellas: 
 `{"fase": "oportunidades", "problemas": [...aprobados por una persona...]}` → `{"fase": "planes", "seleccion": ["O-xxxx", ...]}`.
 Cada fase empieza con el paso 0. Cada entregable (mapa, ranking, planes) pasa por `verificador-citas`
 (`nutria --agente <tu-rol> verificar <md>`) antes de presentarse, y la verificación solo cuenta como completa si lo dice la salida de
-`nutria`. Requiere Claude Code con la herramienta Workflow: está en la versión 2.1.318 del binario nativo
-(`claude --version`), pero no en el paquete npm `@anthropic-ai/claude-code` 2.1.42. Los workflows se han probado con
-agentes simulados (`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin.
+`nutria`. Requiere Claude Code con la herramienta Workflow: consta en la versión 2.1.318 y no en la 2.1.42, sea cual
+sea la forma de instalación (binario nativo o paquete npm `@anthropic-ai/claude-code`; `claude --version`). Los
+workflows se han probado con agentes simulados (`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin.
 
 Topes del workflow (cada uno falla con un mensaje claro si se supera): como máximo 8 problemas aprobados
 (`"max_problemas"`, hasta 12); `"n_oportunidades"` (12 por defecto, como máximo 24) es a la vez el objetivo y el tope

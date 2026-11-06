@@ -333,10 +333,12 @@ redacte la síntesis, el informe y la decisión propuesta, y solo leen la eviden
 la verificación; sus puntuaciones se registran solo si el sello del informe es válido según la salida literal de
 `nutria informe comprobar` y `nutria informe sello`, con una orden literal `sha256sum -c` seguida de
 `puntuar registrar`, y un registro prematuro se detecta en la procedencia (en la fase de oportunidades de la misión 1,
-cada evaluador registra las suyas al terminar). En este repositorio, la CLI oculta a un evaluador las puntuaciones
-ajenas, las decisiones y los motivos de los cambios de estado, pero ningún hook le impide leer los ficheros de
-`research/` (registro, procedencia, puntuaciones de otros evaluadores, informes): esa parte de la ceguera depende de
-su instrucción. En la revisión adversarial (red team), ningún paso lo hace el autor del documento.
+cada evaluador registra las suyas al terminar). Los workflows no ejecutan órdenes: esas comprobaciones se hacen sobre
+la salida que copia un agente, y una falsificación deliberada no se detecta (ni un registro prematuro si entre las dos
+lecturas de la procedencia se añaden más de 20 eventos de puntuación). En este repositorio, la CLI oculta a un
+evaluador las puntuaciones ajenas, las decisiones y los motivos de los cambios de estado, pero ningún hook le impide
+leer los ficheros de `research/` (registro, procedencia, puntuaciones de otros evaluadores, informes): esa parte de la
+ceguera depende de su instrucción. En la revisión adversarial (red team), ningún paso lo hace el autor del documento.
 
 **Modelos**: asigna modelos a roles según su rendimiento medido en un banco de preguntas del dominio, no por
 reputación. Registra para cada modelo el identificador exacto, la versión, la fecha de verificación y la política de

@@ -260,6 +260,11 @@ de nutria a la vez que la procedencia tras puntuar (detecta registros prematuros
 con sello válido y `sha256sum -c` de cada fichero emitido. Si el sello no es válido, las puntuaciones quedan
 pendientes con su sha256 y se registran después con `{"id": ..., "registrar_puntuaciones": [...]}`.
 
+Límite de todos los workflows: no ejecutan órdenes. El sello, el `sha256sum -c`, la procedencia, las compuertas y la
+selección se comprueban sobre la salida que un agente copia de `nutria`, `sha256sum` o `nutria procedencia`; una
+salida falsificada a propósito no se detecta, y la detección de registros prematuros se escapa si entre las dos
+lecturas de la procedencia se añaden más de 20 eventos de puntuación.
+
 ## Correspondencia con ficheros
 
 | Componente | Ubicación |

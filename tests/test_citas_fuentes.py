@@ -773,6 +773,32 @@ def test_fuente_agregar_doi_de_datacite_y_rechazo_sin_metadatos(project, net):
     assert source("doi:10.5555/medra.9") is None
 
 
+def test_comprobacion_manual_de_doiorg_y_datacite_del_readme(project, net, capsys):
+    # README («Pruebas en vivo»; revisión de la documentación, ronda 2): sin la clave de OpenAlex, un DOI de DataCite
+    # llega a doi.org y DataCite y sale verificado, pero sin la retractación comprobada (ok false, código 1); uno
+    # inventado, no_encontrada (código 6).
+    doi = "10.5555/zenodo.77"
+    net.oa_key = False
+    net.handles.add(doi)
+    net.agency[doi] = "DataCite"
+    net.dc[doi] = {"data": {"attributes": {"doi": doi, "titles": [{"title": "Datos de fermentación ruminal"}],
+                                           "creators": [{"name": "Pérez, Juan"}], "publicationYear": "2022",
+                                           "types": {"resourceTypeGeneral": "Dataset"}}}}
+    capsys.readouterr()
+    assert run(["--json", "verificar", "--doi", doi]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "datacite" and out["status"] == "verificada" and out["ok"] is False
+    assert out["retracted"] is None and {"doi.org", "datacite"} <= set(net.sources())
+    assert run(["--json", "verificar", "--doi", "10.5555/inventado.1"]) == 6
+    assert json.loads(capsys.readouterr().out)["status"] == "no_encontrada"
+    # con OpenAlex, el mismo DOI se verifica con OpenAlex y doi.org no se consulta
+    net.oa_key = True
+    net.oa[doi] = oa_work(doi, title="Datos de fermentación ruminal", names=("Juan Pérez",), year=2022)
+    net.calls.clear()
+    assert run(["--json", "verificar", "--doi", doi]) == 0
+    assert json.loads(capsys.readouterr().out)["source"] == "openalex" and "doi.org" not in net.sources()
+
+
 # ============================================================================ D3-16: casos de fallo de las citas
 def test_ano_dentro_del_doi_no_es_el_ano_de_la_cita(net):
     published(net)

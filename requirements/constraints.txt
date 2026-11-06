@@ -1,6 +1,10 @@
 # Versiones con las que se ha probado nutria en Python 3.12 y 3.13 (python -m pytest -q: suite completa en verde).
-# SOLO PARA PYTHON 3.12 O SUPERIOR: numpy 2.5.3 y scipy 1.18.1 exigen Python >= 3.12, y en Python 3.11 pip termina con
-# ResolutionImpossible; en 3.11 usa requirements/constraints-py311.txt.
+# PARA PYTHON 3.12 Y 3.13. No sirve en Python 3.11: numpy 2.5.3 y scipy 1.18.1 exigen Python >= 3.12, y pip termina
+# con ResolutionImpossible; en 3.11 usa requirements/constraints-py311.txt. En Python 3.14, PyPI tiene ruedas de todas
+# estas versiones (2026-11-06), pero la suite no se ha ejecutado. En 3.15 o posterior, pandas 3.0.5 no tiene rueda
+# (solo cp311 a cp314) y pip lo compila desde el código fuente, lo que es lento y falla sin compilador de C ni
+# cabeceras de Python (habitual en Windows y en macOS sin las herramientas de Xcode): instala sin -c (versiones no
+# probadas).
 # Entornos: Python 3.13.18 en Linux (x86_64), 2026-11-05, y Python 3.12.3 en Linux (x86_64), 2026-11-06. Comprobado
 # en entornos virtuales nuevos, creados solo con este fichero: `pip install ".[dev,mixto]" -c
 # requirements/constraints.txt` resuelve exactamente estas versiones desde PyPI y la suite pasa con ellas.

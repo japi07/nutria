@@ -686,11 +686,35 @@ def test_instalacion_con_python_311_tiene_sus_propias_versiones_probadas():
             assert req.specifier.contains(pins[clave], prereleases=True), (fichero, req, pins[clave])
         assert not [n for n, v in pins.items() if Version(v).is_prerelease], fichero
     assert _pins("requirements/constraints.txt")["numpy"] != _pins("requirements/constraints-py311.txt")["numpy"]
-    assert "SOLO PARA PYTHON 3.12 O SUPERIOR" in _read("requirements/constraints.txt")
+    # Revisión de la documentación (ronda 2): constraints.txt solo se ha probado en 3.12 y 3.13; en 3.15, pandas 3.0.5
+    # no tiene rueda.
+    cabecera = _read("requirements/constraints.txt")
+    assert "PARA PYTHON 3.12 Y 3.13" in cabecera and "No sirve en Python 3.11" in cabecera
+    assert "3.15" in cabecera and "pandas 3.0.5 no tiene rueda" in cabecera
+    assert "SOLO PARA PYTHON 3.12 O SUPERIOR" not in cabecera
     for seccion in ("Instalación", "Usar nutria en tu ordenador"):
         texto = _flat(_section(_read(README), seccion))
         assert "requirements/constraints-py311.txt" in texto and "Python 3.11" in texto, seccion
-        assert "Python 3.12 o superior" in texto, seccion
+        assert "3.15 o posterior" in texto and "pandas 3.0.5 no tiene rueda" in texto, seccion
+        assert "con Python 3.12 o superior" not in texto, seccion
+
+
+def test_revision_ronda_2_limites_y_comprobaciones_declarados():
+    # Los workflows no ejecutan órdenes (residuo de D1-7, D2-8 y D3-3 de P8): sus garantías dependen de la salida que
+    # copia un agente, y la detección de registros prematuros solo mira los 20 últimos eventos de puntuación.
+    for doc in (README, "CLAUDE.md", ARQUITECTURA, PROMPT):
+        texto = _flat(_read(doc))
+        assert "no ejecutan órdenes" in texto and "más de 20 eventos" in texto, doc
+    assert "--ultimas 20" in _read(".claude/workflows/evaluar-oportunidad-auto.js")
+    # La herramienta Workflow depende de la versión de Claude Code, no de cómo se instala.
+    for doc in (README, "CLAUDE.md", ".claude/skills/mision-1/SKILL.md", ".claude/skills/oportunidad/SKILL.md"):
+        texto = _flat(_read(doc))
+        assert "no en el paquete npm" not in texto and "2.1.318" in texto, doc
+    # La comprobación manual de doi.org y DataCite quita la clave de OpenAlex (si no, OpenAlex verifica el DOI y
+    # doiorg.py no se ejecuta) y espera ok false y código 1: DataCite no publica retractaciones.
+    texto = _flat(_read(README))
+    assert "env -u OPENALEX_API_KEY nutria --json verificar --doi <DOI>" in texto
+    assert '"source": "datacite"' in texto and '"ok": false' in texto and "código 1" in texto
 
 
 # Lo que la documentación dice de los hooks se comprueba contra los hooks: si un hook cambia, se actualiza el documento.

@@ -68,7 +68,10 @@ Regulación: `docs/REGULACION_UE.md`. Fuentes y licencias: `docs/FUENTES.md`. Ar
    `puntuar registrar` exige `--agente evaluador-<n>` igual al campo `evaluador` del JSON: nadie registra ni sustituye
    las puntuaciones de otro. En `evaluar-oportunidad-auto`, las puntuaciones se registran en diferido, solo con el
    sello del informe válido y tras `sha256sum -c` del fichero emitido, y un registro prematuro se detecta en la
-   procedencia; en la fase `oportunidades` de `mision-1-auto`, cada evaluador registra las suyas al terminar.
+   procedencia; en la fase `oportunidades` de `mision-1-auto`, cada evaluador registra las suyas al terminar. Los
+   workflows no ejecutan órdenes: comprueban la salida que copia un agente, así que esas garantías dependen de que la
+   copie literalmente (una falsificación deliberada no se detecta, ni un registro prematuro si entre las dos lecturas
+   de la procedencia se añaden más de 20 eventos de puntuación).
 10. **Trazabilidad**: toda alta, descarte, cambio de estado o compuerta queda en el registro con su motivo. Las
     hipótesis descartadas no se borran: se marcan `refutada` o `descartada` con el motivo. Los fallos de agentes se
     cuentan e informan; nunca se descartan en silencio. La procedencia es una cadena de hashes:
@@ -269,8 +272,9 @@ Skills (órdenes con `/`): `/mision-1` (paso a paso, con revisión humana entre 
 `/revision-sistematica` · `/metaanalisis` · `/informe` · `/red-team` · `/estado`.
 
 Workflows de `.claude/workflows/` (no son órdenes con `/`: la sesión principal los lanza por su nombre con la
-herramienta Workflow y argumentos JSON; su avance se sigue con `/workflows`). La herramienta Workflow está en Claude
-Code 2.1.318 (no en el paquete npm 2.1.42), y los workflows solo se han probado con agentes simulados.
+herramienta Workflow y argumentos JSON; su avance se sigue con `/workflows`). La herramienta Workflow consta en
+Claude Code 2.1.318 y no en la 2.1.42, se instale como se instale (`claude --version`), y los workflows solo se han
+probado con agentes simulados.
 
 - `mision-1-auto`, por fases, con revisión humana entre ellas y el paso 0 (`nutria doctor`, `nutria estado` y los
   ficheros existentes) al empezar cada una: `{"fase": "mapa", "foco": "..."}` →
