@@ -1280,6 +1280,10 @@ def extraction_problems(data: dict) -> list[str]:
     if isinstance(case, str) and isinstance(outcome, str) and plain_text(case) == plain_text(outcome):
         problems.append("definicion_caso repite el nombre de la variable: indica el criterio y el umbral del artículo "
                         "(p. ej. 'BHB en sangre ≥ 1,2 mmol/L')")
+    if _is_number(data.get("correlacion_intrasujeto")) and data.get("diseno") not in ("crossover", "cuadrado_latino"):
+        # la r intrasujeto solo existe si cada animal recibe el tratamiento y el control (diseño cruzado)
+        problems.append(f"correlacion_intrasujeto ({data['correlacion_intrasujeto']}) solo tiene sentido en un diseño "
+                        f"cruzado (diseno 'crossover' o 'cuadrado_latino'), no con diseno '{data.get('diseno')}'")
     has_events = _is_number(data.get("eventos_control")) or _is_number(data.get("eventos_tratamiento"))
     if not has_events and incidence_like(outcome, data.get("unidad")):
         missing = [k for k in ("definicion_caso", "hito_referencia", "ventana_inicio_dias", "ventana_fin_dias")
@@ -1444,7 +1448,8 @@ def _field_diffs(x: dict, y: dict) -> list[dict]:
 # el mismo dato aunque sus medias, n o eventos difieran (sería una segunda extracción del mismo dato). Un diseño
 # factorial (dos dietas basales o dos dosis) da registros distintos.
 EXTRACTION_VALUES = ("n_control", "n_tratamiento", "media_control", "media_tratamiento", "tipo_dispersion",
-                     "dispersion_control", "dispersion_tratamiento", "eventos_control", "eventos_tratamiento", "p_valor")
+                     "dispersion_control", "dispersion_tratamiento", "eventos_control", "eventos_tratamiento", "p_valor",
+                     "correlacion_intrasujeto")
 EXTRACTION_IDENTITY = tuple(k for k in EXTRACTION_FIELDS if k not in EXTRACTION_VALUES and k not in (
     "ubicacion", "financiacion", "conflictos", "notas", *EXTRACTION_SYSTEM_FIELDS))
 

@@ -739,3 +739,21 @@ def test_coord_correlacion_intrasujeto_publicada_llega_al_csv_de_analisis(projec
     code, _, err = _run(capsys, ["--agente", "extractor-datos-D", "extraccion", "depositar", "--datos",
                                  str(project / "malo.json")])
     assert code == 2 and "correlacion_intrasujeto" in err
+    # solo en diseños cruzados: con un diseño paralelo no hay r intrasujeto (código 2)
+    paralelo = [dict(recs[0], diseno="paralelo")]
+    (project / "paralelo.json").write_text(json.dumps(paralelo, ensure_ascii=False), "utf-8")
+    code, _, err = _run(capsys, ["--agente", "extractor-datos-D", "extraccion", "depositar", "--datos",
+                                 str(project / "paralelo.json")])
+    assert code == 2 and "diseño cruzado" in err
+    # la r es un valor del dato, no parte de su identidad: otra doble extracción del mismo dato con otra r es la misma
+    # comparación (no se registra dos veces el mismo dato)
+    otra = [dict(r, correlacion_intrasujeto=0.5) for r in recs]
+    for copia in ("E", "F"):
+        (project / f"x_{copia}.json").write_text(json.dumps(otra, ensure_ascii=False, indent=2 if copia == "F" else None),
+                                                  "utf-8")
+        code, _, err = _run(capsys, ["--agente", f"extractor-datos-{copia}", "extraccion", "depositar", "--datos",
+                                     str(project / f"x_{copia}.json")])
+        assert code == 0, err
+    code, _, err = _run(capsys, ["--agente", "extractor-datos-G", "extraccion", "comparar", str(project / "x_E.json"),
+                                 str(project / "x_F.json"), "--registrar"])
+    assert code == 3 and "misma comparación" in err and "correlacion_intrasujeto" in err, err

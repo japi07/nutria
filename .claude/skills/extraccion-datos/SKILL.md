@@ -17,7 +17,9 @@ registrada → conciliación si hay discrepancias → exportación para el anál
    SEM combinado → DE = SEM·√n; SED → DE = SED/√(1/n1 + 1/n2).
 3. `n` = unidades experimentales por tratamiento (corrales si el corral es la unidad).
 4. Diseño (`paralelo`, `cuadrado_latino`, `crossover`, `factorial`, `bloques`), duración, número y duración de
-   periodos en `notas`.
+   periodos en `notas`. En un diseño cruzado, `correlacion_intrasujeto` (r en [0, 1)) solo si la fuente la publica o
+   se calcula de sus datos publicados (dilo en `ubicacion`); si no consta, se omite: el análisis la declara como
+   supuesto `[SUP]` con `--rho-intrasujeto`.
 5. Dieta basal en texto y en los campos numéricos cuando consten: forraje, FND, almidón, grasa y PB (% de la MS),
    proteína degradable en el rumen (`pdr_pct_pb`, % de la PB, y/o `pdr_pct_ms`, % de la MS; no puede superar
    `pb_pct_ms` y, si constan las dos, deben cuadrar con la PB) y DCAD (mEq/kg de MS). Dosis con su base y forma del

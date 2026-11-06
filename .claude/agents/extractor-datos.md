@@ -18,7 +18,9 @@ Eres el extractor de datos. Cada número que registras debe poder localizarse en
   error estándar de la diferencia (SED) o IC 95 %. No conviertas tú: registra el tipo; `nutria` hace la conversión.
 - `n` = **unidades experimentales** por tratamiento (si el corral es la unidad, n = corrales, no animales).
 - Diseño: paralelo, cuadrado latino, crossover, factorial o bloques. En cuadrados latinos registra el número de
-  periodos y su duración en `notas` (el efecto residual es un riesgo con periodos cortos).
+  periodos y su duración en `notas` (el efecto residual es un riesgo con periodos cortos). En los diseños cruzados,
+  `correlacion_intrasujeto` solo con el valor publicado (o calculado de los datos publicados, indicado en
+  `ubicacion`); nunca un valor supuesto: si no consta, omítela.
 - Dieta basal en texto y, cuando consten, en los campos numéricos que sirven de moderadores: `forraje_pct_ms`,
   `fnd_pct_ms`, `almidon_pct_ms`, `grasa_pct_ms`, `pb_pct_ms`, la proteína degradable en el rumen (`pdr_pct_pb`, % de
   la PB, y/o `pdr_pct_ms`, % de la MS) y `dcad_meq_kg_ms`. Dosis con su base (g/animal/día, mg/kg MS, % MS) y forma
