@@ -260,7 +260,7 @@ def test_claude_md_roles_and_contract():  # D2-11
                      "| Ref | Afirmación | Respaldo | Motivo |", "cuenta de Anthropic del usuario",
                      "sensibilidad por defecto es `confidencial`", "proveedores adicionales",
                      "APTA", "CONDICIONAL", "BLOQUEADA", "INCOMPLETA", "INSUFICIENTE", "Alfa de Dirichlet por defecto 50",
-                     "nutria destino ruminal", "nutria extraccion comparar A.json B.json", "--ajuste hksj|hksj-mod|ninguno",
+                     "nutria destino ruminal", "extraccion comparar A.json B.json --registrar", "--ajuste hksj|hksj-mod|ninguno",
                      "nutria meta validar-predictivo", "ROI > 1"):
         assert fragment in text, fragment
 
