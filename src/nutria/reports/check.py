@@ -1464,7 +1464,8 @@ def _cite_from_match(m: re.Match, text: str, kind: str, end: int | None = None) 
     mismas posiciones que `text`): apellidos del grupo «name» y de los coautores que le siguen hasta el año, y el año
     (el del grupo «year» o el primero de la cita; ninguno con «en prensa» y similares)."""
     groups = m.re.groupindex
-    name_end = m.end("name")
+    has_name = "name" in groups and m.group("name") is not None
+    name_start, name_end = (m.start("name"), m.end("name")) if has_name else (m.start(), m.start())
     year = m.group("year") if "year" in groups and m.group("year") is not None else None
     if year is None and not ("status" in groups and m.group("status") is not None):
         found = _CITE_YEAR_RE.search(m.group(0))
@@ -1478,19 +1479,24 @@ def _cite_from_match(m: re.Match, text: str, kind: str, end: int | None = None) 
         after = _CITE_YEAR_RE.search(text, name_end, m.end())
         if after:
             stop = after.start()
-    return _Cite(m.end() - 1 if end is None else end, kind,
-                 _surname_words(text[m.start("name"):name_end], text[name_end:stop]), year,
+    words = _surname_words(text[name_start:name_end], text[name_end:stop]) if has_name else ()
+    return _Cite(m.end() - 1 if end is None else end, kind, words, year,
                  " ".join(text[m.start():m.end()].split()).strip(" ([;-*+"))
 
 
 _ENTRY_ID_RE = re.compile(r"\b10\.\d{4,9}/\S+|\bhttps?://\S+|\bwww\.\S+|\bPMID\s*:?\s*\d+|\bPMC\d+", re.IGNORECASE)
 
 
+@lru_cache(maxsize=512)
+def _entry_pieces(entry_text: str) -> frozenset[str]:
+    return frozenset(_word_pieces(_ENTRY_ID_RE.sub(" ", entry_text)))
+
+
 def _cite_in_entry(cite: _Cite, entry_text: str) -> bool:
     """La entrada de la bibliografía, sin sus identificadores (DOI, PMID, enlaces: «jds.2017-13000» no da el año
     2017), contiene los apellidos (o la institución) y el año de la cita (palabras completas, normalizadas; «2018a»
     cuenta como 2018). Es léxico: vale cualquier lugar de la entrada (un coautor, un número de las páginas)."""
-    pieces = set(_word_pieces(_ENTRY_ID_RE.sub(" ", entry_text)))
+    pieces = _entry_pieces(entry_text)
     if not set(cite.words) <= pieces:
         return False
     return cite.year is None or any(re.fullmatch(rf"{cite.year}[a-z]?", piece) for piece in pieces)
