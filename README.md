@@ -290,7 +290,10 @@ sus argumentos JSON, por ejemplo «ejecuta el workflow `mision-1-auto` con `{"fa
 vacuno lechero"}`». La sesión los lanza con la herramienta Workflow; su avance se sigue con `/workflows`. La
 herramienta Workflow consta en Claude Code 2.1.318 y no en la 2.1.42, se instale como se instale (binario nativo o
 paquete npm); compruébalo con `claude --version`. Los workflows se han probado con agentes simulados
-(`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin.
+(`tests/orquestacion_harness.cjs`), no en una ejecución real de principio a fin. `.claude/settings.json`
+preautoriza la herramienta Workflow (regla `"Workflow"` en `permissions.allow`): cada workflow lanza varios agentes,
+y en el modo automático de Claude Code el clasificador de permisos puede denegar el lanzamiento si no hay una regla
+que lo permita. Quítala si prefieres aprobar cada lanzamiento.
 
 | Workflow | Argumentos |
 |---|---|
