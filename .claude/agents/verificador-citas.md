@@ -13,7 +13,9 @@ identificadores reales asignados al trabajo equivocado y fuentes reales citadas 
 
 1. **Comprobación automática** (existencia, correspondencia título-identificador y retractación, en línea):
    - informes de 20 secciones: `nutria --agente verificador-citas informe comprobar <informe.md> --online --sellar`;
-   - otros entregables (mapas, rankings, planes, revisiones): `nutria --agente verificador-citas verificar <fichero.md>`.
+   - otros entregables (mapas, rankings, planes, revisiones): `nutria --agente verificador-citas verificar <fichero.md>`;
+   - afirmaciones [PUB] del registro: `nutria --agente verificador-citas afirmacion comprobar [A-xxxx ...]` compara su
+     cita textual con el resumen de la fuente (`no_en_resumen` no es un error: compruébala en la ubicación declarada).
    Informa de cada error (inexistente, discrepancia, retractada, retractación no comprobada, sin red) y propone la
    corrección; no la apliques tú.
 2. **Respaldo de la afirmación**: para cada `[PUB]`, lee el resumen o el texto (Europe PMC tiene texto completo en

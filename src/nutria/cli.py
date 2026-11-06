@@ -1640,8 +1640,69 @@ def cmd_extraccion(args, cfg) -> int:
     return 0
 
 
+def _comprobar_afirmaciones(args, cfg, conn) -> int:
+    """Compara la cita textual de las afirmaciones [PUB] del registro con el resumen de sus fuentes (PubMed por PMID o
+    DOI; si no, OpenAlex), como el Anexo A de los informes (petición de P2, resto de D3-3). Solo el resumen: una cita
+    del texto completo queda «no_en_resumen» y la comprueba una persona en la ubicación declarada."""
+    from .reports import check as chk
+    claims = registry.list_claims(conn)
+    if args.ids:
+        faltan = sorted(set(args.ids) - {c["id"] for c in claims})
+        if faltan:
+            raise registry.RegistryError(f"No existen: {', '.join(faltan)}")
+        claims = [c for c in claims if c["id"] in set(args.ids)]
+    claims = [c for c in claims if c["label"] == "PUB"]
+    if not claims:
+        raise SystemExit("No hay afirmaciones [PUB] que comprobar" + (" con esos identificadores" if args.ids else ""))
+    if cfg.offline:
+        raise ErrorOrden("afirmacion comprobar consulta los resúmenes de las fuentes: no funciona sin red (--offline)",
+                         SALIDA_RED)
+    client = _client(cfg)
+    resultados, lineas = [], []
+    for c in claims:
+        cita = (c.get("quote") or "").strip()
+        item = {"id": c["id"], "fuentes": c.get("source_ids") or [], "ubicacion": c.get("location")}
+        if len(chk._norm_words(cita)) < 2:
+            item.update(estado="sin_cita", detalle="la afirmación no tiene una cita textual comparable")
+        else:
+            needle, motivos, vistos = chk._norm_words(cita), [], []
+            for sid in item["fuentes"]:
+                fila = registry.get_source(conn, sid) or {}
+                partes = [f"DOI: {fila['doi']}" if fila.get("doi") else "",
+                          f"PMID: {fila['pmid']}" if fila.get("pmid") else ""]
+                if not any(partes):
+                    kind, _, value = sid.partition(":")
+                    partes = [f"DOI: {value}" if kind == "doi" else (f"PMID: {value}" if kind == "pmid" else "")]
+                resumen, origen = chk.fetch_abstract(client, " ".join(p for p in partes if p))
+                if resumen is None:
+                    motivos.append(f"{sid}: {origen}")
+                    continue
+                vistos.append(f"{sid} ({origen})")
+                if chk._find(chk._norm_words(chk._visible(resumen)), needle, 0):
+                    item.update(estado="en_resumen", detalle=f"en el resumen de {sid} ({origen})")
+                    break
+            else:
+                if vistos:
+                    item.update(estado="no_en_resumen",
+                                detalle=f"no aparece en el resumen de {', '.join(vistos)}: solo se comprueba el resumen; "
+                                        f"compruébala en la ubicación declarada ({c.get('location') or 'sin ubicación'})")
+                else:
+                    item.update(estado="sin_resumen", detalle="resumen no disponible: " + "; ".join(motivos))
+        resultados.append(item)
+        lineas.append(f"{item['id']}: {item['estado'].upper()}: {item['detalle']}")
+    estados = {r["id"]: r["estado"] for r in resultados}
+    log_event(cfg, "afirmacion_comprobar", inputs={"ids": [c["id"] for c in claims]}, outputs={"estados": estados},
+              actor=args.agente)
+    confirmadas = sum(1 for e in estados.values() if e == "en_resumen")
+    lineas.append(f"{confirmadas} de {len(estados)} cita(s) textual(es) [PUB] encontradas en el resumen de su fuente")
+    _emit(args, {"afirmaciones": resultados, "confirmadas": confirmadas, "total": len(estados)}, "\n".join(lineas))
+    return SALIDA_OK if confirmadas == len(estados) else SALIDA_RESULTADO
+
+
 def cmd_afirmacion(args, cfg) -> int:
     conn = _conn(cfg)
+    if args.accion == "comprobar":
+        return _comprobar_afirmaciones(args, cfg, conn)
     if args.accion == "agregar":
         data = _load_json(args.json_file)
         items = data if isinstance(data, list) else [data]
@@ -3178,6 +3239,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--datos", dest="json_file", required=True, help="fichero JSON (o - para stdin)")
     x = afs.add_parser("listar", parents=[common])
     x.add_argument("--entidad")
+    x = afs.add_parser("comprobar", parents=[common],
+                       help="compara la cita textual de las afirmaciones [PUB] con el resumen de su fuente (en línea)")
+    x.add_argument("ids", nargs="*", metavar="A-xxxx", help="afirmaciones que comprobar (por defecto, todas las [PUB])")
     s.set_defaults(func=cmd_afirmacion)
 
     for kind, statuses, func in (("oportunidad", registry.OPPORTUNITY_STATUSES, cmd_oportunidad),

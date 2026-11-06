@@ -938,3 +938,50 @@ def test_coord3_justificacion_entre_anclas_declarada_en_el_esquema_de_puntuacion
     assert db.schema_errors("puntuacion", ejemplo) == []
     ejemplo["puntuaciones"][0]["justificacion_entre_anclas"] = "corta"
     assert any("justificacion_entre_anclas" in e for e in db.schema_errors("puntuacion", ejemplo))
+
+
+# ============================================================================ fase de coordinación (3): P2 → P3 (D3-3)
+def test_coord3_afirmacion_comprobar_compara_la_cita_textual_con_el_resumen(project, capsys, monkeypatch):
+    """Petición de P2 a P3 (resto de D3-3): la cita textual de una afirmación [PUB] del registro se compara con el
+    resumen de su fuente (red simulada), como las citas del Anexo A; sin red, código 4."""
+    from nutria import db
+    from nutria.config import load_config
+    from nutria.reports import check as chk
+    conn = db.connect(load_config().db_path)
+    try:
+        for doi in ("10.1000/colina", "10.1000/otra"):
+            db.upsert_source(conn, {"doi": doi, "title": f"Ensayo {doi}", "year": 2020, "verified": True,
+                                    "retracted": False, "verified_via": "prueba"})
+    finally:
+        conn.close()
+    base = json.loads((ROOT / "ejemplos" / "afirmacion_ejemplo.json").read_text("utf-8"))
+    base.pop("entidad", None)
+    ids = []
+    for doi, cita in (("10.1000/colina", "Rumen-protected choline reduced plasma BHB in transition cows."),
+                      ("10.1000/otra", "Milk yield increased by 2 kg/d with the protected compound.")):
+        (project / "a.json").write_text(json.dumps(dict(base, fuentes=[f"doi:{doi}"], cita_textual=cita),
+                                                   ensure_ascii=False), "utf-8")
+        code, out, err = _run(capsys, ["--json", "--agente", "investigador-bibliografico", "afirmacion", "agregar",
+                                       "--datos", str(project / "a.json")])
+        assert code == 0, err
+        ids += json.loads(out)["ids"]
+    resumenes = {"10.1000/colina": "Background. Rumen-protected choline reduced plasma BHB in transition cows "
+                                   "fed a TMR. Conclusion...", "10.1000/otra": "Milk fat was unchanged."}
+    pedidas = []
+
+    def falso(client, entry_text):
+        pedidas.append(entry_text)
+        doi = entry_text.split("DOI: ")[1].split()[0]
+        return resumenes[doi], "PubMed"
+    monkeypatch.setattr(chk, "fetch_abstract", falso)
+    monkeypatch.delenv("NUTRIA_OFFLINE", raising=False)
+    code, out, err = _run(capsys, ["--json", "--agente", "verificador-citas", "afirmacion", "comprobar"])
+    res = json.loads(out)
+    assert code == 1 and res["confirmadas"] == 1 and res["total"] == 2, err
+    estados = {r["id"]: r["estado"] for r in res["afirmaciones"]}
+    assert estados == {ids[0]: "en_resumen", ids[1]: "no_en_resumen"}
+    assert all("DOI: 10.1000/" in p for p in pedidas)
+    code, out, _ = _run(capsys, ["--json", "--agente", "verificador-citas", "afirmacion", "comprobar", ids[0]])
+    assert code == 0 and json.loads(out)["total"] == 1
+    code, _, err = _run(capsys, ["--offline", "--agente", "verificador-citas", "afirmacion", "comprobar"])
+    assert code == 4 and "sin red" in err
