@@ -757,3 +757,50 @@ def test_coord_correlacion_intrasujeto_publicada_llega_al_csv_de_analisis(projec
     code, _, err = _run(capsys, ["--agente", "extractor-datos-G", "extraccion", "comparar", str(project / "x_E.json"),
                                  str(project / "x_F.json"), "--registrar"])
     assert code == 3 and "misma comparación" in err and "correlacion_intrasujeto" in err, err
+
+
+# ============================================================================ fase de coordinación (3): P6
+def _econ_ejemplos():
+    return ROOT / "ejemplos" / "econ_ganadero_ILUSTRATIVO.toml", ROOT / "ejemplos" / "econ_desarrollador_ILUSTRATIVO.toml"
+
+
+def test_coord3_coherencia_con_tolerancia_acotada_y_diferencia_sobre_el_ganadero(project, capsys):
+    """Revisión final de P6: --tolerancia sin tope permitía afirmar «COHERENTE: mismo valor central» con precio, dosis
+    y días el doble que los del ganadero, y el porcentaje se calculaba sobre el mayor de los dos valores (+50 % en
+    lugar de +100 %)."""
+    ganadero, desarrollador = _econ_ejemplos()
+    texto = desarrollador.read_text("utf-8")
+    linea = next(ln for ln in texto.splitlines() if ln.startswith("precio_eur_kg"))
+    texto = texto.replace(linea, 'precio_eur_kg = { dist = "pert", min = 8.0, moda = 10.0, max = 14.0, fuente = "[SUP] doble" }')
+    incoherente = project / "d_incoh.toml"
+    incoherente.write_text(texto, "utf-8")
+    for tolerancia in ("2", "0.06", "-0.01", "inf"):
+        code, _, err = _run(capsys, ["econ", "coherencia", str(ganadero), str(incoherente), "--tolerancia", tolerancia])
+        assert code == 2 and "tolerancia" in err.lower(), (tolerancia, err)
+    code, out, _ = _run(capsys, ["--json", "econ", "coherencia", str(ganadero), str(incoherente)])
+    res = json.loads(out)
+    precio = next(c for c in res["comparaciones"] if c["magnitud"].startswith("precio"))
+    assert code == 1 and precio["estado"] == "difiere" and (precio["ganadero"], precio["empresa"]) == (5.0, 10.0)
+    assert precio["diferencia_pct"] == pytest.approx(100.0)
+    assert "+100.00 % del valor del ganadero" in precio["detalle"]
+    # dentro de la tolerancia, la salida da la diferencia real en lugar de «mismo valor central»
+    from nutria.econ import rnpv
+    item = rnpv._compare("precio", 5.0, 5.1, None, None, 0.05)
+    assert item["estado"] == "coherente" and "mismo valor central" not in item["detalle"]
+    assert "+2.00 % del valor del ganadero" in item["detalle"]
+    assert rnpv._compare("precio", 5.0, 5.0, None, None, 0.0)["detalle"] == "mismo valor central"
+
+
+def test_coord3_version_del_muestreo_en_la_salida_y_en_la_procedencia(project, capsys):
+    """Revisión final de P6: con la misma semilla, el orden de muestreo nuevo da otras cifras que la versión base; la
+    salida y la procedencia declaran la versión del muestreo junto a la semilla."""
+    from nutria import provenance
+    from nutria.config import load_config
+    from nutria.econ import rnpv
+    _ganadero, desarrollador = _econ_ejemplos()
+    code, out, _ = _run(capsys, ["--json", "econ", "desarrollador", str(desarrollador), "--sim", "300"])
+    assert json.loads(out)["version_muestreo"] == rnpv.SAMPLING_VERSION == 2
+    evento = provenance.read_events(load_config(), action="econ_desarrollador")[-1]
+    assert evento["inputs"]["version_muestreo"] == 2 and evento["outputs"]["resumen"]["version_muestreo"] == 2
+    code, out, _ = _run(capsys, ["econ", "desarrollador", str(desarrollador), "--sim", "300"])
+    assert "versión del muestreo 2" in out

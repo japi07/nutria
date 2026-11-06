@@ -351,6 +351,13 @@ def _realized_npv(project: Project, v: dict, u: np.ndarray):
     return npv, reached, stage
 
 
+# Versión del orden de muestreo del Monte Carlo de la empresa. Con la misma semilla y el mismo TOML, otra versión da
+# otras cifras (dentro del error de Monte Carlo): la salida y la procedencia la guardan junto a la semilla.
+# 1: hasta 7a3279f. 2: muestreo con correlaciones entre entradas (orden de las entradas de `inputs`) y después las
+#    fases (revisión final de P6: las cifras de la versión 1 no se reproducen con la 2).
+SAMPLING_VERSION = 2
+
+
 def simulate(project: Project, n: int = 10000, seed: int = 42) -> dict:
     """Monte Carlo con los mismos parámetros muestreados para las dos métricas.
 
@@ -421,7 +428,7 @@ def evaluate(project: Project, n: int = 10000, seed: int = 42, loss_threshold: f
         "p_perdida_mayor_umbral": float(np.mean(realized < -loss_threshold)),
         "resultados_por_fase": outcomes,
         "p_llega_al_mercado_simulada": float(np.mean(sims["llega_al_mercado"])),
-        "simulaciones": n, "semilla": seed,
+        "simulaciones": n, "semilla": seed, "version_muestreo": SAMPLING_VERSION,
     }
 
 
@@ -464,28 +471,48 @@ def _norm(text: str) -> str:
 # ganadero sale de una simulación (dosis convertida con ingestiones inciertas), por el error de Monte Carlo.
 RANGE_TOL = 0.01
 RANGE_TOL_SIMULATED = 0.02
+# Tolerancia relativa máxima de `econ coherencia --tolerancia`: con más, la comprobación dejaría de comprobar (con 2,
+# un precio, una dosis o unos días el doble que los del ganadero salían «COHERENTE»).
+MAX_RTOL = 0.05
 _COHERENCE_SIMS = 20000
 _COHERENCE_SEED = 20240501
 
 
+def _difference(farm: float, proj: float) -> str:
+    """Diferencia de la empresa respecto al valor del ganadero, en % de este (o absoluta si el del ganadero es 0)."""
+    if farm == 0:
+        return f"diferencia {proj - farm:+.6g} (el valor del ganadero es 0)"
+    return f"diferencia {100 * (proj - farm) / abs(farm):+.2f} % del valor del ganadero"
+
+
+def _differs(farm: float, proj: float, rtol: float) -> bool:
+    return abs(proj - farm) > rtol * abs(farm) if farm != 0 else abs(proj - farm) > 1e-12
+
+
 def _compare(name: str, farm_c: float, proj_c: float, farm_q, proj_q, rtol: float,
              range_tol: float = RANGE_TOL) -> dict:
-    scale = max(abs(farm_c), abs(proj_c), 1e-12)
     item = {"magnitud": name, "ganadero": farm_c, "empresa": proj_c,
-            "ganadero_p05_p95": farm_q, "empresa_p05_p95": proj_q}
-    if abs(farm_c - proj_c) > rtol * scale:
+            "ganadero_p05_p95": farm_q, "empresa_p05_p95": proj_q,
+            "diferencia_pct": (100 * (proj_c - farm_c) / abs(farm_c)) if farm_c != 0 else None}
+    if _differs(farm_c, proj_c, rtol):
         item["estado"] = "difiere"
         item["detalle"] = (f"valor central {farm_c:.6g} en el modelo del ganadero y {proj_c:.6g} en el de la empresa "
-                           f"(diferencia {100 * (proj_c - farm_c) / scale:+.2f} %)")
-    elif farm_q is not None and proj_q is not None and any(
-            abs(a - b) > max(rtol, range_tol) * max(abs(a), abs(b), scale)
-            for a, b in zip(farm_q, proj_q, strict=True)):
+                           f"({_difference(farm_c, proj_c)})")
+        return item
+    central = ("mismo valor central" if proj_c == farm_c else
+               f"valor central {farm_c:.6g} (ganadero) y {proj_c:.6g} (empresa), {_difference(farm_c, proj_c)}, "
+               f"dentro de la tolerancia")
+    if farm_q is not None and proj_q is not None and any(
+            _differs(a, b, max(rtol, range_tol)) for a, b in zip(farm_q, proj_q, strict=True)):
         item["estado"] = "difiere"
-        item["detalle"] = (f"mismo valor central pero distinta incertidumbre: P5-P95 {farm_q[0]:.6g}-{farm_q[1]:.6g} "
+        item["detalle"] = (f"{central} pero distinta incertidumbre: P5-P95 {farm_q[0]:.6g}-{farm_q[1]:.6g} "
                            f"(ganadero) frente a {proj_q[0]:.6g}-{proj_q[1]:.6g} (empresa)")
     else:
         item["estado"] = "coherente"
-        item["detalle"] = "mismo valor central" + ("" if farm_q is None or proj_q is None else " y mismo P5-P95")
+        item["detalle"] = central + ("" if farm_q is None or proj_q is None else
+                                     (" y mismo P5-P95" if tuple(farm_q) == tuple(proj_q) else
+                                      f" y P5-P95 {farm_q[0]:.6g}-{farm_q[1]:.6g} (ganadero) y "
+                                      f"{proj_q[0]:.6g}-{proj_q[1]:.6g} (empresa), dentro de la tolerancia"))
     return item
 
 
@@ -497,8 +524,9 @@ def coherence(model, project: Project, rtol: float = 1e-3) -> dict:
     los animales-ciclo tratados al año que implicaría con el precio, la dosis y los días del ganadero."""
     from . import farm  # import local: farm no depende de rnpv
 
-    if not (math.isfinite(rtol) and rtol >= 0):
-        raise ValueError("La tolerancia debe ser un número finito >= 0")
+    if not (math.isfinite(rtol) and 0 <= rtol <= MAX_RTOL):
+        raise ValueError(f"La tolerancia debe ser un número finito entre 0 y {MAX_RTOL:g} ({100 * MAX_RTOL:g} %): con más, "
+                         "la comprobación de coherencia dejaría de comprobar")
     if model.central != project.central:
         raise ValueError(f"Los dos modelos deben usar el mismo estadístico central ({model.central} frente a "
                          f"{project.central})")
@@ -620,7 +648,8 @@ def report(project: Project, n: int = 10000, seed: int = 42, loss_threshold: flo
              f"rNPV central: {res['rnpv_central']:,.0f} € (valor esperado del VPN con el riesgo de cada fase y "
              f"los valores centrales de los parámetros: {CENTRAL_TEXT[project.central]})",
              "",
-             f"1) Incertidumbre de los parámetros ({n} simulaciones, semilla {seed}): rNPV P50 "
+             f"1) Incertidumbre de los parámetros ({n} simulaciones, semilla {seed}, versión del muestreo "
+             f"{res.get('version_muestreo', SAMPLING_VERSION)}): rNPV P50 "
              f"{res['rnpv_p50']:,.0f} € [P5 {res['rnpv_p05']:,.0f}; P95 {res['rnpv_p95']:,.0f}]; "
              f"P(rNPV > 0) = {res['p_rnpv_positivo_incertidumbre_parametros']:.2f}",
              "   Mide la confianza en que el valor esperado (rNPV) sea positivo si los parámetros toman otros "

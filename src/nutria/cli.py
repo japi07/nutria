@@ -2462,19 +2462,39 @@ def cmd_destino(args, cfg) -> int:
 
 
 # ============================================================================ economía
-def _econ_source_problems(cfg, sources: list[tuple[str, str]]) -> list[str]:
-    """Fuentes de un modelo económico que no se pueden rastrear: [PUB] sin el identificador de una fuente registrada y
-    verificada (doi:, pmid:, openalex:) o de una afirmación [PUB] registrada (A-xxxx), y [DER] sin la orden `nutria` o
-    el script que da el valor. Las fuentes [PUB] se comprueban en el registro del proyecto."""
+def _der_rastreable(text: str, bases: list[Path]) -> bool:
+    """Una fuente [DER] es rastreable si da una orden real de nutria (`nutria [opciones globales] <orden> ...`, con
+    una orden de `build_parser`) o la ruta de un script que existe (relativa al proyecto o al fichero del modelo); no
+    basta con la palabra nutria («según nutria es así», «nutria estimó...») ni con un nombre de fichero inventado."""
+    import argparse
     import re
+    subs = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
+    for m in re.finditer(r"\bnutria((?:\s+\S+){1,8})", text):
+        toks = [tok.strip("`'\"().,;:") for tok in m.group(1).split()]
+        i = 0
+        while i < len(toks) and toks[i].startswith("-"):
+            i += 2 if toks[i] in ("--agente", "--antiguedad-maxima") else 1
+        if i < len(toks) and toks[i] in subs:
+            return True
+    for m in re.finditer(r"[\w./~-]+\.(?:py|R|r|ipynb|jl|sh|m)\b", text):
+        path = Path(m.group(0)).expanduser()
+        if any((path if path.is_absolute() else base / path).is_file() for base in bases):
+            return True
+    return False
 
+
+def _econ_source_problems(cfg, sources: list[tuple[str, str]], modelo: Path | None = None) -> list[str]:
+    """Fuentes de un modelo económico que no se pueden rastrear: [PUB] sin el identificador de una fuente registrada y
+    verificada (doi:, pmid:, openalex:) o de una afirmación [PUB] registrada (A-xxxx), y [DER] sin una orden `nutria`
+    real o la ruta de un script que existe (`_der_rastreable`). Las fuentes [PUB] se comprueban en el registro del
+    proyecto."""
     from .econ.dist import source_ids
     problems, pub = [], []
-    # [DER] rastreable: la orden (`nutria <orden> ...`) o el fichero del script (con su extensión), no solo la palabra.
-    der_trace = re.compile(r"\bnutria\s+[a-z]|[\w./-]+\.(?:py|R|r|ipynb|jl|sh|m)\b")
+    bases = [cfg.root] + ([modelo.resolve().parent] if modelo is not None else [])
     for where, text in sources:
-        if "[DER]" in text and not der_trace.search(text):
-            problems.append(f"{where}: [DER] sin la orden nutria o el script que da el valor")
+        if "[DER]" in text and not _der_rastreable(text, bases):
+            problems.append(f"{where}: [DER] sin la orden nutria o el script que da el valor (una orden real de nutria, "
+                            "`nutria <orden> ...`, o la ruta de un script que exista en el proyecto)")
         if "[PUB]" in text:
             ids = source_ids(text)
             if ids:
@@ -2530,11 +2550,11 @@ def cmd_econ(args, cfg) -> int:
     if args.accion == "ganadero":
         model = farm.load_farm_model(Path(args.archivo), central)
         missing = farm.missing_sources(model)
-        untraceable = _econ_source_problems(cfg, farm.declared_sources(model))
+        untraceable = _econ_source_problems(cfg, farm.declared_sources(model), Path(args.archivo))
     else:
         project = rnpv.load_project(Path(args.archivo), central)
         missing = rnpv.missing_sources(project)
-        untraceable = _econ_source_problems(cfg, rnpv.declared_sources(project))
+        untraceable = _econ_source_problems(cfg, rnpv.declared_sources(project), Path(args.archivo))
     if args.exigir_fuentes and (missing or untraceable):
         raise ValueError("--exigir-fuentes: " + "; ".join(
             (["entradas sin fuente etiquetada ([PUB], [DER], [SUP], [DESC]) o valores por defecto sin declarar: "
@@ -2571,7 +2591,8 @@ def cmd_econ(args, cfg) -> int:
     inputs = {"archivo": args.archivo, "sha256": sha256_file(Path(args.archivo)), "sim": args.sim,
               "semilla": args.semilla, "exigir_fuentes": args.exigir_fuentes, "valor_central": central}
     if args.accion == "desarrollador":
-        inputs["umbral_perdida"] = args.umbral_perdida
+        # con la misma semilla, otra versión del orden de muestreo da otras cifras (revisión final de P6)
+        inputs.update(umbral_perdida=args.umbral_perdida, version_muestreo=rnpv.SAMPLING_VERSION)
         if args.ganadero:
             inputs.update({"ganadero": args.ganadero, "sha256_ganadero": sha256_file(Path(args.ganadero))})
     log_event(cfg, f"econ_{args.accion}", inputs=inputs, outputs={"resumen": summary}, actor=args.agente)
@@ -3258,7 +3279,8 @@ def build_parser() -> argparse.ArgumentParser:
                            "difieren o no puede comprobarse)")
     x.add_argument("ganadero", help="modelo del ganadero (TOML)")
     x.add_argument("desarrollador", help="modelo de la empresa (TOML) con las ventas construidas")
-    x.add_argument("--tolerancia", type=float, default=0.001, help="diferencia relativa admitida (0,001 = 0,1 %%)")
+    x.add_argument("--tolerancia", type=float, default=0.001,
+                   help="diferencia relativa admitida respecto al valor del ganadero (0,001 = 0,1 %%; máximo 0,05)")
     x.add_argument("--valor-central", dest="valor_central", choices=("moda", "mediana"), default="moda",
                    help=central_help)
     s.set_defaults(func=cmd_econ)

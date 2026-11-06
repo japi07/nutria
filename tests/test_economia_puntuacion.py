@@ -1158,10 +1158,21 @@ def test_ranking_rechaza_opciones_que_eluden_las_reglas(project, capsys, extra, 
     ("[DER] nutria", False),
     ("[DER] nutria meta analizar research/datos/O-0001/leche.csv", True),
     ("[DER] `nutria destino ruminal --a 0.2 --b 0.7 --kd 0.05 --kp 0.06`", True),
+    ("[DER] nutria --agente economia-mercado-pi --json dosis convertir --valor 50", True),
     ("[DER] script research/datos/O-0001/precio.py", True),
     ("[DER] Rscript research/datos/O-0001/ajuste.R", True),
+    # revisión final de P6 (probe_sources.py): la palabra nutria sin una orden real, o un script que no existe
+    ("[DER] nutria estimó la respuesta a ojo", False),
+    ("[DER] según nutria es así", False),
+    ("[DER] véase el anexo 3.r", False),
+    ("[DER] cálculo propio en hoja.sh", False),
+    ("[DER] script inexistente/no_existe.py", False),
+    ("[DER] calculado con nutria", False),
 ])
 def test_der_exige_la_orden_o_el_fichero_del_script(tmp_path, project, capsys, source, traceable):
+    for script in ("research/datos/O-0001/precio.py", "research/datos/O-0001/ajuste.R"):
+        (project / script).parent.mkdir(parents=True, exist_ok=True)
+        (project / script).write_text("# cálculo\n", "utf-8")
     path = _farm_with_sources(tmp_path, "[SUP] prueba", source)
     assert main(["econ", "ganadero", str(path), "--sim", "200", "--exigir-fuentes"]) == (0 if traceable else 2)
     assert ("[DER] sin la orden nutria o el script" in capsys.readouterr().err) is not traceable
