@@ -1343,10 +1343,11 @@ def test_numeric_citations_and_parenthesized_references_are_errors(body, what):
     ("| Estudio | Especie | n | Dosis (g/d) | Leche (kg/d) |\n|---|---|---|---|---|\n"
      "| García 2018 [R1] | vacuno lechero | 60 | 15 | +1,2 [PUB] |", "García 2018 vacuno lechero 60 15 +1,2"),
     ("| Estudio | Semana 4 (kg/d) |\n|---|---|\n| Ensayo de campo [R1] | 1,2 [PUB] |", "Ensayo de campo 1,2"),
-    ("| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| García et al. 2017. Vacas Holstein. | 1,2 | [PUB] [R1] |",
-     "García et al. 2017. Vacas Holstein. 1,2"),                                             # punto dentro de una celda
-    ("Como demostraron García et al.\n(2018) [R1], la colina aumentó la leche [PUB].",
-     "Como demostraron García et al. (2018), la colina aumentó la leche"),
+    # (la cita autor-año de una frase con [Rn] debe ser la de su entrada: R1 es «Autor A, Autor B. 2020»)
+    ("| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| Autor et al. 2020. Vacas Holstein. | 1,2 | [PUB] [R1] |",
+     "Autor et al. 2020. Vacas Holstein. 1,2"),                                              # punto dentro de una celda
+    ("Como demostraron Autor et al.\n(2020) [R1], la colina aumentó la leche [PUB].",
+     "Como demostraron Autor et al. (2020), la colina aumentó la leche"),
     ("La colina protegida aumentó la producción de leche en vacas en transición [PUB]\n[R1].",
      "La colina protegida aumentó la producción de leche en vacas en transición"),         # [Rn] en la línea siguiente
     ("Los animales del Grupo A (2019) recibieron la dieta basal [SUP].", ""),
@@ -1361,6 +1362,107 @@ def test_numeric_citations_and_parenthesized_references_are_errors(body, what):
 def test_legitimate_forms_are_not_flagged(body, row):
     rows = ANNEX + (f"\n| R1 | {row} | respalda | x |" if row else "")
     assert _body_errors(body, rows) == [], body
+
+
+# Revisión de la documentación (ronda 2, bloqueante): en una frase que ya lleva [Rn], una cita autor-año que nombra
+# otro trabajo pasaba en final sin error ni aviso («... [R1] [PUB], como ya observaron Han et al. (2020) en cabras», con
+# R1 = García 2018): una cita de memoria llegaba a un informe con sello válido. Ahora sus apellidos (o la institución)
+# y su año deben figurar en la entrada de alguna [Rn] de la frase: error en revisado o final y aviso en borrador.
+_CITE_BIB = ("[R1] García A, López B. 2018. Colina protegida en vacas en transición. J Dairy Sci 101:1-10. "
+             "DOI: 10.1234/colina.2018\n"
+             "[R2] National Research Council (NRC). 2001. Nutrient requirements of dairy cattle. DOI: 10.17226/9825\n"
+             "[R3] de los Santos M, Şahin K, St-Pierre NR, Van Soest PJ. 2019a. Grasa y colina. Animal 13:1-9. "
+             "DOI: 10.1234/grasa.2019\n"
+             "[R4] EFSA FEEDAP Panel. 2020. Guía de eficacia. EFSA J 18:1-10. DOI: 10.2903/j.efsa.2020.6000")
+_CITE_MISMATCH = "Cita autor-año «"
+
+
+def _cite_issues(body: str, status: str) -> list[chk.Issue]:
+    text = f"---\nestado: {status}\n---\n# Nota\n\n{body}\n\n## Referencias\n\n{_CITE_BIB}\n"
+    return [i for i in chk.check_report(text, require_sections=False) if i.message.startswith(_CITE_MISMATCH)]
+
+
+@pytest.mark.parametrize("body", [
+    "La producción aumentó 2 kg/d [R1] [PUB], como ya observaron Han et al. (2020) en cabras.",
+    "Según Han et al. (2020), la producción aumentó [R1] [PUB].",
+    "La producción aumentó [R1] [PUB] (Han et al., 2020).",
+    "La producción aumentó [R1] [PUB] (Han et al., 2018).",                 # mismo año, otro apellido
+    "La producción aumentó [R1] [PUB] (García et al., 2019).",              # mismo apellido, otro año
+    "La producción aumentó [R1] [PUB] (García y Han, 2018).",               # un coautor ajeno
+    "La producción aumentó [R1] [PUB] (García, 2018; Han, 2020).",          # la segunda de la lista
+    "La producción aumentó [R1] [PUB] (Şahin et al., 2019).",
+    "La producción aumentó [R1] [PUB] (Čermák, 2018).",
+    "La producción aumentó [R1] [PUB] (de los Santos, 2019).",
+    "La producción aumentó [R1] [PUB] (May et al., 2019).",
+    "La producción aumentó [R1] [PUB] (Ley et al., 2006).",
+    "La producción aumentó [R1] [PUB] (García-Pérez, 2018).",
+    "En 2020, Han demostró el aumento [R1] [PUB].",
+    "Han et al. mostraron el aumento [R1] [PUB].",                          # sin año
+    "| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| Han et al. 2020 | 1,2 | [PUB] [R1] |",
+    "| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| Han 2020 | 1,2 | [PUB] [R1] |",   # celda «Autor Año»
+    "- Han J, López B. 2018. Colina protegida en vacas [R1] [PUB].",       # «Han» no es aquí una palabra de función
+])
+def test_author_year_citation_must_be_the_one_of_its_sentence_reference(body):
+    final = _cite_issues(body, "final")
+    assert final and {i.severity for i in final} == {"error"}, body
+    assert "R1" in final[0].message
+    draft = _cite_issues(body, "borrador")
+    assert draft and {i.severity for i in draft} == {"aviso"}, body
+
+
+@pytest.mark.parametrize("body", [
+    "La producción aumentó [R1] [PUB] (García et al., 2018).",
+    "García y López (2018) observaron el aumento [R1] [PUB].",
+    "Según García et al. (2018), la producción aumentó [R1] [PUB].",
+    "Como demostraron García et al.\n(2018) [R1], la producción aumentó [PUB].",
+    "En 2018, García demostró el aumento [R1] [PUB].",
+    "García J. (2018) halló un aumento [R1] [PUB].",
+    "García et al. mostraron el aumento [R1] [PUB].",
+    "La producción aumentó [R1] [PUB] (García, en prensa).",
+    "El requerimiento es mayor [R2] [PUB] (NRC, 2001).",
+    "La EFSA publicó en 2020 la guía [R4] [PUB].",
+    "La grasa aumentó [R3] [PUB] (Şahin et al., 2019).",
+    "La grasa aumentó [R3] [PUB] (de los Santos et al., 2019a).",
+    "La grasa aumentó [R3] [PUB] (St. Pierre, 2019).",
+    "La grasa aumentó [R3] [PUB] (Van Soest, 2019).",
+    "La leche aumentó [R1] [PUB] y la grasa también [R3] [PUB] (García, 2018; Şahin, 2019).",
+    "| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| García et al. 2018 | 1,2 | [PUB] [R1] |",
+    "| Estudio | Leche (kg/d) | Evidencia |\n|---|---|---|\n| García 2018 | 1,2 | [PUB] [R1] |",
+    "- García J, López B. 2018. Colina protegida en vacas [R1] [PUB].",
+])
+def test_author_year_citation_of_its_own_reference_passes(body):
+    assert _cite_issues(body, "final") == [], body
+
+
+def test_author_year_citation_of_another_work_blocks_review_but_not_drafts(project):
+    hooks = _hook_project(project)
+    body = "La producción aumentó 2 kg/d [R1] [PUB], como ya observaron Han et al. (2020) en cabras."
+    target = project / "research" / "planes" / "borrador.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"---\nestado: borrador\n---\n# Nota\n\n{body}\n\n## Referencias\n\n{_CITE_BIB}\n", "utf-8")
+    assert _run_hook(hooks, _payload(target)) is None          # en borrador, aviso: el hook no bloquea
+    final = target.read_text("utf-8").replace("estado: borrador", "estado: final")
+    assert any(e.startswith("[ERROR]") and "Han et al. (2020)" in e and "no corresponde a R1" in e
+               for e in _errors(final, require_sections=False, path=target))
+
+
+def test_author_year_citation_of_another_work_blocks_review_and_stamp_end_to_end(project, online):
+    # De punta a punta, como la revisión: `informe revisar` se niega y, escrito a mano como final, el sello no vale.
+    path = _filled_report(project)
+    base = path.read_text("utf-8")
+    cited = CLAIM_B.replace("[PUB] [R2].", "[PUB] [R2], como ya observaron Han et al. (2020) en cabras.")
+    path.write_text(base.replace(CLAIM_B, cited, 1), "utf-8")
+    with pytest.raises(SystemExit, match="No se registra la revisión(.|\n)*" + re.escape("Han et al. (2020)» que no "
+                                                                                        "corresponde a R2")):
+        main(["informe", "revisar", str(path), SIGN, "Ana Pérez", "--estado", "final"])
+    assert db.report_reviews(_conn()) == []
+    path.write_text(path.read_text("utf-8").replace("estado: borrador", "estado: final"), "utf-8")
+    main(["informe", "comprobar", str(path), "--online", "--sellar"])
+    assert not chk.stamp_status(path)[0]
+    # la cita de su propia entrada (R2 es «Autor C. 2019») no da este error
+    own = CLAIM_B.replace("[PUB] [R2].", "[PUB] [R2] (Autor, 2019).")
+    path.write_text(base.replace(CLAIM_B, own, 1), "utf-8")
+    assert not [e for e in _errors(path.read_text("utf-8"), conn=_conn(), path=path) if "no corresponde a" in e]
 
 
 def test_reviewer_round1_evasions_block_review_and_stamp(project, online):

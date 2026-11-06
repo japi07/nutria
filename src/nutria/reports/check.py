@@ -1406,11 +1406,92 @@ def _citation_kind(n: int, m: re.Match, text: str) -> str | None:
     return "ambigua"
 
 
-def _citations(text: str) -> list[tuple[int, str]]:
-    """(final, clase) de cada cita autor-año del texto (la cita cuenta en la frase donde termina: «Smith J. (2019)
-    halló...»). La clase la da `_citation_kind`; las citas exentas no se devuelven."""
+@dataclass
+class _Cite:
+    """Una cita autor-año encontrada en el texto."""
+    end: int                  # posición de su último carácter (la cita cuenta en la frase donde termina)
+    kind: str                 # clase de `_citation_kind`: «normal», «debil» o «ambigua»
+    words: tuple[str, ...]    # apellidos (o institución) que deben figurar en la entrada de su [Rn] (`_word_pieces`)
+    year: str | None          # año de la cita («2018a» -> «2018»); None con «en prensa», «com. pers.» o sin año
+    text: str                 # la cita, para el mensaje
+
+
+# Lo que acompaña a los autores en una cita y no es un apellido («et al.», «y col.», «and colleagues», «y otros»).
+_COAUTHOR_WORDS = frozenset("et al alii y e and col cols colaboradores colleagues otros otras others".split())
+_CITE_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+
+
+def _name_words(text: str) -> list[tuple[str, int, int]]:
+    """Palabras con forma de apellido (`_NAME_WORD`) de `text`, con su inicio y su fin, sin las partículas («de»,
+    «Van», «La»)."""
+    out = []
+    for m in re.finditer(_NAME_WORD, _latin1_letters(text)):
+        word = text[m.start():m.end()].rstrip(".")
+        if not re.fullmatch(_PARTICLES, word):
+            out.append((word, m.start(), m.end()))
+    return out
+
+
+def _surname_words(name: str, authors: str = "") -> tuple[str, ...]:
+    """Palabras de los apellidos de una cita que deben figurar en la entrada de su [Rn]: el primer apellido sin sus
+    partículas («de la Fuente» -> «fuente»; «La EFSA» -> «efsa»; una partícula sola es el apellido: «Lo»; una palabra
+    de función pegada delante del apellido no es parte de él: «Según García et al.» -> «garcia», pero sí en «Han J,
+    López B») y los demás apellidos del nombre y de los coautores, sin partículas, iniciales («J.», «JM») ni «et al.»,
+    «y col.»; normalizadas como las palabras de la entrada (`_word_pieces`: minúsculas, sin acentos, partidas por
+    guiones y apóstrofos; las piezas de una letra no cuentan)."""
+    core = _name_words(name)
+    while (len(core) > 1 and _word_class(core[0][0]) is not None
+           and not re.sub(rf"\s|{_PARTICLES}", "", name[core[0][2]:core[1][1]])):
+        core.pop(0)
+    words = [core[0][0]] if core else [_head_word(name)]
+    for word, _a, _b in core[1:] + _name_words(authors):
+        if _fold(word) in _COAUTHOR_WORDS or (word.isupper() and len(word) <= 3):
+            continue
+        words.append(word)
+    out: list[str] = []
+    for word in words:
+        out += [piece for piece in _word_pieces(word) if len(piece) > 1 and piece not in out]
+    return tuple(out)
+
+
+def _cite_from_match(m: re.Match, text: str, kind: str, end: int | None = None) -> _Cite:
+    """La cita de una coincidencia de `AUTHOR_YEAR_RES` o `_CELL_CITATION_RE` (sobre `_latin1_letters(text)`, con las
+    mismas posiciones que `text`): apellidos del grupo «name» y de los coautores que le siguen hasta el año, y el año
+    (el del grupo «year» o el primero de la cita; ninguno con «en prensa» y similares)."""
+    groups = m.re.groupindex
+    name_end = m.end("name")
+    year = m.group("year") if "year" in groups and m.group("year") is not None else None
+    if year is None and not ("status" in groups and m.group("status") is not None):
+        found = _CITE_YEAR_RE.search(m.group(0))
+        year = found.group(0) if found else None
+    # Los coautores van entre el primer apellido y el año (o «en prensa»); si el año va delante («En 2018, García y
+    # Pérez demostraron»), hasta el final de la cita.
+    stop = m.end()
+    if "status" in groups and m.group("status") is not None:
+        stop = m.start("status")
+    else:
+        after = _CITE_YEAR_RE.search(text, name_end, m.end())
+        if after:
+            stop = after.start()
+    return _Cite(m.end() - 1 if end is None else end, kind,
+                 _surname_words(text[m.start("name"):name_end], text[name_end:stop]), year,
+                 " ".join(text[m.start():m.end()].split()).strip(" ([;-*+"))
+
+
+def _cite_in_entry(cite: _Cite, entry_text: str) -> bool:
+    """La entrada de la bibliografía contiene los apellidos (o la institución) y el año de la cita (palabras
+    completas, normalizadas; «2018a» cuenta como 2018)."""
+    pieces = set(_word_pieces(entry_text))
+    if not set(cite.words) <= pieces:
+        return False
+    return cite.year is None or any(re.fullmatch(rf"{cite.year}[a-z]?", piece) for piece in pieces)
+
+
+def _citation_marks(text: str) -> list[_Cite]:
+    """Cada cita autor-año del texto (la cita cuenta en la frase donde termina: «Smith J. (2019) halló...»), con su
+    clase (`_citation_kind`), sus apellidos y su año; las citas exentas no se devuelven."""
     scan = _latin1_letters(text)
-    out: list[tuple[int, str]] = []
+    out: list[_Cite] = []
     for n, rx in enumerate(AUTHOR_YEAR_RES):
         pos = 0
         while pos <= len(scan):
@@ -1425,9 +1506,14 @@ def _citations(text: str) -> list[tuple[int, str]]:
                 # exenta: otra cita puede empezar dentro de este tramo
                 pos = m.start() + 1
                 continue
-            out.append((m.end() - 1, kind))
+            out.append(_cite_from_match(m, text, kind))
             pos = max(m.end(), m.start() + 1)
     return out
+
+
+def _citations(text: str) -> list[tuple[int, str]]:
+    """(final, clase) de cada cita autor-año del texto (ver `_citation_marks`)."""
+    return [(cite.end, cite.kind) for cite in _citation_marks(text)]
 
 
 def _cell_spans(text: str) -> list[tuple[int, int]]:
@@ -1473,12 +1559,13 @@ def _table_headers(doc: _Doc, tables: set[int]) -> set[int]:
 
 
 def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers: set[int],
-                  tables: set[int] | None = None) -> dict[int, list[tuple[int, str]]]:
+                  tables: set[int] | None = None,
+                  cites: dict[tuple[int, int], list[_Cite]] | None = None) -> dict[int, list[tuple[int, str]]]:
     """Cifras con unidades y citas que solo se ven por la estructura de una tabla (GFM: cabecera y fila de
     separación): un número de una columna cuya cabecera lleva la unidad («Leche (kg/d)»), o de una fila con una celda
     de unidades («Leche (kg/d) | 30,1» o «2,5 | kg/d»), y una celda «Autor Año» en una columna de estudios o fuentes
     («García 2018»; en cualquier columna, si lleva coautores, coma o paréntesis). {línea: [(posición, tipo)]}; el tipo
-    de una cita es «cite:<clase>» (`_citation_kind`)."""
+    de una cita es «cite:<clase>» (`_citation_kind`), y `cites` recibe sus apellidos y su año por (línea, posición)."""
     out: dict[int, list[tuple[int, str]]] = {}
     n = len(doc.lines)
     i = 0
@@ -1529,7 +1616,11 @@ def _table_events(doc: _Doc, body: set[int], scans: dict[int, _Line], no_numbers
                     if cls is not None and bare and (cls in ("tiempo", "sigla") or (
                             cls == "programa" and head not in _SURNAME_LIKE)):
                         continue        # «Ensayo 2019», «Ejercicio 2020» en una columna de estudios
-                    events.append((max(a, b - 1), "cite:normal" if cls is None else "cite:ambigua"))
+                    kind = "cite:normal" if cls is None else "cite:ambigua"
+                    events.append((max(a, b - 1), kind))
+                    if cites is not None:
+                        cites.setdefault((row, max(a, b - 1)), []).append(
+                            _cite_from_match(m, cell, kind[5:], end=max(a, b - 1)))
     return out
 
 
@@ -2581,11 +2672,17 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
     # en el texto del párrafo entero (una cifra y su unidad partidas por un salto de línea siguen siendo una cifra con
     # unidades) y, en las tablas, también por su estructura (unidad en la cabecera o en otra celda; «Autor Año» en
     # una columna de estudios). Cada frase con una cifra necesita una etiqueta o una referencia; cada frase con una
-    # referencia, una etiqueta; y cada frase con una cita autor-año, su [Rn].
+    # referencia, una etiqueta; y cada frase con una cita autor-año, su [Rn], cuya entrada de la bibliografía debe
+    # llevar los apellidos y el año de la cita (si no, la cita nombra otro trabajo que nadie verifica).
     paragraphs = _paragraphs(doc, body, tables)
-    table_extra = _table_events(doc, body, scans, no_numbers, tables)
+    cite_at: dict[tuple[int, int], list[_Cite]] = {}
+    table_extra = _table_events(doc, body, scans, no_numbers, tables, cite_at)
     uncited: list[int] = []
     cited_by_line: dict[int, list[str]] = {}
+    entry_texts: dict[str, list[str]] = {}
+    for entry in entries:
+        entry_texts.setdefault(entry.ref, []).append(entry.text)
+    unmatched: dict[int, tuple[list[str], list[str]]] = {}     # línea -> (citas, referencias de su frase)
     for para in paragraphs:
         joined, starts, plines = _joined(para, scans)
         if not plines:
@@ -2596,10 +2693,13 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                                              "antes de la etiqueta siguiente, en la misma frase)", j + 1))
             cited_by_line.setdefault(j, []).extend(refs)
         events: list[tuple[int, int, str]] = []
+        ref_at: dict[tuple[int, int], str] = {}
         for j in plines:
             for kind, value, pos in scans[j].tokens:
                 if kind in ("label", "ref"):
                     events.append((j, pos, kind))
+                    if kind == "ref":
+                        ref_at[(j, pos)] = value
                 elif kind == "istop" or (kind == "stop" and value in ".!?"):
                     events.append((j, pos, "stop"))
             events += [(j, pos, kind) for pos, kind in table_extra.get(j, [])]
@@ -2620,9 +2720,10 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             j, pos = _locate(m.start(), starts, plines)
             if j not in no_numbers:
                 events.append((j, pos, "unit"))
-        for end, cite_kind in _citations(joined):
-            j, pos = _locate(end, starts, plines)
-            events.append((j, pos, f"cite:{cite_kind}"))
+        for cite in _citation_marks(joined):
+            j, pos = _locate(cite.end, starts, plines)
+            events.append((j, pos, f"cite:{cite.kind}"))
+            cite_at.setdefault((j, pos), []).append(cite)
         events.sort(key=lambda e: (e[0], e[1]))
         sentence: list[tuple[int, int, str]] = []
         for ev in events + [(-1, -1, "stop")]:
@@ -2640,6 +2741,22 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
             if cites and "ref" not in kinds:
                 sev = max((cite_severity(kind) for _j, kind in cites), key=("aviso", "error").index)
                 uncited.append((cites[0][0] + 1, sev, all(kind == "ambigua" for _j, kind in cites)))
+            elif cites:
+                # Con [Rn] en la frase, cada cita autor-año debe ser la de una de esas referencias: sus apellidos (o la
+                # institución) y su año, en la entrada de la bibliografía («... [R1] [PUB], como observaron Han et al.
+                # (2020)» con R1 = García 2018 nombra un trabajo que no está en la bibliografía ni se verifica).
+                refs_here = list(dict.fromkeys(ref_at[(j, p)] for j, p, kind in sentence
+                                               if kind == "ref" and (j, p) in ref_at))
+                texts_here = [text for ref in refs_here for text in entry_texts.get(ref, [])]
+                if texts_here:      # una [Rn] que no está en la bibliografía ya es error
+                    for j, p, kind in sentence:
+                        if not kind.startswith("cite:"):
+                            continue
+                        for cite in cite_at.get((j, p), []):
+                            if (cite.words or cite.year) and not any(_cite_in_entry(cite, t) for t in texts_here):
+                                found, refs = unmatched.setdefault(j + 1, ([], []))
+                                found.append(cite.text)
+                                refs += [ref for ref in refs_here if ref not in refs]
             sentence = []
     cited_lines = [(j, list(dict.fromkeys(refs))) for j, refs in sorted(cited_by_line.items()) if refs]
     worst: dict[int, tuple[str, bool]] = {}
@@ -2652,6 +2769,14 @@ def check_report(text: str, require_sections: bool = True, strict: bool | None =
                 if ambiguous and sev == "aviso" else "")
         issues.append(Issue(sev, "Cita autor-año sin referencia [Rn] verificable en la misma frase: añade su [Rn] "
                                  "(y su entrada en la bibliografía) o reescribe la frase sin la cita" + note, line_no))
+    for line_no, (found, refs_here) in sorted(unmatched.items()):
+        # Varias expresiones reconocen la misma cita («(Han et al., 2020)» y «Han et al»): se muestra la más larga.
+        shown = [c for c in dict.fromkeys(found) if not any(c != o and c in o for o in found)]
+        listed = "», «".join(c[:80] for c in shown[:3])
+        issues.append(Issue(sev_strict, f"Cita autor-año «{listed}» que no corresponde a {', '.join(refs_here)}: sus "
+                                        "apellidos y su año no figuran en la entrada de ninguna referencia de la "
+                                        "frase. Cita solo con [Rn]; si es otro trabajo, añádelo a la bibliografía y "
+                                        "cítalo con su propio [Rn]", line_no))
     for n, line_no in enumerate(unlabeled):
         if n < 10:
             issues.append(Issue(sev_strict, "Cifra con unidades sin etiqueta de evidencia ni referencia", line_no))
