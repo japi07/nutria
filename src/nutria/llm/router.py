@@ -176,30 +176,106 @@ def ask(cfg, prompt: str, role: str | None = None, model_id: str | None = None, 
 
 # --------------------------------------------------------------------------- banco de pruebas de dominio
 def _norm(text: str) -> str:
-    text = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode("ascii").lower()
+    # «nº», «n.º» y «N°» (número) no son la negación «no»: se escriben «num» antes de quitar los diacríticos, que
+    # convertirían «º» en «o»; el signo menos tipográfico pasa a guion para no perder el signo de una cifra.
+    text = re.sub(r"(?i)\bn\.?\s*[º°]", "num ", str(text)).replace("−", "-")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
     return re.sub(r"\s+", " ", text).strip()
+
+
+# Corrección de las respuestas (D5-14). Una subcadena no basta: «No es un aditivo zootécnico» contiene «zootécnico».
+# - Una mención está NEGADA si va dentro del alcance de una negación (no, ni, nunca, jamás, tampoco, en lugar de,
+#   en vez de; not, never, neither, nor, instead of, rather than), que llega hasta el siguiente signo de puntuación
+#   o hasta una conjunción adversativa (sino, pero, aunque, mientras; but, whereas, although): en «No es el 2020/354
+#   sino el 2019/962», el 2020/354 está negado y el 2019/962 no. «No» seguido de una cifra («No 1831/2003») es la
+#   abreviatura de número, no una negación, y «No,» al principio es la respuesta a la pregunta, no niega lo que sigue.
+# - «contiene»: la respuesta esperada debe aparecer sin negar y no puede aparecer también negada (contradicción); las
+#   palabras de «excluye» (las alternativas incorrectas) no pueden aparecer sin negar.
+# - «sino»: la primera palabra es SÍ o NO, y no puede seguirle otra respuesta suelta contraria («Sí... bueno, no»).
+# - Las menciones empiezan en el inicio de una palabra; una esperada que acaba en cifra no puede seguir con otra cifra
+#   («2019/9620» no es «2019/962»), y una que acaba en letra admite terminaciones («zootecnic» → «zootécnicos»).
+# Es una heurística léxica: no entiende la frase. Falla en cerrado ante las negaciones que reconoce (una respuesta
+# correcta con una doble negación puede contar como incorrecta), no ante las que no reconoce.
+_NEGACIONES = frozenset({"no", "ni", "nunca", "jamas", "tampoco", "not", "never", "neither", "nor"})
+_NEGACIONES_DE_FRASE = (("en", "lugar", "de"), ("en", "vez", "de"), ("instead", "of"), ("rather", "than"))
+_ADVERSATIVAS = frozenset({"sino", "pero", "aunque", "mientras", "but", "whereas", "although"})
+_TOKEN_RE = re.compile(r"[a-z0-9]+|[.,;:!?()\[\]¿¡\"]")
+_PUNTUACION = frozenset(".,;:!?()[]¿¡\"")
+
+
+def _tramos_negados(a: str) -> list[tuple[int, int]]:
+    """Tramos [inicio, fin) del texto normalizado que quedan dentro del alcance de una negación."""
+    tokens = [(m.group(0), m.start(), m.end()) for m in _TOKEN_RE.finditer(a)]
+    tramos: list[tuple[int, int]] = []
+    abierto: int | None = None
+    for i, (tok, ini, fin) in enumerate(tokens):
+        siguiente = tokens[i + 1][0] if i + 1 < len(tokens) else ""
+        if tok in _PUNTUACION or tok in _ADVERSATIVAS:
+            if abierto is not None:
+                tramos.append((abierto, ini))
+                abierto = None
+            continue
+        frase = next((f for f in _NEGACIONES_DE_FRASE
+                      if tuple(t for t, _, _ in tokens[i:i + len(f)]) == f), None)
+        if frase is not None or tok in _NEGACIONES:
+            if tok == "no" and (siguiente[:1].isdigit() or (i == 0 and siguiente in (",", ".", ":", ";", ""))):
+                continue
+            if abierto is None:
+                abierto = tokens[i + len(frase) - 1][2] if frase else fin
+    if abierto is not None:
+        tramos.append((abierto, len(a)))
+    return tramos
+
+
+def _menciones(a: str, esperado: str) -> list[int]:
+    x = _norm(esperado)
+    if not x:
+        return []
+    patron = r"(?<![a-z0-9])" + re.escape(x) + (r"(?![0-9])" if x[-1].isdigit() else "")
+    return [m.start() for m in re.finditer(patron, a)]
+
+
+def _afirmado(a: str, esperado: str, tramos: list[tuple[int, int]]) -> bool:
+    """La respuesta menciona `esperado` sin negarlo y no lo niega en ninguna otra parte."""
+    menciones = _menciones(a, esperado)
+    negadas = [p for p in menciones if any(i <= p < f for i, f in tramos)]
+    return bool(menciones) and not negadas
+
+
+def _menciona_sin_negar(a: str, termino: str, tramos: list[tuple[int, int]]) -> bool:
+    return any(not any(i <= p < f for i, f in tramos) for p in _menciones(a, termino))
 
 
 def grade(item: dict, answer: str) -> bool:
     kind = item.get("tipo", "contiene")
     expected = item.get("respuesta_esperada")
     a = _norm(answer)
+    tramos = _tramos_negados(a)
+    excluded = item.get("excluye") or []
     if kind == "exacta":
         return a == _norm(expected)
-    if kind == "contiene":
-        return _norm(expected) in a
-    if kind == "contiene_todos":
-        return all(_norm(x) in a for x in expected)
+    if kind in ("contiene", "contiene_todos"):
+        expected_list = [expected] if kind == "contiene" else list(expected)
+        return (all(_afirmado(a, x, tramos) for x in expected_list)
+                and not any(_menciona_sin_negar(a, x, tramos) for x in excluded))
     if kind == "sino":
-        first = a.split(" ")[0].strip(".,;:") if a else ""
-        return first == _norm(expected)
+        words = re.findall(r"[a-z0-9]+|[.,;:!?]", a)
+        if not words or words[0] != _norm(expected):
+            return False
+        opuesta = {"si": "no", "no": "si"}.get(words[0])
+        # otra respuesta suelta, contraria a la primera, más adelante: «Sí... bueno, no», «No. Bueno, sí.»
+        return not any(w == opuesta and (k + 1 == len(words) or words[k + 1] in ".,;:!?")
+                       for k, w in enumerate(words[1:], start=1))
     if kind == "numerica":
-        match = re.search(r"-?\d+(?:[.,]\d+)?", answer.replace("−", "-"))
-        if not match:
+        match = re.search(r"-?\d+(?:[.,]\d+)?", a)
+        if not match or any(i <= match.start() < f for i, f in tramos):
             return False
         value = float(match.group(0).replace(",", "."))
         return abs(value - float(expected)) <= float(item.get("tolerancia", 0))
     raise ValueError(f"Tipo de corrección desconocido: {kind}")
+
+
+PENDIENTE_VALIDACION = "pendiente_validacion"
 
 
 def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None = None) -> dict:
@@ -209,9 +285,13 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
     system = ("Responde de forma breve y directa. Si la pregunta pide una cifra, empieza por la cifra. "
               "Si pide SÍ o NO, empieza por SÍ o NO.")
     scores: dict[str, dict] = {}
+    validated: dict[str, dict] = {}        # solo preguntas validadas (sin estado "pendiente_validacion")
+    by_area: dict[str, dict[str, dict]] = {}
     errors: dict[str, int] = {}
     rows = []
     for item in items:
+        pending = item.get("estado") == PENDIENTE_VALIDACION
+        area = item.get("area") or "sin_area"
         # El banco de preguntas no contiene información confidencial.
         for res in ask(cfg, item["pregunta"], role=role, model_id=model_id, system=system, max_tokens=400,
                        sensitivity="normal"):
@@ -220,18 +300,26 @@ def evaluate(cfg, eval_path: Path, role: str | None = None, model_id: str | None
             if "texto" not in res:
                 continue
             correct = grade(item, res["texto"])
-            s = scores.setdefault(res["modelo"], {"aciertos": 0, "total": 0})
-            s["total"] += 1
-            s["aciertos"] += int(correct)
-            rows.append({"item": item.get("id"), "modelo": res["modelo"], "correcto": correct,
-                         "respuesta": res["texto"][:500]})
+            buckets = [scores.setdefault(res["modelo"], {"aciertos": 0, "total": 0}),
+                       by_area.setdefault(res["modelo"], {}).setdefault(area, {"aciertos": 0, "total": 0})]
+            if not pending:
+                buckets.append(validated.setdefault(res["modelo"], {"aciertos": 0, "total": 0}))
+            for s in buckets:
+                s["total"] += 1
+                s["aciertos"] += int(correct)
+            rows.append({"item": item.get("id"), "area": area, "pendiente_validacion": pending,
+                         "modelo": res["modelo"], "correcto": correct, "respuesta": res["texto"][:500]})
     out_dir = cfg.research_dir / "evals"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"evaluacion_{utc_now().replace(':', '').replace('+', '_')}.jsonl"
     out_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", "utf-8")
-    for s in scores.values():
+    for s in [*scores.values(), *validated.values(), *(a for m in by_area.values() for a in m.values())]:
         s["exactitud"] = s["aciertos"] / s["total"] if s["total"] else None
-    out = {"resultados": scores, "detalle": str(out_file), "n_items": len(items)}
+    # «resultados» mezcla todas las preguntas; para elegir modelo cuenta «solo_validadas»: las preguntas con estado
+    # "pendiente_validacion" (respuesta esperada aún sin revisar por una persona experta) se corrigen, pero aparte.
+    out = {"resultados": scores, "solo_validadas": validated, "por_area": by_area, "detalle": str(out_file),
+           "n_items": len(items),
+           "n_pendientes_validacion": sum(1 for i in items if i.get("estado") == PENDIENTE_VALIDACION)}
     if errors:
         out["errores"] = errors
     return out
