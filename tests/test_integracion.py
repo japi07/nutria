@@ -985,3 +985,25 @@ def test_coord3_afirmacion_comprobar_compara_la_cita_textual_con_el_resumen(proj
     assert code == 0 and json.loads(out)["total"] == 1
     code, _, err = _run(capsys, ["--offline", "--agente", "verificador-citas", "afirmacion", "comprobar"])
     assert code == 4 and "sin red" in err
+
+
+# ============================================================================ fase de coordinación (3): entradas JSON
+@pytest.mark.parametrize("orden", [
+    ["--agente", "director-cientifico", "oportunidad", "nueva", "--datos"],
+    ["--agente", "director-cientifico", "hipotesis", "nueva", "--datos"],
+    ["--agente", "investigador-bibliografico", "afirmacion", "agregar", "--datos"],
+    ["--agente", "extractor-datos-A", "extraccion", "depositar", "--datos"],
+    ["--agente", "evaluador-1", "puntuar", "registrar", "--datos"],
+    ["--agente", "extractor-datos", "extraccion", "conciliar", "CE-0001", "--datos"],
+])
+@pytest.mark.parametrize("contenido, motivo", [(b'{"titulo": ', "no es un JSON válido"),
+                                              (b"\xff\xfe{}", "no está en UTF-8")])
+def test_coord3_json_mal_formado_da_codigo_2_con_el_fichero(project, capsys, orden, contenido, motivo):
+    """Validación de entrada (encargo de la coordinación): un JSON mal formado o que no está en UTF-8 sale con código 2
+    y un mensaje que nombra el fichero y la posición; con --json, un solo objeto por stdout."""
+    roto = project / "roto.json"
+    roto.write_bytes(contenido)
+    code, _, err = _run(capsys, [*orden, str(roto)])
+    assert code == 2 and f"{roto}: {motivo}" in err, (orden, err)
+    code, out, _ = _run(capsys, ["--json", *orden, str(roto)])
+    assert code == 2 and json.loads(out)["codigo"] == 2

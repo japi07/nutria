@@ -117,9 +117,20 @@ def _firma_solo_de_personas(args) -> None:
         raise _FirmaRechazada(message)
 
 
+def _json_de(texto: str, origen: str):
+    """JSON de un texto; si está mal formado, ValueError (código 2) que nombra el fichero y la posición."""
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{origen}: no es un JSON válido (línea {exc.lineno}, columna {exc.colno}: {exc.msg})") from None
+
+
 def _load_json(path: str):
-    raw = sys.stdin.read() if path == "-" else Path(path).read_text("utf-8")
-    return json.loads(raw)
+    try:
+        raw = sys.stdin.read() if path == "-" else Path(path).read_text("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{path}: no está en UTF-8 ({exc.reason} en el byte {exc.start})") from None
+    return _json_de(raw, "la entrada estándar" if path == "-" else path)
 
 
 def _schema(kind: str) -> dict:
@@ -1430,7 +1441,11 @@ def _leer_fichero_json(path: str) -> tuple[object, str]:
     if path == "-":
         raise SystemExit("Esta orden necesita la ruta de un fichero: su sha256 queda en el registro")
     raw = Path(path).read_bytes()
-    return json.loads(raw.decode("utf-8")), sha256_text(raw)
+    try:
+        texto = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{path}: no está en UTF-8 ({exc.reason} en el byte {exc.start})") from None
+    return _json_de(texto, path), sha256_text(raw)
 
 
 def _depositar_copia(args, cfg, conn) -> int:
