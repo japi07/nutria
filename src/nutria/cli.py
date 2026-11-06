@@ -831,8 +831,15 @@ def cmd_fuente(args, cfg) -> int:
         else:
             where = f"la fuente se registra como {source_id} (el identificador que da la verificación)"
         lines.append(f"  AVISO: {where}: usa {source_id}, no {requested}, en afirmaciones y extracciones.")
+    avisos = []
+    if not args.especie:
+        # petición de P7 a P3: la especie es parte del contexto biológico (regla 3); sin ella, el filtro por especie
+        # de las extracciones y la transferibilidad se juzgan sin el dato de la fuente
+        avisos.append("sin --especie: la especie del estudio queda sin registrar (regla 3 de CLAUDE.md); indícala "
+                      "(p. ej. --especie \"vacuno lechero\", o «in vitro: líquido ruminal bovino»)")
+        lines.append(f"  AVISO: {avisos[-1]}")
     lines += _change_lines(changes)
-    _emit(args, {"id": source_id, "registro": rec, "cambios": changes}, "\n".join(lines))
+    _emit(args, {"id": source_id, "registro": rec, "cambios": changes, "avisos": avisos}, "\n".join(lines))
     return 0
 
 

@@ -1521,3 +1521,17 @@ def test_coord_inicial_ajena_entre_el_ano_y_el_titulo():
     assert ch.title_ok is False and "CLA" in ch.text_before_title, ch
     ok = c.compare_citation(f"Pérez J, García A. 2020 Jan. {TITLE}. J Dairy Sci 103:1-10.", titles=[TITLE], **rec)
     assert ok.title_ok, ok
+
+
+# ============================================================================ fase de coordinación (3): P7 → P3
+def test_coord3_fuente_agregar_avisa_si_falta_la_especie(project, net, capsys):
+    """Petición de P7 a P3: --especie sigue siendo opcional, pero sin ella la especie del estudio queda sin registrar
+    (regla 3): la orden lo avisa en el texto y en el JSON."""
+    published(net)
+    capsys.readouterr()
+    assert main(["--json", "fuente", "agregar", "--doi", DOI]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert any("sin --especie" in a for a in out["avisos"])
+    published(net, doi="10.1234/otro.2021", title="Rumen-protected methionine in early lactation dairy cows")
+    assert main(["fuente", "agregar", "--doi", "10.1234/otro.2021", "--especie", "vacuno lechero"]) == 0
+    assert "sin --especie" not in capsys.readouterr().out
