@@ -1,7 +1,9 @@
-# Versiones con las que se ha probado nutria (python -m pytest -q: suite completa en verde).
-# Entorno: Python 3.13.18 en Linux (x86_64), 2026-11-05. Comprobado también en un entorno virtual nuevo, creado
-# solo con este fichero: `pip install ".[dev,mixto]" -c requirements/constraints.txt` resuelve exactamente estas
-# versiones desde PyPI y la suite pasa con ellas.
+# Versiones con las que se ha probado nutria en Python 3.12 y 3.13 (python -m pytest -q: suite completa en verde).
+# SOLO PARA PYTHON 3.12 O SUPERIOR: numpy 2.5.3 y scipy 1.18.1 exigen Python >= 3.12, y en Python 3.11 pip termina con
+# ResolutionImpossible; en 3.11 usa requirements/constraints-py311.txt.
+# Entornos: Python 3.13.18 en Linux (x86_64), 2026-11-05, y Python 3.12.3 en Linux (x86_64), 2026-11-06. Comprobado
+# en entornos virtuales nuevos, creados solo con este fichero: `pip install ".[dev,mixto]" -c
+# requirements/constraints.txt` resuelve exactamente estas versiones desde PyPI y la suite pasa con ellas.
 # Incluye las dependencias del proyecto (pyproject.toml), los extras `mixto` (statsmodels, pandas) y `dev`
 # (pytest), y sus dependencias transitivas; generado a partir de los paquetes instalados (importlib.metadata).
 # wrapt se fija en la última versión estable (2.5.2): formulaic (dependencia de statsmodels) la pide en Python >= 3.13

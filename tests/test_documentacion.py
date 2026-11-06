@@ -656,3 +656,38 @@ def test_revision_r6_lleva_el_doi_pendiente_de_verificar():  # D11-3
     r6 = _references(_read(REVISION))["R6"]
     assert "DOI: 10.3168/jds.S0022-0302(01)74530-4" in r6 and "pendiente de verificación con `nutria verificar`" in r6
     assert "(verificada" not in r6
+
+
+# ============================================================================ revisión de la documentación (ronda 1)
+def _pins(rel: str) -> dict[str, str]:
+    pins = {}
+    for linea in _read(rel).splitlines():
+        if linea.strip() and not linea.startswith("#"):
+            nombre, version = linea.split("==")
+            pins[re.sub(r"[-_.]+", "-", nombre).lower()] = version.strip()
+    return pins
+
+
+def test_instalacion_con_python_311_tiene_sus_propias_versiones_probadas():
+    # constraints.txt fija numpy 2.5.3 y scipy 1.18.1, que exigen Python 3.12 o superior: con Python 3.11, pip termina
+    # con ResolutionImpossible. Python 3.11 tiene su propio fichero, con las versiones con las que pasa la suite.
+    import tomllib
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+    project = tomllib.loads(_read("pyproject.toml"))["project"]
+    assert project["requires-python"] == ">=3.11"
+    wanted = [Requirement(r) for r in project["dependencies"]]
+    wanted += [Requirement(r) for extra in project["optional-dependencies"].values() for r in extra]
+    for fichero in ("requirements/constraints.txt", "requirements/constraints-py311.txt"):
+        pins = _pins(fichero)
+        for req in wanted:
+            clave = re.sub(r"[-_.]+", "-", req.name).lower()
+            assert clave in pins, (fichero, req.name)
+            assert req.specifier.contains(pins[clave], prereleases=True), (fichero, req, pins[clave])
+        assert not [n for n, v in pins.items() if Version(v).is_prerelease], fichero
+    assert _pins("requirements/constraints.txt")["numpy"] != _pins("requirements/constraints-py311.txt")["numpy"]
+    assert "SOLO PARA PYTHON 3.12 O SUPERIOR" in _read("requirements/constraints.txt")
+    for seccion in ("Instalación", "Usar nutria en tu ordenador"):
+        texto = _flat(_section(_read(README), seccion))
+        assert "requirements/constraints-py311.txt" in texto and "Python 3.11" in texto, seccion
+        assert "Python 3.12 o superior" in texto, seccion

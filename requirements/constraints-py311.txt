@@ -1,0 +1,37 @@
+# Versiones con las que se ha probado nutria en Python 3.11 (python -m pytest -q: suite completa en verde).
+# Entorno: Python 3.11.18 en Linux (x86_64), 2026-11-06. requirements/constraints.txt no sirve en Python 3.11: fija
+# numpy 2.5.3 y scipy 1.18.1, que exigen Python 3.12 o superior, y pip termina con ResolutionImpossible. Estas son las
+# versiones que pip eligió en Python 3.11 para `pip install -e ".[dev,mixto]"` sin restricciones (numpy 2.4.6 y
+# scipy 1.17.1, entre otras), con las que pasa la suite; generado a partir de los paquetes instalados (pip freeze).
+# Uso, para reproducir el entorno de las pruebas en Python 3.11:
+#   python3.11 -m venv .venv && source .venv/bin/activate
+#   pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt
+# Con Python 3.12 o superior, usa requirements/constraints.txt. Es un fichero de restricciones (-c), no de requisitos:
+# no instala nada que pyproject.toml no pida.
+attrs==26.1.0
+certifi==2026.10.23
+charset-normalizer==3.5.2
+formulaic==1.2.2
+idna==3.20
+iniconfig==2.3.1
+interface_meta==2.0.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+narwhals==2.28.0
+numpy==2.4.6
+packaging==26.3
+pandas==3.1.1
+patsy==1.0.3
+pluggy==1.7.0
+Pygments==2.21.0
+pytest==9.2.0
+python-dateutil==4.0.0
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.9.1
+scipy==1.17.1
+statsmodels==0.15.0
+typing_extensions==4.16.0
+tzdata==2026.6
+urllib3==2.8.0
+wrapt==2.5.2

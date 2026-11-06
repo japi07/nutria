@@ -36,8 +36,10 @@ El método completo está en `docs/PROMPT_MAESTRO_v2.md`; por qué se cambió el
 
 ## Instalación
 
-Requiere Python 3.11 o superior (la suite se ha probado con Python 3.13). Los pasos detallados para trabajar en tu
-ordenador están en [Usar nutria en tu ordenador](#usar-nutria-en-tu-ordenador-claude-code-en-local).
+Requiere Python 3.11 o superior (la suite completa se ha probado en Linux con Python 3.11, 3.12 y 3.13). Los pasos
+detallados para trabajar en tu ordenador están en
+[Usar nutria en tu ordenador](#usar-nutria-en-tu-ordenador-claude-code-en-local). Con **Python 3.11**, cambia en la
+orden `pip` el fichero de versiones por `requirements/constraints-py311.txt` (ver abajo).
 
 ```bash
 git clone <tu-repositorio> nutria
@@ -70,10 +72,13 @@ nutria doctor
   no se desactiva en silencio). Comprueba el del proyecto con `.venv/bin/python -c "import nutria, jsonschema"`.
 - **Activa el entorno antes de abrir Claude Code** (`source .venv/bin/activate` y después `claude`): los agentes
   ejecutan `nutria` desde la terminal de la sesión y tienen que encontrarlo en el PATH.
-- `requirements/constraints.txt` fija las versiones con las que pasa la suite (Python 3.13, 2026-11-05), sin ninguna
-  preliminar (wrapt queda fijado en 2.5.2 porque formulaic admite versiones preliminares). Sin `-c` funcionan otras
-  versiones compatibles, pero no se han probado. Node.js (22, para `tests/test_orquestacion.py`) y R (opcional) no se
-  instalan con pip.
+- `requirements/constraints.txt` fija las versiones con las que pasa la suite en Python 3.12 y 3.13 (2026-11-05 y
+  2026-11-06), sin ninguna preliminar (wrapt queda fijado en 2.5.2 porque formulaic admite versiones preliminares).
+  **No sirve con Python 3.11**: numpy 2.5.3 y scipy 1.18.1 exigen Python 3.12 o superior, y pip termina con
+  `ResolutionImpossible`. Con Python 3.11, instala con
+  `pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt`, que fija las versiones con las que pasa la
+  suite en Python 3.11 (numpy 2.4.6 y scipy 1.17.1, entre otras). Sin `-c` funcionan otras versiones compatibles, pero
+  no se han probado. Node.js (22, para `tests/test_orquestacion.py`) y R (opcional) no se instalan con pip.
 - `nutria init` crea `nutria.toml`, la base de datos `research/nutria.sqlite`, la procedencia
   `research/procedencia.jsonl` y las carpetas de `research/`. Si quieres, rellena `email` en `nutria.toml` (lo piden
   NCBI y Crossref para su acceso preferente).
@@ -102,7 +107,7 @@ herramientas que ejecutan desde la terminal, y un modelo local solo puede dar la
 
 ### Requisitos
 
-- Python 3.11 o superior y git.
+- Python 3.11 o superior (probado con 3.11, 3.12 y 3.13) y git.
 - Claude Code reciente con la herramienta Workflow: los workflows de `.claude/workflows/` se han probado con la
   versión 2.1.318 (binario nativo; compruébalo con `claude --version`); el paquete npm `@anthropic-ai/claude-code`
   2.1.42 no la incluye. Sin ella siguen funcionando las skills paso a paso (`/mision-1`, `/oportunidad`...).
@@ -115,7 +120,9 @@ herramientas que ejecutan desde la terminal, y un modelo local solo puede dar la
 1. Clona el repositorio y entra en él (`git clone <tu-repositorio> nutria` y `cd nutria`).
 2. Crea y activa el entorno en `.venv`: `python -m venv .venv` y `source .venv/bin/activate` (en Windows con Git
    Bash, `source .venv/Scripts/activate`).
-3. Instala con las versiones probadas: `pip install -e ".[dev,mixto]" -c requirements/constraints.txt`.
+3. Instala con las versiones probadas: `pip install -e ".[dev,mixto]" -c requirements/constraints.txt` con Python 3.12
+   o superior; con Python 3.11, `pip install -e ".[dev,mixto]" -c requirements/constraints-py311.txt` (comprueba la
+   versión con `python --version`).
 4. Inicializa el proyecto con `nutria init` y comprueba el entorno con `nutria doctor` (con red).
 5. Comprueba que la suite pasa en tu máquina: `python -m pytest -q` (sin red; las pruebas en vivo se omiten).
 
@@ -712,7 +719,7 @@ src/nutria/                herramientas (CLI nutria)
 docs/                      método, auditoría, estado y limitaciones, rúbrica, regulación, fuentes, arquitectura
 ejemplos/                  plantillas de entrada y conjunto de validación
 evals/                     bancos de preguntas para evaluar modelos (dominio y clasificación regulatoria)
-requirements/              versiones con las que se ha probado (constraints.txt)
+requirements/              versiones probadas (constraints.txt, Python 3.12 o superior; constraints-py311.txt)
 research/                  registro, procedencia y resultados de la investigación (vacío hasta la primera misión)
 tests/                     pruebas (las de tests/test_vivo.py, contra los servicios reales, son opcionales)
 ```
