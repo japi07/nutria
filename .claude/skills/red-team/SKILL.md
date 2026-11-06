@@ -32,7 +32,8 @@ herramienta Workflow) ejecuta este procedimiento.
 4. Segunda opinión de otra familia de modelos (opcional): `nutria --agente <tu-rol> llm modelos --json`; si algún modelo es utilizable
    con el rol `critico`, `nutria --agente <tu-rol> llm preguntar --rol critico --archivo <fichero>`. La sensibilidad por defecto es
    `confidencial` (solo modelos locales o con acuerdo de no retención); `--sensibilidad normal` solo para información
-   no confidencial. La opinión de un modelo no es evidencia.
+   no confidencial. Si `llm preguntar` termina con código 1, ningún modelo respondió (o alguno falló): la segunda
+   opinión no está disponible, y se dice así; no es un fallo de la revisión. La opinión de un modelo no es evidencia.
 5. El mismo rol que extrajo las afirmaciones consolida en `research/revisiones/<directorio>_<nombre>_redteam.md` (el nombre incluye el
    directorio de origen: `research/informes/O-0001.md` → `informes_O-0001_redteam.md` y `research/planes/O-0001.md` →
    `planes_O-0001_redteam.md`; una revisión anterior del mismo documento no se sobrescribe: la nueva va a

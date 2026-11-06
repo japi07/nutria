@@ -19,7 +19,9 @@ registrada → conciliación si hay discrepancias → exportación para el anál
 4. Diseño (`paralelo`, `cuadrado_latino`, `crossover`, `factorial`, `bloques`), duración, número y duración de
    periodos en `notas`. En un diseño cruzado, `correlacion_intrasujeto` (r en [0, 1)) solo si la fuente la publica o
    se calcula de sus datos publicados (dilo en `ubicacion`); si no consta, se omite: el análisis la declara como
-   supuesto `[SUP]` con `--rho-intrasujeto`.
+   supuesto `[SUP]` con `--rho-intrasujeto`. Anota también en `notas` si el SEM procede del modelo con el animal como
+   efecto (SEM residual), y recuerda que en un diseño cruzado `n` son las unidades experimentales que recibieron
+   ambos tratamientos.
 5. Dieta basal en texto y en los campos numéricos cuando consten: forraje, FND, almidón, grasa y PB (% de la MS),
    proteína degradable en el rumen (`pdr_pct_pb`, % de la PB, y/o `pdr_pct_ms`, % de la MS; no puede superar
    `pb_pct_ms` y, si constan las dos, deben cuadrar con la PB) y DCAD (mEq/kg de MS). Dosis con su base y forma del
