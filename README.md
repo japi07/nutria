@@ -155,9 +155,9 @@ Las pruebas en vivo consultan PubMed, Europe PMC, OpenAlex (necesita `OPENALEX_A
 UniProt, STRING, Reactome, Lens (necesita `LENS_API_TOKEN`) y EUR-Lex. Si alguna falla, no confíes en ese cliente
 hasta entender por qué. **No cubren doi.org ni DataCite** (`src/nutria/sources/doiorg.py`), la vía por la que un DOI
 que no está en Crossref, OpenAlex ni PubMed se da por existente o por inexistente: `nutria doctor` solo comprueba que
-esos dominios responden. Hasta que tengan su prueba en vivo, comprueba a mano con `nutria --json verificar --doi`
-algún DOI que conozcas registrado en DataCite (p. ej. el de un conjunto de datos) y uno inventado, y revisa que el
-primero quede verificado y el segundo, no.
+esos dominios responden. Hasta que tengan su prueba en vivo, comprueba a mano con
+`nutria --json verificar --doi <DOI>` algún DOI que conozcas registrado en DataCite (p. ej. el de un conjunto de
+datos) y uno inventado, y revisa que el primero quede verificado y el segundo, no.
 
 ### Firma humana: desde tu terminal, fuera de Claude Code
 
@@ -748,7 +748,8 @@ herramientas Read, Grep y Glob de Claude Code no tienen hook.
   otra rama. **El hook no lo impide**: en la sesión principal deja pasar `git commit --amend`, `reset --soft`,
   `rebase` y `git branch -D`, y en cualquier contexto, también en un subagente, borrar el reflog entrando antes en
   `.git` (`cd .git && rm -rf logs`) o con `find .git/logs -delete`, y mover la referencia de la rama sin git; solo
-  reconoce `git reflog expire|delete`, `update-ref` y las rutas `.git/logs` o `.git/refs` escritas en la orden. Un
+  reconoce `git reflog expire|delete`, `update-ref`, `gc.reflogExpire` y las rutas `.git`, `.git/logs` o `.git/refs`
+  escritas en la orden. Un
   agente que quite un evento ya confirmado (p. ej. con un programa escrito en un fichero), reescriba el commit y
   borre el reflog deja la procedencia «íntegra» para `procedencia verificar`. Dos ramas que añadan eventos la rompen
   al fusionarse.
