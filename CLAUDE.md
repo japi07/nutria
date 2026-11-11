@@ -289,6 +289,7 @@ probado con agentes simulados.
 - `red-team-auto`: `{"archivo": "<ruta>", "sensibilidad": "confidencial", "autor": "<rol>"}` (`"autor"`, el rol que
   escribió el documento o `"persona"`, es obligatorio si no se deduce de la ruta; `"max_afirmaciones"` de 1 a 30, 15
   por defecto).
-- `comparar-sistemas`: `{"sistemas": [{"nombre": "...", "ruta": "..."}]}`.
+- `comparar-sistemas`: `{"sistemas": [{"nombre": "...", "ruta": "..."}]}` (opcionales `"dimensiones_extra"`, `"notas"`,
+  `"verificar_desde"` y `"evaluadores"`; el prompt para comparar nutria con otro sistema está en `docs/PROMPT_COMPARACION.md`).
 
 En los workflows el control de flujo es fijo, pero cada agente puede dar resultados distintos en cada ejecución.

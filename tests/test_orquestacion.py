@@ -784,6 +784,39 @@ def test_comparar_sistemas_counts_and_reports_failed_agents():
     assert "AGENTES FALLIDOS" in call(out, "sintesis")["prompt"]
 
 
+@requires_node
+def test_comparar_sistemas_dimensiones_extra_y_notas():
+    """Quien lanza la comparación puede añadir dimensiones y contexto; lo no válido se rechaza sin lanzar agentes."""
+    sistemas = [{"nombre": "nutria", "ruta": "nutria"}, {"nombre": "otro", "ruta": "otro"}]
+    extra = [{"titulo": "Coste de uso", "criterios": "Tokens y tiempo por tarea equivalente, medidos y no estimados."}]
+    out = run_workflow("comparar-sistemas", {"sistemas": sistemas, "dimensiones_extra": extra,
+                                              "notas": "El segundo sistema no es un paquete de Python."})
+    res = out["resultado"]
+    assert [d["id"] for d in res["dimensiones"]] == [f"D{i}" for i in range(1, 13)]
+    assert [d["id"] for d in res["dimensiones"] if d["anadida_por_quien_lanza"]] == ["D12"]
+    assert "eval:D12" in labels(out)
+    prompt = call(out, "eval:D12")["prompt"]
+    assert "Coste de uso" in prompt and "Tokens y tiempo por tarea equivalente" in prompt
+    # las notas y la regla de imparcialidad llegan a todos los agentes, también a inventarios y verificadores
+    for etiqueta in ("inventario:otro", "eval:D1", "eval:D12", "sintesis"):
+        texto = call(out, etiqueta)["prompt"]
+        assert "NOTAS DE QUIEN LANZA LA COMPARACIÓN" in texto and "no es un paquete de Python" in texto, etiqueta
+        assert "IMPARCIALIDAD" in texto and "misma vara" in texto, etiqueta
+    assert "anadida_por_quien_lanza" in call(out, "sintesis")["prompt"]
+    # sin argumentos opcionales, las 11 dimensiones de siempre y ninguna nota
+    base = run_workflow("comparar-sistemas", {"sistemas": sistemas})
+    assert len(base["resultado"]["dimensiones"]) == 11
+    assert "NOTAS DE QUIEN LANZA" not in call(base, "eval:D1")["prompt"]
+    # entradas no válidas: error claro y ningún agente
+    for malos in ({"dimensiones_extra": "no"}, {"dimensiones_extra": [{"titulo": "x"}]},
+                  {"dimensiones_extra": [{"titulo": "t", "criterios": "corto"}]},
+                  {"dimensiones_extra": [extra[0]] * 9}, {"notas": 5}, {"notas": "x" * 4001},
+                  {"verificar_desde": "baja"}):
+        rechazado = run_workflow("comparar-sistemas", {"sistemas": sistemas, **malos})
+        assert "error" in rechazado["resultado"], malos
+        assert labels(rechazado) == [], malos
+
+
 # ====================================================================================================================
 # P8: workflows, skills y agentes (independencia de los evaluadores, descarte temprano, idempotencia, topes y
 # contenido regulatorio y fisiológico). Utilidades y pruebas de este bloque.
@@ -2674,3 +2707,124 @@ def test_coord3_mision1_avisa_si_solo_hay_la_ruta_preliminar_del_alta(project, c
     avisos = {o["id"]: o["aviso_clasificacion"] for o in out["resultado"]["oportunidades"]}
     assert "preliminar del alta" in avisos["O-0001"] and "no registró la clasificación" in avisos["O-0001"]
     assert avisos["O-0002"] is None
+
+
+@requires_node
+def test_comparar_sistemas_verificar_desde_alta_reduce_las_verificaciones():
+    """Con verificar_desde = "alta" solo se verifican los hallazgos de gravedad alta; los demás se informan aparte."""
+    sistemas = [{"nombre": "nutria", "ruta": "nutria"}]
+    evaluacion = {"por_sistema": [{"sistema": "nutria", "puntuacion": "3", "justificacion": "j", "fortalezas": [],
+                                   "debilidades": [
+                                       {"id": "D1-1", "texto": "grave", "evidencia": "a:1", "gravedad": "alta"},
+                                       {"id": "D1-2", "texto": "media", "evidencia": "a:2", "gravedad": "media"},
+                                       {"id": "D1-3", "texto": "leve", "evidencia": "a:3", "gravedad": "baja"}]}],
+                  "veredicto_comparativo": "n/a", "mejor": "n/a"}
+    reglas = [{"label": "eval:D1", "respuesta": evaluacion},
+              {"labelPrefix": "verif:", "respuesta": {"real": True, "gravedad_ajustada": "alta", "motivo": "m"}}]
+    por_defecto = run_workflow("comparar-sistemas", {"sistemas": sistemas}, reglas)
+    solo_altas = run_workflow("comparar-sistemas", {"sistemas": sistemas, "verificar_desde": "alta"}, reglas)
+    verificados = lambda out: sorted(l for l in labels(out) if l.startswith("verif:D1-"))  # noqa: E731
+    assert verificados(por_defecto) == ["verif:D1-1:nutria", "verif:D1-2:nutria"]
+    assert verificados(solo_altas) == ["verif:D1-1:nutria"]
+    assert por_defecto["resultado"]["verificar_desde"] == "media"
+    assert solo_altas["resultado"]["verificar_desde"] == "alta"
+    # la debilidad media no se pierde: llega a la síntesis con su gravedad, entre las no verificadas
+    sintesis = call(solo_altas, "sintesis")["prompt"]
+    menores = sintesis[sintesis.index("MENORES:"):sintesis.index("FORTALEZAS:")]
+    assert '"id":"D1-2"' in menores and '"gravedad":"media"' in menores and '"id":"D1-3"' in menores
+    assert '"id":"D1-1"' not in menores
+
+
+@requires_node
+def test_comparar_sistemas_dos_evaluadores_con_orden_invertido():
+    """Con evaluadores = 2, cada dimensión la evalúan dos agentes que reciben los sistemas en orden contrario."""
+    sistemas = [{"nombre": "nutria", "ruta": "rutas/nutria"}, {"nombre": "otro", "ruta": "rutas/otro"}]
+
+    def evaluacion(mejor, nota_nutria, nota_otro, prefijo):
+        return {"por_sistema": [
+            {"sistema": "nutria", "puntuacion": nota_nutria, "justificacion": "j", "fortalezas": [],
+             "debilidades": [{"id": f"{prefijo}-1", "texto": "t", "evidencia": "a:1", "gravedad": "alta"}]},
+            {"sistema": "otro", "puntuacion": nota_otro, "justificacion": "j", "fortalezas": [], "debilidades": []}],
+            "veredicto_comparativo": f"gana {mejor}", "mejor": mejor}
+
+    reglas = [{"label": "eval:D1", "respuesta": evaluacion("nutria", "4", "2", "D1")},
+              {"label": "eval:D1:b", "respuesta": evaluacion("otro", "3", "4", "D1b")},
+              {"label": "eval:D2", "respuesta": evaluacion("nutria", "4", "3", "D2")},
+              {"label": "eval:D2:b", "respuesta": evaluacion("Nutria ", "5", "3", "D2b")},
+              {"labelPrefix": "verif:", "respuesta": {"real": True, "gravedad_ajustada": "alta", "motivo": "m"}}]
+    out = run_workflow("comparar-sistemas", {"sistemas": sistemas, "evaluadores": 2}, reglas)
+    res = out["resultado"]
+    etiquetas = labels(out)
+    assert res["evaluadores"] == 2
+    assert sum(1 for e in etiquetas if e.startswith("eval:")) == 22
+    assert {"eval:D1", "eval:D1:b", "verif:veredicto:D1", "verif:veredicto:D1:b",
+            "verif:D1-1:nutria", "verif:D1b-1:nutria"} <= set(etiquetas)
+
+    # el segundo evaluador recibe los sistemas en el orden contrario al primero, y el orden alterna con la dimensión
+    def primero(etiqueta):
+        texto = call(out, etiqueta)["prompt"]
+        linea = next(l for l in texto.splitlines() if "Sistemas evaluados:" in l)
+        return "nutria" if linea.index("nutria (ruta") < linea.index("otro (ruta") else "otro"
+    assert (primero("eval:D1"), primero("eval:D1:b")) == ("nutria", "otro")
+    assert (primero("eval:D2"), primero("eval:D2:b")) == ("otro", "nutria")
+    assert "prefijo D1b" in call(out, "eval:D1:b")["prompt"]
+
+    cuadro = {c["dimension"]: c for c in res["cuadro"]}
+    # desacuerdo: no se promedia ni se elige; se enseñan las dos puntuaciones
+    assert cuadro["D1"]["puntuaciones"] == {"nutria": ["4", "3"], "otro": ["2", "4"]}
+    assert cuadro["D1"]["acuerdo_entre_evaluadores"] is False
+    assert cuadro["D1"]["mejor"].startswith("sin acuerdo entre evaluadores")
+    assert cuadro["D1"]["veredicto_sostenido"] == [True, True]
+    # acuerdo aunque cambien las mayúsculas o los espacios
+    assert cuadro["D2"]["acuerdo_entre_evaluadores"] is True and cuadro["D2"]["mejor"] == "nutria"
+    assert "dos evaluadores independientes por dimensión" in call(out, "sintesis")["prompt"]
+    # los hallazgos de los dos evaluadores llegan con su evaluador
+    assert {(c["id"], c["evaluador"]) for c in res["confirmados"] if c["dimension"] == "D1"} == {("D1-1", 1), ("D1b-1", 2)}
+
+    # con un evaluador (por defecto), el orden también alterna con la dimensión y el cuadro es el de siempre
+    uno = run_workflow("comparar-sistemas", {"sistemas": sistemas}, reglas)
+    etiquetas_uno = labels(uno)
+    assert not any(e.endswith(":b") for e in etiquetas_uno)
+    def primero_uno(etiqueta):
+        linea = next(l for l in call(uno, etiqueta)["prompt"].splitlines() if "Sistemas evaluados:" in l)
+        return "nutria" if linea.index("nutria (ruta") < linea.index("otro (ruta") else "otro"
+    assert (primero_uno("eval:D1"), primero_uno("eval:D2")) == ("nutria", "otro")
+    cuadro_uno = {c["dimension"]: c for c in uno["resultado"]["cuadro"]}
+    assert cuadro_uno["D1"]["puntuaciones"] == {"nutria": "4", "otro": "2"} and cuadro_uno["D1"]["mejor"] == "nutria"
+    assert cuadro_uno["D1"]["acuerdo_entre_evaluadores"] is None
+    # valor no válido: error y ningún agente
+    malo = run_workflow("comparar-sistemas", {"sistemas": sistemas, "evaluadores": 3})
+    assert "error" in malo["resultado"] and labels(malo) == []
+
+
+@requires_node
+def test_comparar_sistemas_una_limitacion_declarada_no_resuelve_el_hallazgo():
+    """El verificador no puede dar por resuelto un defecto porque el sistema lo declare en su documentación."""
+    out = run_workflow("comparar-sistemas", {"sistemas": [{"nombre": "nutria", "ruta": "nutria"}]},
+                       [{"label": "eval:D1", "respuesta": {"por_sistema": [
+                           {"sistema": "nutria", "puntuacion": "3", "justificacion": "j", "fortalezas": [],
+                            "debilidades": [{"id": "D1-1", "texto": "t", "evidencia": "a:1", "gravedad": "alta"}]}],
+                           "veredicto_comparativo": "n/a", "mejor": "n/a"}}])
+    verificador = call(out, "verif:D1-1:nutria")["prompt"]
+    assert "declare la limitación en su documentación no la resuelve" in verificador
+    evaluador = call(out, "eval:D1")["prompt"]
+    assert "Los mecanismos que nombran los criterios son ejemplos" in evaluador
+    assert "documentación o autocrítica declarada" in evaluador
+
+
+@requires_node
+def test_comparar_sistemas_no_redacta_el_informe_si_fallan_demasiados_agentes():
+    """Con muchos agentes fallidos (límite de uso, reinicio) no hay informe con huecos: se pide reanudar."""
+    sistemas = [{"nombre": "nutria", "ruta": "nutria"}, {"nombre": "otro", "ruta": "otro"}]
+    reglas = [{"labelPrefix": "eval:D", "respuesta": None}]          # fallan los 11 evaluadores
+    out = run_workflow("comparar-sistemas", {"sistemas": sistemas}, reglas)
+    res = out["resultado"]
+    assert res["incompleto"] is True and res["informe_escrito"] is False
+    assert res["fallos"]["total"] == 11 and len(res["dimensiones_sin_evaluar"]) == 11
+    assert "resumeFromRunId" in res["siguiente"]
+    assert "sintesis" not in labels(out) and "completitud" not in labels(out)
+    # con pocos fallos, el informe se redacta y los declara (comportamiento de siempre)
+    pocos = run_workflow("comparar-sistemas", {"sistemas": sistemas}, [{"label": "eval:D3", "respuesta": None}])
+    assert "sintesis" in labels(pocos) and pocos["resultado"].get("incompleto") is None
+    # las copias desechables: la regla común permite ejecutar pruebas y dejar lo generado en ellas
+    assert "copias desechables" in call(pocos, "inventario:nutria")["prompt"]
